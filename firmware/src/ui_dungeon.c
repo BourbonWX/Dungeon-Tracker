@@ -10,9 +10,20 @@
  *   - a floor is cleared after a walk of DG_FLOOR squares: the stairs, one floor down. Monsters get stronger with the
  *     depth (every fifth floor a boss); a party that falls retreats one floor up, healed. A full, busy song goes deep,
  *     a lone simple loop stays near the top.
+ * Each adventurer's health is hidden (no bar: a wounded one's name blinks): its most is 6 + 4 per level (the dwarf 4
+ * more), so a busier track takes more blows; a track made busier mid-fight gains the difference at once.
+ * A FALL CUTS THE TRACK (MENU > DISPLAY > HOME DUNGEON; PEACEFUL: the same game, nothing cut): an adventurer at 0 health
+ * falls and its track is muted as by a PERFORM black key (dg_cut: perform.c ramps it out and back, the sequencer runs
+ * on, nothing is saved) until it is back on its feet:
+ *   - the cleric, standing, raises a fallen one: a chance each beat walked (1 in 5), at half health;
+ *   - the stairs: everyone fallen gets up at half health on the next floor;
+ *   - the whole party fallen: the song is silent for a bar (DG_WIPE beats), then they retreat a floor up, healed;
+ *   - stopped (or HOME set to anything but DUNGEON): no cuts; stopping is a camp, the fallen are raised.
+ * Muting or emptying a fallen track does not raise it: it stays fallen until one of the above.
+ * The game runs on every page (ui_input.c calls dg_tick), not only while HOME is drawn.
  * Stopped: the party camps (no walking, they heal). Everything is drawn from the palette's colours (the walls RAISE
  * into BG with the distance, the monsters ACCENT, the steel TEXT), so it follows MENU > COLOR. The game is the UI's
- * only: nothing of it reaches the sound or the stored data, and it starts over at power-on. */
+ * own: nothing of it is stored, and it starts over at power-on. RONDO_LAYOUT=0 builds (Felucca's behaviour) never cut. */
 
 #define DG_X0 6                                          /* the view: x 6..233, y 3..94 */
 #define DG_W 228
@@ -21,9 +32,15 @@
 #define DG_HUD 97                                        /* the party's row */
 #define DG_FLOOR 24                                      /* squares a floor */
 #define DG_NSEG 6                                        /* corridor segments drawn */
+#define DG_WIPE 4                                        /* beats of silence when the whole party falls */
+#define DG_RAISE 5                                       /* the cleric raises: 1 in DG_RAISE beats walked */
 
 enum { DG_FTR, DG_CLR, DG_DWF, DG_MAG };
 static const char *const DG_CLASS[4] = {"FTR", "CLR", "DWF", "MAG"};
+static const char *const DG_FALL[2][4] = {{"FIGHTER FALLS", "CLERIC FALLS", "DWARF FALLS", "MAGE FALLS"},
+                                          {"FIGHTER FALLS: T1 CUT", "CLERIC FALLS: T2 CUT", "DWARF FALLS: T3 CUT",
+                                           "MAGE FALLS: T4 CUT"}};
+static const char *const DG_RAISED[4] = {"T1 BACK", "T2 BACK", "T3 BACK", "T4 BACK"};
 enum { DM_NONE, DM_GOBLIN, DM_SKEL, DM_SLIME, DM_OGRE };
 static const char *const DM_NAME[5] = {"", "GOBLIN", "SKELETON", "SLIME", "OGRE"};
 
@@ -40,6 +57,8 @@ static struct {
     uint8_t swing[4];                                    /* frames left of an adventurer's attack shown */
     uint8_t mon_hit, mon_atk;                            /* frames: the monster hit (flash), its attack (the frame) */
     uint8_t beat_odd, msg_f;
+    uint8_t dead;                                        /* adventurers fallen (bit k: T(k+1)), cut while DUNGEON plays */
+    uint8_t wipe;                                        /* beats left of a fallen party's silence (0: none) */
     uint32_t fphase;                                     /* the beat's way round while fighting, 0..65535 */
     int16_t dmg;                                         /* the last damage dealt, shown over the monster */
     const char *msg;                                     /* a message over the view while msg_f > 0 */
@@ -90,7 +109,21 @@ static uint32_t dg_level(const track_t *t)
     score = on / 2u + 2u * (dp < 12u ? dp : 12u) + chords + motion_lock_count(t) + 2u * extras;
     return (uint32_t)clamp(1 + (int32_t)score / 5, 1, 9);
 }
-static int16_t dg_hpmax(uint32_t k) { return (int16_t)(10 + 2 * dg.lvl[k] + (k == DG_DWF ? 6 : 0)); }
+static int16_t dg_hpmax(uint32_t k) { return (int16_t)(6 + 4 * dg.lvl[k] + (k == DG_DWF ? 4 : 0)); }
+static int dg_fallen(uint32_t k) { return (dg.dead >> k) & 1u; }
+static int dg_deadly(void)                               /* a fall cuts its track: DUNGEON, playing */
+{
+#if RONDO_LAYOUT
+    return ui_home_view == HV_SCOPE && song.playing;
+#else
+    return 0;
+#endif
+}
+static void dg_raise(uint32_t k, int16_t hp)
+{
+    dg.dead &= (uint8_t)~(1u << k);
+    dg.hp[k] = hp > 0 ? hp : 1;
+}
 
 /* who is in the party: the tracks with steps, not muted; their levels (once a second) */
 static void dg_party(void)
@@ -101,13 +134,16 @@ static void dg_party(void)
     dg.lvl_ms = fm1_ms | 1u;
     for (k = 0; k < 4u; k++) {
         const track_t *t = &trk[k];
-        uint32_t in = !t->p[P_MUTE] && !seq_is_empty(t);
-        if (in && !dg.in[k])
-            dg.hp[k] = 0;                                /* (joins: at full below) */
+        uint32_t in = !t->p[P_MUTE] && !seq_is_empty(t), joins = in && !dg.in[k];
+        int16_t was = dg_hpmax(k);
         dg.in[k] = (uint8_t)in;
         dg.lvl[k] = (uint8_t)(in ? dg_level(t) : 0u);
-        if (in && dg.hp[k] <= 0 && !dg.mon)
-            dg.hp[k] = dg_hpmax(k);
+        if (dg_fallen(k))
+            dg.hp[k] = 0;                                /* (fallen: until raised, joining or not) */
+        else if (joins)
+            dg.hp[k] = dg_hpmax(k);                      /* a new adventurer: at full */
+        else if (in && dg_hpmax(k) > was)
+            dg.hp[k] = (int16_t)(dg.hp[k] + dg_hpmax(k) - was);   /* a busier track: tougher at once */
         if (dg.hp[k] > dg_hpmax(k))
             dg.hp[k] = dg_hpmax(k);
     }
@@ -116,9 +152,10 @@ static uint32_t dg_up(void)                              /* adventurers standing
 {
     uint32_t k, n = 0;
     for (k = 0; k < 4u; k++)
-        n += dg.in[k] && dg.hp[k] > 0;
+        n += dg.in[k] && !dg_fallen(k);
     return n;
 }
+static uint32_t dg_party_n(void) { return (uint32_t)(dg.in[0] + dg.in[1] + dg.in[2] + dg.in[3]); }
 
 /* a beat while walking: one square on; a monster may come; the stairs at the end of the floor */
 static void dg_walk(void)
@@ -127,10 +164,20 @@ static void dg_walk(void)
     dg.walked++;
     dg.cell++;
     for (k = 0; k < 4u; k++)                             /* walking heals a little, the cleric more */
-        if (dg.in[k] && dg.hp[k] > 0 && dg.hp[k] < dg_hpmax(k))
-            dg.hp[k] = (int16_t)(dg.hp[k] + (dg.in[DG_CLR] && dg.hp[DG_CLR] > 0 ? 2 : 1) - (dg_rand() & 1u));
+        if (dg.in[k] && !dg_fallen(k) && dg.hp[k] < dg_hpmax(k))
+            dg.hp[k] = (int16_t)(dg.hp[k] + (dg.in[DG_CLR] && !dg_fallen(DG_CLR) ? 2 : 1) - (dg_rand() & 1u));
+    if (dg.dead && dg.in[DG_CLR] && !dg_fallen(DG_CLR) && dg_roll(100u / DG_RAISE)) {   /* the cleric raises one */
+        for (k = 0; k < 4u && !dg_fallen(k); k++)
+            ;
+        dg_raise(k, (int16_t)(dg_hpmax(k) / 2));
+        dg.swing[DG_CLR] = 10;
+        dg_say(DG_RAISED[k]);
+    }
     if (dg.walked >= DG_FLOOR) {
         dg.walked = 0;
+        for (k = 0; k < 4u; k++)                         /* the stairs: the fallen get up */
+            if (dg_fallen(k))
+                dg_raise(k, (int16_t)(dg_hpmax(k) / 2));
         dg.floor = (uint8_t)(dg.floor < 99u ? dg.floor + 1u : 99u);
         dg.best = dg.floor > dg.best ? dg.floor : dg.best;
         dg_say(dg.floor % 5u == 0u ? "BOSS FLOOR" : "STAIRS DOWN");
@@ -151,13 +198,13 @@ static void dg_fight(void)
     uint32_t k, n = 0, pick, alive[4];
     for (k = 0; k < 4u; k++) {
         int32_t lv = dg.lvl[k], d;
-        if (!dg.in[k] || dg.hp[k] <= 0)
+        if (!dg.in[k] || dg_fallen(k))
             continue;
         alive[n++] = k;
         if (k == DG_CLR) {                               /* the cleric heals the weakest, or strikes */
             uint32_t j, w = 4;
             for (j = 0; j < 4u; j++)
-                if (dg.in[j] && dg.hp[j] > 0 && dg.hp[j] < dg_hpmax(j) / 2 && (w == 4u || dg.hp[j] < dg.hp[w]))
+                if (dg.in[j] && !dg_fallen(j) && dg.hp[j] < dg_hpmax(j) / 2 && (w == 4u || dg.hp[j] < dg.hp[w]))
                     w = j;
             if (w < 4u) {
                 dg.hp[w] = (int16_t)clamp(dg.hp[w] + 3 + lv, 0, dg_hpmax(w));
@@ -188,16 +235,29 @@ static void dg_fight(void)
     if (dg_roll(60u)) {
         dg.hp[pick] = (int16_t)(dg.hp[pick] - (1 + dg.floor / 2 + (dg.mon == DM_OGRE ? 2 : 0)));
         dg.mon_atk = 5;
+        if (dg.hp[pick] <= 0) {                          /* it falls: its track is cut (dg_tick) */
+            dg.hp[pick] = 0;
+            dg.dead |= (uint8_t)(1u << pick);
+            dg_say(DG_FALL[dg_deadly()][pick]);
+        }
     }
-    if (!dg_up()) {                                      /* the party falls: back one floor, healed */
-        dg.floor = (uint8_t)(dg.floor > 1u ? dg.floor - 1u : 1u);
-        dg.walked = 0;
+    if (!dg_up()) {                                      /* the party falls: a bar of silence, then the retreat */
+        dg.wipe = DG_WIPE;
         dg.mon = DM_NONE;
         dg.mon_dist = 0;
-        for (k = 0; k < 4u; k++)
-            dg.hp[k] = dg.in[k] ? dg_hpmax(k) : 0;
-        dg_say("RETREAT");
+        dg_say("THE PARTY FALLS");
     }
+}
+static void dg_retreat(void)                             /* after the fallen party's bar: one floor up, healed */
+{
+    uint32_t k;
+    dg.floor = (uint8_t)(dg.floor > 1u ? dg.floor - 1u : 1u);
+    dg.walked = 0;
+    dg.wipe = 0;
+    dg.dead = 0;
+    for (k = 0; k < 4u; k++)
+        dg.hp[k] = dg.in[k] ? dg_hpmax(k) : 0;
+    dg_say("RETREAT");
 }
 
 /* every drawing of HOME: the time since the last one, in beats of the tempo */
@@ -217,23 +277,36 @@ static void dg_tick(void)
         dg.mon_atk--;
     if (dg.msg_f)
         dg.msg_f--;
-    if (!song.playing || !dg_up()) {                     /* camping: no walking, healing */
+    if (!song.playing || !dg_party_n()) {                /* camping: no walking, the fallen raised, healing */
+        if (dg.wipe)
+            dg_retreat();
+        for (k = 0; k < 4u; k++)
+            if (dg_fallen(k))
+                dg_raise(k, 1);
         if ((now >> 9) != ((now - dt) >> 9))
             for (k = 0; k < 4u; k++)
                 if (dg.in[k] && dg.hp[k] < dg_hpmax(k))
                     dg.hp[k]++;
+        dg_cut = 0;
         return;
     }
     {
         uint32_t bpm = (uint32_t)clamp(song.g[G_BPM], 20, 300), add = dt * bpm * 65536u / 60000u;   /* a beat: 65536 */
-        if (dg.mon && dg.mon_dist <= 1u) {               /* fighting: a round a beat, the view standing still */
+        if (!dg.wipe && !dg_up())                        /* (fallen, and nobody else: as a fallen party) */
+            dg.wipe = DG_WIPE;
+        if (dg.wipe || (dg.mon && dg.mon_dist <= 1u)) {  /* fighting: a round a beat, the view standing still */
             dg.fphase += add;
             if (dg.fphase >= 65536u) {
                 dg.fphase &= 0xFFFFu;
                 dg.beat_odd ^= 1u;
-                dg_fight();
+                if (dg.wipe) {
+                    if (!--dg.wipe)
+                        dg_retreat();
+                } else
+                    dg_fight();
             }
             dg.phase = 0;
+            dg_cut = dg_deadly() ? dg.dead & 15u : 0u;
             return;
         }
         dg.fphase = 0;
@@ -251,6 +324,7 @@ static void dg_tick(void)
             }
         }
     }
+    dg_cut = dg_deadly() ? dg.dead & 15u : 0u;
 }
 
 /* ------------------------------------------------------------------------------ the drawing --- */
@@ -347,7 +421,6 @@ static void graph_dungeon(void)
     uint32_t ph = dg.phase;
     uint16_t ceil = ux_mix(T_SURF, T_BG, 60), flo = ux_mix(T_SURF, T_RAISE, 40), far = T_BG;
     char b[16];
-    dg_tick();
     if (song.playing && dg_up() && !(dg.mon && dg.mon_dist <= 1u))   /* the walk's bob */
         bob = (int32_t)((ph < 32768u ? ph : 65535u - ph) >> 13) - 2;
     cy = DG_Y0 + DG_H / 2 - 4 + bob;
@@ -407,9 +480,8 @@ static void graph_dungeon(void)
     fmt_int(b, dg.kills);
     str_cpy(b + str_len(b), " KO", 8);
     cv_text_r(DG_X0 + DG_W - 4, DG_Y0, &AF_S, b, T_MID, ceil);
-    if (!song.playing || !dg_up())
-        cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, !dg_up() && dg.in[0] + dg.in[1] + dg.in[2] + dg.in[3] == 0u ?
-                   "NO PARTY: ADD STEPS" : "CAMP", T_TEXT, ceil);
+    if (!song.playing || !dg_party_n())
+        cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, !dg_party_n() ? "NO PARTY: ADD STEPS" : "CAMP", T_TEXT, ceil);
     else if (dg.msg_f && dg.msg)
         cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, dg.msg, T_TEXT, ceil);
     /* the party: four slots, class, level, health */
@@ -421,13 +493,17 @@ static void graph_dungeon(void)
             cv_text_on(x + 4, DG_HUD + 3, &AF_S, DG_CLASS[k], T_DIM, bg);
             continue;
         }
-        cv_text_on(x + 4, DG_HUD - 1, &AF_S, DG_CLASS[k], dg.hp[k] > 0 ? (dg.swing[k] ? T_ACCENT : T_TEXT) : T_DIM, bg);
+        if (dg_fallen(k)) {                              /* fallen: its track cut (DUNGEON) or only down (the slot: the track) */
+            cv_text_in(x, DG_HUD + 3, w, &AF_S, dg_deadly() ? "CUT" : "KO", dg_deadly() ? T_ACCENT : T_DIM, bg);
+            continue;
+        }
+        {   /* (health hidden: a wounded one's name blinks, under a third) */
+            uint32_t hurt = dg.hp[k] * 3 < dg_hpmax(k) && ((fm1_ms >> 8) & 1u);
+            cv_text_on(x + 4, DG_HUD + 3, &AF_S, DG_CLASS[k], dg.swing[k] || hurt ? T_ACCENT : T_TEXT, bg);
+        }
         b[0] = 'L';
         b[1] = (char)('0' + dg.lvl[k] % 10u);
         b[2] = 0;
-        cv_text_r(x + w - 4, DG_HUD - 1, &AF_S, dg.hp[k] > 0 ? b : "KO", T_MID, bg);
-        cv_rect(x + 4, DG_HUD + 15, w - 8, 3, ux_mix(bg, T_BG, 40));
-        cv_rect(x + 4, DG_HUD + 15, (w - 8) * clamp(dg.hp[k], 0, dg_hpmax(k)) / dg_hpmax(k), 3,
-                dg.hp[k] * 3 < dg_hpmax(k) ? T_ACCENT : T_THEME);
+        cv_text_r(x + w - 4, DG_HUD + 3, &AF_S, b, T_MID, bg);
     }
 }

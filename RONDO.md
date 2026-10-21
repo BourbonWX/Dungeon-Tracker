@@ -89,13 +89,13 @@ undo (SAVE held); `tests/dice_test.c` listens to 900 rolls and checks none clip,
 
 HOME's view is a small first-person dungeon crawl played by your song. While the transport runs, the party walks
 one square per beat at the song's tempo. Goblins, skeletons and slimes come up the corridor and are fought one round
-per beat, and every fifth floor has an ogre in the middle. Stopped, the party makes CAMP and heals.
+per beat, and every fifth floor has an ogre in the middle. The game keeps running whatever page you are on.
 
 | Track | Adventurer | Fights with |
 |---|---|---|
 | T1 | FTR fighter | a sword |
-| T2 | CLR cleric | heals the party when it is hurt, otherwise a strike |
-| T3 | DWF dwarf | an axe, more hit points |
+| T2 | CLR cleric | heals the party when it is hurt, otherwise a strike; raises the fallen |
+| T3 | DWF dwarf | an axe, more health |
 | T4 | MAG mage | a bolt every other beat, hits hard |
 
 * Every track that has steps and is not muted joins the party. With no steps anywhere the view reads NO PARTY.
@@ -103,12 +103,38 @@ per beat, and every fifth floor has an ogre in the middle. Stopped, the party ma
   * notes on, and distinct pitches (on a kit, distinct drums);
   * chords and parameter locks;
   * chances, conditions, ratchets and nudges.
-* After 24 squares the party takes the stairs one floor down (B1, B2, …). Monsters grow with depth. A party that
-  falls retreats one floor up, healed.
-* A lone simple loop stays near the top (B4 or so after ten minutes). A full, busy four-track song goes past B30.
+* **Health is hidden.** It is 6 + 4 per level (the dwarf gets 4 more), so a simple kick loop has 10 and a busy track
+  42. A wounded adventurer's name blinks (under a third of its health). Make a track busier mid-fight and it gains the
+  extra health at once.
+* After 24 squares the party takes the stairs one floor down (B1, B2, …). Monsters grow with depth.
 
-The game is display only. Nothing in it touches the sound or the saved project, and it starts over at power-on. It
-draws from the palette, so it follows MENU > COLOR.
+### Falling cuts the track
+
+When an adventurer's health reaches 0 it falls, and **its track is cut from the mix** until it is back on its feet.
+The slot reads CUT and the view says e.g. DWARF FALLS: T3 CUT. The cut works like PERFORM's black-key mutes: a
+click-free fade, with the sequencer still running underneath, so the track comes back in time. The reverb and delay
+tails ring out. Nothing is saved, and the track's MUTE is not touched.
+
+A fallen adventurer gets back up:
+
+* when the cleric raises it: a 1 in 5 chance each beat the party walks, while T2's cleric stands. The view says
+  T1 BACK (etc.).
+* at the stairs: everyone fallen stands up on the next floor, at half health.
+* when the whole party falls: the song is silent for one bar (4 beats), then the party retreats a floor up, healed.
+* when you stop the transport: the party camps, and the fallen are raised.
+
+Muting and unmuting a fallen track does not raise it.
+
+How often it happens (ten minutes at 120 BPM, 20 runs each): a lone kick loop reaches about B4 and is silent about
+6 % of the time (it falls roughly twice a minute). A kit, chords and bass reach about B21, and each track drops out
+for a bar or two roughly every 30 seconds between them. A busy four-track song reaches about B36, and its tracks are
+cut less than 0.1 % of the time.
+
+**MENU > DISPLAY > HOME** chooses the mode. **DUNGEON** (the default) cuts tracks. **PEACEFUL** plays the same game
+with nothing cut. TRACKS and LEVELS are Felucca's track views, with nothing cut and the game running unseen.
+
+The game is otherwise display only: it never changes the saved project, and it starts over at power-on. It draws from
+the palette, so it follows MENU > COLOR.
 
 ## The tracker (SEQ)
 
@@ -151,7 +177,8 @@ otherwise they just play. SAVE held undoes, as everywhere in Felucca.
   layer's 16 white keys) but still plays in projects and user presets that use it.
 * Presets of the CYC engines cannot be starred as favourites (Felucca's settings keep rows 14 and 15 of the
   favourites for MIDI LEARN and other settings).
-* HOME shows the dungeon instead of the scope.
+* HOME shows the dungeon instead of the scope; in DUNGEON mode a fallen adventurer cuts its track (MENU > DISPLAY >
+  HOME: DUNGEON, PEACEFUL, TRACKS, LEVELS).
 * The splash and version read `RONDO R0.1`.
 * `RONDO_LAYOUT=0` builds Felucca's shared 8-voice budget and power-on sounds (used to run Felucca's own tests).
 * The voice counts are `TRK_CAP` in `firmware/src/core.h`; change them there if you want another layout.

@@ -6,7 +6,13 @@
  * 2. stopped: the party camps (no walking); playing: a beat a square, at the tempo (120 BPM: 2 squares a second).
  * 3. ten minutes at 120 BPM, 20 seeds: a busy four-track song reaches deeper floors than one simple track, on average,
  *    and both go below B1; nothing hangs, the floors stay 1..99.
- * 4. the drawing: HOME drawn over a minute of play in every palette without a fault (the stub display). */
+ * 4. the drawing: HOME drawn over a minute of play in every palette without a fault (the stub display).
+ * 5. health and falls: the most health grows with the track's level, and a track made busier gains it at once; an
+ *    adventurer at 0 falls and its track is cut (dg_cut) while DUNGEON plays, not in PEACEFUL nor stopped; muting and
+ *    unmuting does not raise it; the cleric raises, the stairs raise; the whole party fallen: a bar (DG_WIPE beats) of
+ *    silence, then the retreat a floor up, healed; stopping raises everyone.
+ * 6. the sound: a cut track's audio ramps to silence and comes back when raised (perform.c's black-key mute).
+ * 7. ten minutes x 20 seeds: the simple loop is cut now and then, the busy song (almost) never. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
@@ -61,19 +67,65 @@ static void reset_game(uint32_t seed)
     dg.floor = dg.best = 1;
     dg.rng = seed * 2654435761u + 1u;
 }
+static uint32_t cut_ms[4], play_ms;
 static uint32_t play(uint32_t seconds)               /* the deepest floor reached */
 {
-    uint32_t ms, best = 1;
+    uint32_t ms, best = 1, k;
     song.playing = 1;
     song.g[G_BPM] = 120;
     for (ms = 0; ms < seconds * 1000u; ms += 33u) {
         fm1_ms += 33u;
         dg_tick();
+        play_ms += 33u;
+        for (k = 0; k < 4u; k++)
+            cut_ms[k] += ((dg_cut >> k) & 1u) * 33u;
         best = dg.floor > best ? dg.floor : best;
         if (dg.floor < 1u || dg.floor > 99u) return 0;
     }
     song.playing = 0;
     return best;
+}
+
+static void fell(uint32_t k)                          /* a fight until adventurer k falls (the others kept at full) */
+{
+    uint32_t i, j, f = dg.floor;
+    dg.floor = 60;                                       /* (blows the cleric's healing cannot keep up with) */
+    for (i = 0; i < 400u && !dg_fallen(k); i++) {
+        for (j = 0; j < 4u; j++)
+            if (j != k && dg.in[j] && !dg_fallen(j))
+                dg.hp[j] = dg_hpmax(j);
+        dg.hp[k] = 1;
+        dg.mon = DM_GOBLIN;
+        dg.mon_dist = 1;
+        dg.mon_max = dg.mon_hp = 9999;
+        dg_fight();
+    }
+    dg.floor = (uint8_t)f;
+    dg.mon = DM_NONE;
+    dg.mon_dist = 0;
+}
+static void ticks(uint32_t ms)
+{
+    while (ms >= 33u) {
+        fm1_ms += 33u;
+        dg_tick();
+        ms -= 33u;
+    }
+}
+static uint64_t energy(uint32_t track, uint32_t nblocks)   /* the track's sound in the mix over nblocks */
+{
+    int32_t o[2u * CTL];
+    uint64_t e = 0;
+    uint32_t b, i;
+    (void)track;
+    for (b = 0; b < nblocks; b++) {
+        events_block(CTL);
+        memset(o, 0, sizeof o);
+        mix_block(o, CTL);
+        for (i = 0; i < 2u * CTL; i++)
+            e += (uint64_t)(o[i] < 0 ? -o[i] : o[i]);
+    }
+    return e;
 }
 
 int main(void)
@@ -138,6 +190,133 @@ int main(void)
     snprintf(what, sizeof what, "10 minutes x 20 seeds: one simple track reaches B%.1f on average (least B%u), a busy song B%.1f (least B%u)",
              deep_simple / 20.0, lo_simple, deep_busy / 20.0, lo_busy);
     ok4(what, deep_busy > deep_simple + 20u && lo_simple > 1u && lo_simple && lo_busy);
+    {   /* 7. (the simple and the busy runs alternate: measured again apart) */
+        double simple_cut, busy_cut = 0;
+        memset(cut_ms, 0, sizeof cut_ms);
+        play_ms = 0;
+        for (s = 0; s < 20u; s++) { simple_song(); reset_game(300 + s); ui_home_view = HV_SCOPE; fm1_ms += 2000u; play(600); }
+        simple_cut = 100.0 * cut_ms[0] / play_ms;
+        memset(cut_ms, 0, sizeof cut_ms);
+        play_ms = 0;
+        for (s = 0; s < 20u; s++) { busy_song(); reset_game(300 + s); ui_home_view = HV_SCOPE; fm1_ms += 2000u; play(600); }
+        for (k = 0; k < 4u; k++)
+            busy_cut += 100.0 * cut_ms[k] / play_ms / 4.0;
+        snprintf(what, sizeof what, "falls cut the simple loop %.1f %% of the time, a busy song's tracks %.2f %%", simple_cut, busy_cut);
+        ok4(what, simple_cut > 2.0 && simple_cut < 15.0 && busy_cut < 1.0);
+    }
+
+    /* 5. health and falls */
+    {
+        int16_t lo, hi;
+        simple_song();
+        reset_game(9);
+        fm1_ms += 2000u;
+        dg_party();
+        lo = dg_hpmax(0);
+        busy_song();
+        fm1_ms += 2000u;
+        dg_party();
+        hi = dg_hpmax(0);
+        snprintf(what, sizeof what, "hidden health: the simple kick's most %d, the busy kit's %d; the busy kit gained it at once (%d)",
+                 lo, hi, dg.hp[0]);
+        ok4(what, hi > 2 * lo && dg.hp[0] == hi);
+    }
+    busy_song();
+    reset_game(10);
+    ui_home_view = HV_SCOPE;
+    song.playing = 1;
+    song.g[G_BPM] = 120;
+    ticks(100);
+    fell(2);
+    ticks(66);
+    ok4("T3's dwarf falls: T3 cut while DUNGEON plays, the others not", dg_fallen(2) && dg_cut == 4u && dg.msg &&
+        str_eq(dg.msg, "DWARF FALLS: T3 CUT"));
+    ui_home_view = HV_PEACE;
+    ticks(66);
+    ok4("  HOME PEACEFUL: still fallen, nothing cut", dg_fallen(2) && dg_cut == 0u);
+    ui_home_view = HV_TRACKS;
+    ticks(66);
+    ok4("  HOME TRACKS: nothing cut", dg_cut == 0u);
+    ui_home_view = HV_SCOPE;
+    trk[2].p[P_MUTE] = 1;
+    ticks(1100);
+    trk[2].p[P_MUTE] = 0;
+    fm1_ms += 1100u;
+    dg_party();
+    ticks(66);
+    ok4("  muted and unmuted: still fallen, still cut", dg_fallen(2) && (dg_cut & 4u));
+    {
+        uint32_t i;
+        dg.walked = 0;
+        for (i = 0; i < DG_FLOOR - 1u && dg_fallen(2); i++)
+            dg_walk();
+        snprintf(what, sizeof what, "the cleric raises the dwarf (%u beats walked), at half health; T3 back", i);
+        ok4(what, !dg_fallen(2) && dg.hp[2] == dg_hpmax(2) / 2 && dg.walked < DG_FLOOR);
+        ticks(66);
+        ok4("  its cut lifted", dg_cut == 0u);
+    }
+    trk[1].p[P_MUTE] = 1;                                /* no cleric: only the stairs */
+    fm1_ms += 1100u;
+    dg_party();
+    fell(0);
+    {
+        uint32_t i, f = dg.floor;
+        dg.walked = 0;
+        for (i = 0; i < DG_FLOOR - 1u; i++)
+            dg_walk();
+        ok4("no cleric: the fighter stays down the whole floor", dg_fallen(0));
+        dg_walk();
+        ok4("  the stairs: up again on the next floor", !dg_fallen(0) && dg.floor == f + 1u);
+    }
+    trk[1].p[P_MUTE] = 0;
+    simple_song();                                       /* the whole party: the fighter alone */
+    reset_game(11);
+    ui_home_view = HV_SCOPE;
+    song.playing = 1;
+    ticks(100);
+    dg.floor = 6;
+    fell(0);
+    ticks(66);
+    ok4("the whole party falls: the song cut, a bar of silence", dg.wipe && dg_cut == 1u);
+    ticks(2100);                                         /* (4 beats at 120 BPM: 2 s) */
+    ok4("  then they retreat a floor up, healed, the song back", !dg.wipe && !dg.dead && dg_cut == 0u && dg.floor == 5u &&
+        dg.hp[0] == dg_hpmax(0));
+    fell(0);
+    ticks(66);
+    song.playing = 0;
+    ticks(66);
+    ok4("stopped: a camp, the fallen raised, nothing cut", !dg.dead && !dg.wipe && dg_cut == 0u);
+
+    /* 6. the sound */
+    {
+        uint64_t on, off, back;
+        busy_song();
+        for (k = 1; k < NTRK; k++)
+            trk[k].p[P_MUTE] = 1;                        /* only T1's drums */
+        reset_game(12);
+        ui_home_view = HV_SCOPE;
+        song.master_q12 = 4096;
+        seq_start();
+        song.playing = 1;
+        ticks(1100);
+        on = energy(0, 690);                             /* half a second */
+        fell(0);
+        ticks(33);
+        energy(0, 1380);                                 /* (the ramp, the reverb's and delay's tails: a second) */
+        off = energy(0, 690);
+        song.playing = 0;
+        ticks(33);
+        song.playing = 1;
+        ticks(33);
+        energy(0, 50);
+        back = energy(0, 690);
+        snprintf(what, sizeof what, "the sound: T1 cut goes silent (%.0f -> %.0f), raised it plays again (%.0f)",
+                 (double)on, (double)off, (double)back);
+        ok4(what, on > 0u && off * 1000u < on && back * 4u > on);
+        song.playing = 0;
+        for (k = 1; k < NTRK; k++)
+            trk[k].p[P_MUTE] = 0;
+    }
 
     /* 4. */
     {
