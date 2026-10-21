@@ -168,6 +168,8 @@ static int check(const char *what, int ok)
 static void ui_power_on(void)
 {
     uint32_t i;
+    dg_game = 0;                                  /* (RONDO: the dungeon's game off, as RAM at power-on) */
+    dg_cut = 0;
     memset(trk, 0, sizeof trk);
     memset(&song, 0, sizeof song);
     memset(midi_lit_ms, 0, sizeof midi_lit_ms); midi_seen = 0;   /* (1.5.5: no MIDI IN light) */

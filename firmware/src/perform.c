@@ -90,6 +90,8 @@ static volatile uint32_t perf_mask;   /* main: the FX button's bit while its lay
 static volatile uint32_t kb_mask;     /* main: the button bits whose hold makes keys a layer's (ui_layer.c), 0 = none */
 static volatile uint8_t kb_lock;      /* main: a layer locked open (#83, no button held): 1 keys are the layer's, 2 FX's */
 static volatile uint8_t perf_solo;    /* main: tracks soloed in the GLO layer (the others muted as by a black key) */
+static uint8_t dg_game;               /* main: RONDO, MENU > GAME > DUNGEON ON: the dungeon's game runs (ui_dungeon.c);
+                                       * off at power-on (not saved): HOME's corridor is then only scenery */
 static volatile uint8_t dg_cut;       /* main: RONDO, tracks whose adventurer has fallen (ui_dungeon.c), muted as by a
                                        * black key (never P_MUTE, never saved) */
 static volatile uint8_t perf_kill;    /* main: every effect off (the menu, a dialog, UBOOT) */

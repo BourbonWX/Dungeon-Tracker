@@ -12,7 +12,10 @@
  *    unmuting does not raise it; the cleric raises, the stairs raise; the whole party fallen: a bar (DG_WIPE beats) of
  *    silence, then the retreat a floor up, healed; stopping raises everyone.
  * 6. the sound: a cut track's audio ramps to silence and comes back when raised (perform.c's black-key mute).
- * 7. ten minutes x 20 seeds: the simple loop is cut now and then, the busy song (almost) never. */
+ * 7. ten minutes x 20 seeds: the simple loop is cut now and then, the busy song (almost) never.
+ * 8. the game off (power-on): the corridor walks a square a beat, the party and levels shown, but no monster in ten
+ *    minutes, no floor, nothing cut; MENU > GAME > DUNGEON (a tab of its own, OFF at power-on) switches it: ON a run
+ *    from B1, OFF the run over and a cut lifted at once. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
@@ -66,6 +69,7 @@ static void reset_game(uint32_t seed)
     memset(&dg, 0, sizeof dg);
     dg.floor = dg.best = 1;
     dg.rng = seed * 2654435761u + 1u;
+    dg_game = 1;                                         /* (sections 1..7: the game on) */
 }
 static uint32_t cut_ms[4], play_ms;
 static uint32_t play(uint32_t seconds)               /* the deepest floor reached */
@@ -229,14 +233,11 @@ int main(void)
     ticks(100);
     fell(2);
     ticks(66);
-    ok4("T3's dwarf falls: T3 cut while DUNGEON plays, the others not", dg_fallen(2) && dg_cut == 4u && dg.msg &&
+    ok4("T3's dwarf falls: T3 cut while the game plays, the others not", dg_fallen(2) && dg_cut == 4u && dg.msg &&
         str_eq(dg.msg, "DWARF FALLS: T3 CUT"));
-    ui_home_view = HV_PEACE;
-    ticks(66);
-    ok4("  HOME PEACEFUL: still fallen, nothing cut", dg_fallen(2) && dg_cut == 0u);
     ui_home_view = HV_TRACKS;
     ticks(66);
-    ok4("  HOME TRACKS: nothing cut", dg_cut == 0u);
+    ok4("  HOME showing TRACKS: still cut (the game runs whatever is shown)", dg_cut == 4u);
     ui_home_view = HV_SCOPE;
     trk[2].p[P_MUTE] = 1;
     ticks(1100);
@@ -316,6 +317,63 @@ int main(void)
         song.playing = 0;
         for (k = 1; k < NTRK; k++)
             trk[k].p[P_MUTE] = 0;
+    }
+
+    /* 8. the game off */
+    ui_power_on();
+    ok4("power-on: the game off", !dg_game && !menu_get(MI_GAME));
+    {
+        uint32_t i, ok = 1, c0;
+        busy_song();
+        dg_game_set(0);
+        song.playing = 1;
+        song.g[G_BPM] = 120;
+        c0 = dg.cell;
+        for (i = 0; i < 600000u / 33u; i++) {
+            fm1_ms += 33u;
+            dg_tick();
+            ok &= !dg.mon && !dg.dead && !dg_cut && dg.floor == 1u && !dg.kills;
+        }
+        snprintf(what, sizeof what, "off, ten minutes playing: %u squares walked, the party in (levels %u %u %u %u), no monster, nothing cut",
+                 dg.cell - c0, dg.lvl[0], dg.lvl[1], dg.lvl[2], dg.lvl[3]);
+        ok4(what, ok && dg.cell - c0 >= 1150u && dg.cell - c0 <= 1250u && dg.in[0] && dg.in[3] && dg.lvl[1] >= 3u);
+    }
+    ok4("MENU: GAME, a tab of its own after SYSTEM, its one row DUNGEON (OFF / ON, a value)",
+        MI_TAB[MI_GAME] == MTAB_GAME && MTAB_GAME == MTAB_COUNT - 1u && str_eq(MTAB_NAME[MTAB_GAME], "GAME") &&
+        mtab_rows(MTAB_GAME) == 1u && str_eq(MI_NAME[MI_GAME], "DUNGEON") && menu_valued(MI_GAME) &&
+        !MI_ACTION(MI_GAME) && menu_n(MI_GAME) == 2u && str_eq(menu_vname(MI_GAME, 0), "OFF") &&
+        str_eq(menu_vname(MI_GAME, 1), "ON") && MI_ACTION(MI_ABOUT) && !menu_valued(MI_ABOUT));
+    dg.floor = 9;
+    menu_put(MI_GAME, 1);
+    ok4("  ON: a run from B1, everyone at full", dg_game && menu_get(MI_GAME) && dg.floor == 1u && !dg.dead &&
+        dg.hp[1] == dg_hpmax(1));
+    ticks(100);
+    fell(1);
+    ticks(66);
+    ok4("  a fall cuts as before", (dg_cut & 2u) != 0u);
+    menu_put(MI_GAME, 0);
+    ok4("  OFF: the run over, the cut lifted at once", !dg_game && !dg_cut && !dg.dead && !dg.mon);
+    ticks(66);
+    ok4("  and stays lifted", !dg_cut);
+    {   /* the menu by the panel: HOLD HOME, ALGORITHM back one tab from DISPLAY (wraps) to GAME, a knob right */
+        song.playing = 0;
+        go_home();
+        frames(100);
+        hold(B_HOME);
+        frames(100);
+        ui.menu_sel = 0;                                 /* (DISPLAY's first row) */
+        turn(EN_ALGO, -1);
+        frames(50);
+        ok4("the panel: HOME held opens the MENU, ALGORITHM back from DISPLAY: GAME > DUNGEON", ui.menu &&
+            ui.menu_sel == MI_GAME);
+        turn(EN_K1, 1);
+        frames(50);
+        ok4("  KNOB 1 right: ON", dg_game == 1u);
+        turn(EN_K1, -1);
+        frames(50);
+        ok4("  left: OFF", dg_game == 0u);
+        hold(B_HOME);
+        frames(100);
     }
 
     /* 4. */

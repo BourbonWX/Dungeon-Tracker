@@ -1,7 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 RONDO contributors. Built on Felucca (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* RONDO's HOME: a first-person dungeon crawl in the style of the old grid crawlers, played by the song. While the
- * transport plays the party walks one square a beat (the tempo's), monsters come up the corridor and are fought a
+/* RONDO's HOME: a first-person dungeon crawl in the style of the old grid crawlers, played by the song.
+ * TWO STATES. Off (the default, at every power-on): HOME's corridor is scenery only. While the transport plays the
+ * party walks it a square a beat, and the HUD shows each track's adventurer and level; nothing is rolled, no monster
+ * comes, nothing is cut. MENU > GAME > DUNGEON ON (hold HOME for the MENU; dg_game, not saved) starts a run at B1:
+ * the game below plays on every page until it is switched off, which ends the run and lifts every cut at once.
+ * The game: the party walks one square a beat (the tempo's), monsters come up the corridor and are fought a
  * round a beat. The song is the party:
  *   - every track that has steps and is not muted is one adventurer: T1 the FIGHTER (a sword), T2 the CLERIC (heals
  *     the party), T3 the DWARF (an axe, more hit points), T4 the MAGE (a bolt, every other beat, hard);
@@ -12,13 +16,13 @@
  *     a lone simple loop stays near the top.
  * Each adventurer's health is hidden (no bar: a wounded one's name blinks): its most is 6 + 4 per level (the dwarf 4
  * more), so a busier track takes more blows; a track made busier mid-fight gains the difference at once.
- * A FALL CUTS THE TRACK (MENU > DISPLAY > HOME DUNGEON; PEACEFUL: the same game, nothing cut): an adventurer at 0 health
+ * A FALL CUTS THE TRACK (whatever HOME shows, whatever page is up): an adventurer at 0 health
  * falls and its track is muted as by a PERFORM black key (dg_cut: perform.c ramps it out and back, the sequencer runs
  * on, nothing is saved) until it is back on its feet:
  *   - the cleric, standing, raises a fallen one: a chance each beat walked (1 in 5), at half health;
  *   - the stairs: everyone fallen gets up at half health on the next floor;
  *   - the whole party fallen: the song is silent for a bar (DG_WIPE beats), then they retreat a floor up, healed;
- *   - stopped (or HOME set to anything but DUNGEON): no cuts; stopping is a camp, the fallen are raised.
+ *   - stopped: no cuts; stopping is a camp, the fallen are raised.
  * Muting or emptying a fallen track does not raise it: it stays fallen until one of the above.
  * The game runs on every page (ui_input.c calls dg_tick), not only while HOME is drawn.
  * Stopped: the party camps (no walking, they heal). Everything is drawn from the palette's colours (the walls RAISE
@@ -111,10 +115,10 @@ static uint32_t dg_level(const track_t *t)
 }
 static int16_t dg_hpmax(uint32_t k) { return (int16_t)(6 + 4 * dg.lvl[k] + (k == DG_DWF ? 4 : 0)); }
 static int dg_fallen(uint32_t k) { return (dg.dead >> k) & 1u; }
-static int dg_deadly(void)                               /* a fall cuts its track: DUNGEON, playing */
+static int dg_deadly(void)                               /* a fall cuts its track: the game on, playing */
 {
 #if RONDO_LAYOUT
-    return ui_home_view == HV_SCOPE && song.playing;
+    return dg_game && song.playing;
 #else
     return 0;
 #endif
@@ -261,6 +265,36 @@ static void dg_retreat(void)                             /* after the fallen par
 }
 
 /* every drawing of HOME: the time since the last one, in beats of the tempo */
+/* MENU > GAME > DUNGEON: on, a new run from B1 (everyone at full); off, the run over, every cut lifted at once */
+static void dg_game_set(uint32_t on)
+{
+    uint32_t r = dg.rng ? dg.rng : fm1_ms * 2654435761u + 1u, cell = dg.cell;
+    memset(&dg, 0, sizeof dg);
+    dg.floor = dg.best = 1;
+    dg.rng = r;
+    dg.cell = cell;                                      /* (the corridor goes on where it was) */
+    dg.t_ms = fm1_ms;
+    dg_game = (uint8_t)(on != 0u);
+    dg_cut = 0;
+    dg_party();                                          /* (all of them join at full) */
+    if (on)
+        dg_say("INTO THE DUNGEON");
+}
+
+/* off: the scenery's walk only, a square a beat while playing */
+static void dg_stroll(uint32_t dt)
+{
+    uint32_t bpm = (uint32_t)clamp(song.g[G_BPM], 20, 300);
+    dg_cut = 0;
+    if (!song.playing)
+        return;
+    dg.phase += dt * bpm * 65536u / 60000u;
+    while (dg.phase >= 65536u) {
+        dg.phase -= 65536u;
+        dg.cell++;
+    }
+}
+
 static void dg_tick(void)
 {
     uint32_t now = fm1_ms, dt = dg.t_ms ? now - dg.t_ms : 0, k;
@@ -268,6 +302,10 @@ static void dg_tick(void)
     if (dt > 200u)
         dt = 200u;
     dg_party();
+    if (!dg_game) {
+        dg_stroll(dt);
+        return;
+    }
     for (k = 0; k < 4u; k++)
         if (dg.swing[k])
             dg.swing[k]--;
@@ -421,7 +459,8 @@ static void graph_dungeon(void)
     uint32_t ph = dg.phase;
     uint16_t ceil = ux_mix(T_SURF, T_BG, 60), flo = ux_mix(T_SURF, T_RAISE, 40), far = T_BG;
     char b[16];
-    if (song.playing && dg_up() && !(dg.mon && dg.mon_dist <= 1u))   /* the walk's bob */
+    dg_party();                                          /* (once a second at most: the HUD current even before a tick) */
+    if (song.playing && (!dg_game || (dg_up() && !(dg.mon && dg.mon_dist <= 1u))))   /* the walk's bob */
         bob = (int32_t)((ph < 32768u ? ph : 65535u - ph) >> 13) - 2;
     cy = DG_Y0 + DG_H / 2 - 4 + bob;
     dg_vrect(DG_X0, DG_Y0, DG_W, cy - DG_Y0, ceil);
@@ -449,6 +488,8 @@ static void graph_dungeon(void)
             dg_vrect(tx - 2, ty - 4 - fl, 5, 4 + fl, T_ACCENT);
         }
     }
+    if (!dg_game)                                        /* off: the scenery and the party, nothing else */
+        goto party;
     /* the monster */
     if (dg.mon && dg.mon_dist) {
         int32_t z = ((int32_t)dg.mon_dist << 8) - (int32_t)(ph >> 8) + 60;
@@ -484,6 +525,7 @@ static void graph_dungeon(void)
         cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, !dg_party_n() ? "NO PARTY: ADD STEPS" : "CAMP", T_TEXT, ceil);
     else if (dg.msg_f && dg.msg)
         cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, dg.msg, T_TEXT, ceil);
+party:
     /* the party: four slots, class, level, health */
     for (k = 0; k < 4; k++) {
         int32_t x = 6 + k * 58, w = 54;

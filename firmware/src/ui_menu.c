@@ -187,7 +187,11 @@ static void menu_head(void)
  *                   CLOSE is in the header: the four would not fit in S (cv_key_row drops words, from the last)
  * Drawn in two bands (the canvas holds 124 rows) split in a gap between two rows; while the tabs slide only their
  * strip (24..58) is drawn again */
-static const uint16_t MTAB_ICON[MTAB_COUNT] = {ICON_X_EYE, ICON_X_KNOB, ICON_X_SPEAKER, ICON_MIDI, ICON_X_COG};
+static const uint16_t MTAB_ICON[MTAB_COUNT] = {ICON_X_EYE, ICON_X_KNOB, ICON_X_SPEAKER, ICON_MIDI, ICON_X_COG,
+#if RONDO_LAYOUT
+                                                ICON_PROB,     /* RONDO: GAME, the dice of the dungeon */
+#endif
+                                                };
 #define MT_Y 29                                        /* the tab bar */
 #define MT_H 24
 #define MT_IW 26                                       /* a cushion with its icon alone (the icon centred in it; 1.2, five
@@ -243,10 +247,15 @@ static void mt_layout(int32_t *a, int32_t *x, int32_t *w)
         w[k] = MT_IW + (MT_NX - MT_IW + text_w(mt_font(), MTAB_NAME[k]) + 10) * a[k] / MT_ONE;
         tot += w[k];
     }
-    cum = MT_X0 + HALF_UP(MT_X1 - MT_X0 - tot - (int32_t)(MTAB_COUNT - 1u) * MT_GAP);   /* (the bar centred) */
-    for (k = 0; k < MTAB_COUNT; k++) {                 /* the same gap between every two, sliding too */
-        x[k] = cum;
-        cum += w[k] + MT_GAP;
+    {   /* RONDO: six tabs (GAME): the gaps narrow where the bar would not fit (MENU > LARGE, CONTROL shown), never below 2 */
+        int32_t gap = MT_GAP, room = MT_X1 - MT_X0 - tot;
+        if (room < gap * (int32_t)(MTAB_COUNT - 1u))
+            gap = room / (int32_t)(MTAB_COUNT - 1u) < 2 ? 2 : room / (int32_t)(MTAB_COUNT - 1u);
+        cum = MT_X0 + HALF_UP(MT_X1 - MT_X0 - tot - (int32_t)(MTAB_COUNT - 1u) * gap);   /* (the bar centred) */
+        for (k = 0; k < MTAB_COUNT; k++) {             /* the same gap between every two, sliding too */
+            x[k] = cum;
+            cum += w[k] + gap;
+        }
     }
 }
 static void menu_tabs(void)                            /* (in screen rows: cv_oy set by the caller) */
@@ -316,7 +325,7 @@ static void menu_row(uint32_t k, uint32_t row)
         cv_text_r(MR_VR, vy, &AF_M, b, val, bg);
         return;
     }
-    if (row >= MI_VALUES) {                            /* CALIBRATION, ABOUT: OCT+ opens them */
+    if (MI_ACTION(row)) {                              /* CALIBRATION, ABOUT: OCT+ opens them */
         GFX_HOOK_ALIGN(0, y, 0, y + h, AL_V, "menu row chevron centred up/down");
         cv_icon_in(MR_VR - 12, y, 0, h, 12, ICON_X_RIGHT, sel ? T_INK : T_MID, bg);
         return;

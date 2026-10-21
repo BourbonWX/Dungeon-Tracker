@@ -87,9 +87,17 @@ undo (SAVE held); `tests/dice_test.c` listens to 900 rolls and checks none clip,
 
 ## HOME: the dungeon
 
-HOME's view is a small first-person dungeon crawl played by your song. While the transport runs, the party walks
-one square per beat at the song's tempo. Goblins, skeletons and slimes come up the corridor and are fought one round
-per beat, and every fifth floor has an ogre in the middle. The game keeps running whatever page you are on.
+HOME's view is a first-person dungeon corridor. While the transport runs, the party walks one square per beat at the
+song's tempo, and the four slots along the bottom show which tracks are in the party and each one's level.
+
+**The game is off by default.** With it off, the corridor is just scenery: no monsters, no dice rolls, nothing cut.
+RONDO is a plain four-track FM groovebox.
+
+**To play:** hold **HOME** for the MENU, turn **ALGORITHM** to the **GAME** tab (one step left from DISPLAY), and
+switch **DUNGEON** on with KNOB 1 or OCT+. A run starts at B1. Goblins, skeletons and slimes come up the corridor
+and are fought one round per beat, and every fifth floor has an ogre in the middle. The game then runs on every page,
+whatever HOME shows. Switch DUNGEON off to end the run: every cut track comes back at once. It is off again after
+every power-on; it is not saved.
 
 | Track | Adventurer | Fights with |
 |---|---|---|
@@ -130,11 +138,11 @@ How often it happens (ten minutes at 120 BPM, 20 runs each): a lone kick loop re
 for a bar or two roughly every 30 seconds between them. A busy four-track song reaches about B36, and its tracks are
 cut less than 0.1 % of the time.
 
-**MENU > DISPLAY > HOME** chooses the mode. **DUNGEON** (the default) cuts tracks. **PEACEFUL** plays the same game
-with nothing cut. TRACKS and LEVELS are Felucca's track views, with nothing cut and the game running unseen.
+MENU > DISPLAY > HOME still offers Felucca's TRACKS and LEVELS views in place of the corridor (DUNGEON). With the
+game on, it keeps playing, and cutting, behind them.
 
-The game is otherwise display only: it never changes the saved project, and it starts over at power-on. It draws from
-the palette, so it follows MENU > COLOR.
+The game never changes the saved project, and it starts over at power-on. It draws from the palette, so it follows
+MENU > COLOR.
 
 ## The tracker (SEQ)
 
@@ -177,8 +185,9 @@ otherwise they just play. SAVE held undoes, as everywhere in Felucca.
   layer's 16 white keys) but still plays in projects and user presets that use it.
 * Presets of the CYC engines cannot be starred as favourites (Felucca's settings keep rows 14 and 15 of the
   favourites for MIDI LEARN and other settings).
-* HOME shows the dungeon instead of the scope; in DUNGEON mode a fallen adventurer cuts its track (MENU > DISPLAY >
-  HOME: DUNGEON, PEACEFUL, TRACKS, LEVELS).
+* HOME shows the dungeon corridor instead of the scope (MENU > DISPLAY > HOME: DUNGEON, TRACKS, LEVELS).
+* A sixth MENU tab, GAME, holds DUNGEON OFF / ON: the dungeon's game, where a fallen adventurer cuts its track. Off at
+  power-on, not saved. (Felucca's tests that count five tabs fail in a RONDO build; they pass with `RONDO_LAYOUT=0`.)
 * The splash and version read `RONDO R0.1`.
 * `RONDO_LAYOUT=0` builds Felucca's shared 8-voice budget and power-on sounds (used to run Felucca's own tests).
 * The voice counts are `TRK_CAP` in `firmware/src/core.h`; change them there if you want another layout.
