@@ -8,6 +8,8 @@ installer's package format) and adds:
   PITCH, DECAY, COLOR, SWEEP, SHAPE and LEVEL.
 * **FMTONE** (engine 15) — a two-operator FM voice with a sub and a detuned second carrier, for chords, pads, basses
   and leads, with a timbre envelope (COLOR / CNTR / MSUS) instead of an operator editor.
+* **A tracker sequencer** in place of Felucca's step grid and piano roll: every track has its own tracker screen,
+  steps as rows top to bottom, and **SEQ held + SELECT turned** picks the track whose tracker opens when SEQ is let go.
 * **A fixed voice layout**, so no track ever steals a voice from another:
 
 | Track | Default sound | Voices | Role |
@@ -44,9 +46,8 @@ The per-track channels can also be set one by one: `MENU > MIDI > MIDI IN: TRACK
 Everything on those pages can be **parameter-locked per step** (hold a step in SEQ, turn a knob), as in Felucca.
 Hold **EDIT**: black keys 1–4 mute KICK, SNARE, HAT, PERC.
 
-The step grid keeps Felucca's eight rows; on FMKIT they play its four voices:
-BD → KICK, SD → SNARE, CP → PERC (clap pitch), CH → HAT closed, OH → HAT open (OPEN sets its length; a closed hat
-chokes it), TM / RS / CB → PERC at tom, rim and cowbell pitches. MIDI notes follow the GM drum map the same way.
+MIDI notes follow the GM drum map: 35/36 KICK, 38/40 SNARE, 42/44 closed HAT, 46 open HAT (OPEN sets its length; a
+closed hat chokes it), cymbals a long open HAT, toms, rim, clap, cowbell and the rest PERC at their own pitches.
 
 **FMTONE** pages:
 
@@ -61,8 +62,43 @@ is off.
 **Presets** — FMKIT: CYCLE KIT, 808ISH, 909ISH, GRIT KIT, METAL KIT, DUB KIT. FMTONE: FM PAD, CHORD EP, STAB,
 GLASS PAD, ORGAN, FM BASS, SUB BASS, PLUCK BASS (the three basses are mono), FM LEAD, SYNC LEAD, BRASS, BELL.
 
+## The tracker (SEQ)
+
+Tap **SEQ**: the selected track's **TRACKER** (tap again: AUTOMATION). Steps run top to bottom, `00` to LEN − 1; the
+cursor's row sits in the middle and, while the transport plays, the view follows the playing row (marked on the left)
+until you touch a knob. Every fourth step number is brighter, and a dot after a number means the step has a lock.
+
+**Pick a track:** hold **SEQ** and turn **SELECT**: a list of T1–T4 with their sounds; let go of SEQ and that track's
+tracker opens. Each track keeps its own cursor row and column. Holding SEQ *without* turning SELECT still opens SEQ
+TOOLS (LEN, DIV, SWING, GATE, euclid, double, half, …).
+
+| Knob | Does |
+|---|---|
+| KNOB 1 ROW | move the cursor row |
+| KNOB 2 COL | move the cursor column |
+| KNOB 3 | change the cell |
+| KNOB 4 | the column's second value (below) |
+
+| Column | Shows | KNOB 3 | KNOB 4 |
+|---|---|---|---|
+| NOTE (melodic tracks) | `C-4`, `---` empty, ` \| ` held (tie) | on an empty row writes the last note played, then transposes | LEN: how many steps the note holds (ties) |
+| BD / SD (kits) | `o` hit, `O` accent, `.` none | hit on / off | accent |
+| HH | `x` closed, `o` open | none → closed → open | accent |
+| PC | `c` clap, `t` tom, `r` rim, `b` bell | none → c → t → r → b | accent |
+| VL | velocity in hex (`60` = 96) | velocity | FLAG: – / ACC / SLD / A+S |
+| CHN | chance %, or a condition `1:2` … `4:4`, `FIL`, `!FI` | chance, then conditions | – |
+| R | ratchet 2–4 | ×1–×4 | – |
+| N | nudge −8…+7 sixteenths | nudge | – |
+| FX | a parameter lock: short name + hex value (`BDP41`, `DEC3A`) | lock the parameter on this step | which parameter (the engine's eight, a kit's voice values, level, pan, envelope, sends) |
+
+**EDIT** clears the cursor's cell (on NOTE: the whole step and its locks, and the cursor moves down). Keys: with the
+track armed (**REC**) and the transport stopped they write the cursor's step (on a kit, its drums) and move down;
+otherwise they just play. SAVE held undoes, as everywhere in Felucca.
+
 ## Differences from Felucca, in short
 
+* SEQ's STEP and DETAIL pages (piano roll, drum grid, per-step detail lanes) are replaced by the TRACKER; AUTOMATION
+  stays. Felucca's own UI tests that drive the grid or the roll no longer apply.
 * Engines 14 and 15 added; SLICE (13) is no longer offered in the engine lists (so all engines still fit the EDIT
   layer's 16 white keys) but still plays in projects and user presets that use it.
 * Presets of the CYC engines cannot be starred as favourites (Felucca's settings keep rows 14 and 15 of the

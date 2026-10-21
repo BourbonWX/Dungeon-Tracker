@@ -1239,10 +1239,9 @@ static uint32_t graph_signature(void)
                                                      * levels, FB; the operator pages: the operator, the stage) */
         h ^= (fm6_pgen[(t - trk) % NTRK] + 1u) * 2246822519u + (fop_op + 1u) * 40503u + (fop_stg + 1u) * 7919u;
     if (pg->scope == SC_ENGINE && ENGINES[t->eng_req % NENGINES] == &ENG_SAMPLE) h ^= sample_wave.pos * 13u + sample_wave.key;
-    if (pg->graph == GR_ROLL) {
+    if (pg->graph == GR_ROLL) {                      /* (RONDO: the tracker's rows, columns, FX parameter, follow) */
         uint32_t ph = song.playing ? t->seq_idx : 0xFFFFu;
-        if (ph / 16u != ui.bank)
-            ph = 0xFFFFu;                            /* the roll shows the cursor's bank only */
+        h ^= (tk_center(t) + 1u) * 2654435761u + tk.col[song.sel % NTRK] * 7919u + tk.fx[song.sel % NTRK] * 104729u;
         h ^= steps_hash(t) + ph * 31u + ui.cursor * 7919u + ui.lane * 104723u + ui.bank * 613u +
              drum_mute[trk_index(t) % NPART] * 2654435761u;
         {                                            /* the parameter locks' marks (the roll, the grid) */
@@ -2230,6 +2229,64 @@ static void graph_song(void)
                      i < 4u ? "[K3] ADD SECTION" : "[SAVE] PROJECT A-D", T_MID, T_SURF, x0 - 10 - SG_X0);
     }
 }
+/* RONDO: SEQ > TRACKER (ui_tracker.c). A header of the column names (the cursor's column in the accent), then the
+ * steps as rows, the middle row the cursor's (the playing one while following); the cursor's row on RAISE, its cell
+ * framed; the playing row marked on the left in the accent; every fourth step number brighter (the beats); an empty
+ * cell DIM; past LEN nothing */
+#define TK_ROW 12                                    /* px a row */
+#define TK_Y0 15                                     /* the first row's top (the header above it) */
+static const uint8_t TK_X_SYN[] = {30, 64, 88, 118, 134, 158};
+static const uint8_t TK_X_KIT[] = {30, 49, 68, 88, 106, 126, 153, 167, 187};
+static void graph_tracker(const track_t *t, uint16_t c)
+{
+    uint32_t n = tk_ncols(t), len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP), mid = tk_center(t), col = tk.col[song.sel % NTRK],
+             rows = (uint32_t)(graph_h() - TK_Y0 - 2) / TK_ROW, half = (rows - 1u) / 2u, r, k;
+    const uint8_t *X = tk_kit(t) ? TK_X_KIT : TK_X_SYN;
+    int32_t first = (int32_t)mid - (int32_t)half;
+    if (col >= n)
+        col = n - 1u;
+    for (k = 0; k < n; k++)                          /* the header */
+        cv_text_on(X[k], 0, &AF_S, TC_HEAD[tk_colkind(t, k)], k == col ? T_ACCENT : T_MID, T_SURF);
+    cv_rect(6, TK_Y0 - 2, 228, 1, T_GRID);
+    for (r = 0; r < rows; r++) {
+        int32_t si = first + (int32_t)r, y = TK_Y0 + (int32_t)r * TK_ROW;
+        char b[8];
+        uint16_t bg = T_SURF;
+        if (si < 0 || si >= (int32_t)len)
+            continue;
+        if ((uint32_t)si == ui.cursor) {
+            bg = T_RAISE;
+            cv_rrect(6, y, 228, TK_ROW, 3, T_RAISE, T_SURF);
+        } else if (song.playing && (uint32_t)si == t->seq_idx) {   /* the playing row: a band */
+            bg = T_GRID;
+            cv_rect(6, y, 228, TK_ROW, T_GRID);
+        }
+        if (song.playing && (uint32_t)si == t->seq_idx)
+            cv_rect(3, y + 2, 3, TK_ROW - 4, T_ACCENT);
+        fmt_int(b, si);
+        if (si < 10) {
+            b[1] = b[0];
+            b[0] = '0';
+            b[2] = 0;
+        }
+        cv_text_on(8, y - 2, &AF_S, b, si % 4 == 0 ? T_TEXT : T_DIM, bg);
+        if (motion_lock_steps(trk_index(t)) >> si & 1u)   /* a lock on the step: a mark by its number */
+            cv_rect(24, y + 4, 2, 2, T_ACCENT);
+        for (k = 0; k < n; k++) {
+            uint32_t kind = tk_colkind(t, k);
+            int on = tk_cell(t, (uint32_t)si, kind, b);
+            uint16_t fg = on == 1 ? (k == col ? T_TEXT : c) : T_DIM;
+            int32_t x = X[k], w = text_w(&AF_S, b);
+            if ((uint32_t)si == ui.cursor && k == col) {   /* the cursor's cell */
+                cv_rrect(x - 2, y, w + 4, TK_ROW, 2, T_THEME, bg);
+                cv_text_on(x, y - 2, &AF_S, b, T_INK, T_THEME);
+                continue;
+            }
+            cv_text_on(x, y - 2, &AF_S, b, fg, bg);
+        }
+    }
+}
+
 static void draw_graph(void)
 {
     const page_t *pg = cur_page();
@@ -2275,12 +2332,7 @@ static void draw_graph(void)
             break;
         case GR_ROLL:
             cv_oy = 0;
-            if (detail_on())                          /* 1.5.1 (#199) */
-                graph_detail(t, c);
-            else if (drum_track(t))
-                graph_grid(t, c);
-            else
-                graph_roll(t, c);
+            graph_tracker(t, c);                      /* RONDO: the TRACKER (Felucca's roll, grid and DETAIL: unused) */
             break;
         case GR_SCALE:
             graph_scale(t, c);

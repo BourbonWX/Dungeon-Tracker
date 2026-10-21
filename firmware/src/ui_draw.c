@@ -1243,6 +1243,84 @@ static void draw_columns(void)
         }
         return;
     }
+    if (cur_page()->graph == GR_ROLL) {              /* RONDO: the TRACKER: ROW COL, the cell's value, its second */
+        const track_t *t = TSEL;
+        const step_t *st = &seq_steps(t)[ui.cursor % NSTEP];
+        uint32_t kind = tk_col(), on = 1;
+        char sn[8], sl[8], v2[12];
+        const char *l3 = TC_NAME[kind], *l4 = "", *u3 = "", *u4 = "";
+        fmt_int(sn, (int32_t)ui.cursor);
+        str_cpy(sl, "/", 8);
+        fmt_int(sl + 1, t->p[P_SLEN]);
+        draw_column(0, "ROW", sn, sl, VAL(0u), -1, ICON_AUTO);
+        draw_column(1, "COL", TC_NAME[kind], "", VAL(1u), -1, ICON_AUTO);
+        v2[0] = 0;
+        on = tk_cell(t, ui.cursor, kind, val) == 1;
+        if (kind == TC_NOTE) {
+            if (step_on(st)) {
+                note_name(val, st->note[0]);
+                if (st->n > 1) {
+                    str_cpy(sl, "+", 8);
+                    fmt_int(sl + 1, (int32_t)st->n - 1);
+                    u3 = sl;
+                }
+                fmt_int(v2, (int32_t)note_len(t, ui.cursor));
+            }
+            l4 = "LEN";
+        } else if (kind == TC_VEL) {
+            static const char *const F[4] = {"-", "ACC", "SLD", "A+S"};
+            if (step_on(st))
+                fmt_int(val, (st->flags & SF_ACCENT) ? 127 : ev_sval(st, EVK_VEL));
+            l4 = "FLAG";
+            str_cpy(v2, F[(st->flags & SF_ACCENT ? 1u : 0u) | (st->flags & SF_SLIDE ? 2u : 0u)], 12);
+        } else if (kind == TC_CHN && ev_sval(st, EVK_CHANCE) <= 100) {
+            fmt_int(val, ev_sval(st, EVK_CHANCE));
+            u3 = "%";
+        } else if (kind == TC_RAT) {
+            str_cpy(val, "x", 12);
+            fmt_int(val + 1, ev_sval(st, EVK_RATCH));
+        } else if (kind == TC_NDG) {
+            u3 = "/16";
+        } else if (kind == TC_FX) {
+            uint32_t id = tk_fx_id(t);
+            int16_t v;
+            l4 = "PARAM";
+            tk_fx_name(t, id, v2);
+            if (id != 0xFFu) {
+                const param_desc_t *d = track_desc(t, id);
+                const char *unit;
+                on = motion_lock_get(t, ui.cursor, id, &v);
+                if (!on)
+                    v = motion_base_value(t, id);
+                param_format(d, v, val, &unit);
+                u3 = unit;
+            }
+            l3 = "LOCK";
+        } else if (kind >= TC_BD && kind <= TC_PC) {
+            static const char *const PC[5] = {"--", "CLAP", "TOM", "RIM", "BELL"};
+            uint32_t lanes = step_lanes(st), acc = step_accents(st), k, a = 0;
+            if (kind == TC_HH) {
+                str_cpy(val, (lanes >> 4) & 1u ? "OPEN" : (lanes >> 3) & 1u ? "CLSD" : "--", 12);
+                a = (acc >> ((lanes >> 4) & 1u ? 4 : 3)) & 1u;
+            } else if (kind == TC_PC) {
+                str_cpy(val, PC[0], 12);
+                for (k = 0; k < 4u; k++)
+                    if ((lanes >> TK_PC_LANE[k]) & 1u) {
+                        str_cpy(val, PC[k + 1u], 12);
+                        a = (acc >> TK_PC_LANE[k]) & 1u;
+                    }
+            } else {
+                k = kind == TC_BD ? 0u : 1u;
+                str_cpy(val, (lanes >> k) & 1u ? "HIT" : "--", 12);
+                a = (acc >> k) & 1u;
+            }
+            l4 = "ACC";
+            str_cpy(v2, on ? (a ? "ON" : "OFF") : "", 12);
+        }
+        draw_column(2, l3, val, u3, on ? VAL(2u) : T_DIM, -1, ICON_AUTO);
+        draw_column(3, l4, v2, u4, l4[0] && v2[0] ? VAL(3u) : T_DIM, -1, ICON_AUTO);
+        return;
+    }
     if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* the grid: STEP LANE HIT ACC */
         const step_t *st = &seq_steps(TSEL)[ui.cursor];
         uint32_t b = 1u << ui.lane, on = (step_lanes(st) & b) != 0u, ac = (step_accents(st) & b) != 0u;

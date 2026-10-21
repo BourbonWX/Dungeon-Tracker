@@ -594,7 +594,7 @@ static uint32_t note_set_len(track_t *t, uint32_t i, uint32_t want)
  * down / up. KNOB 1 STEP, 2 LANE, 3 HIT, 4 ACC edit the cursor step. A sound load never converts the
  * steps: the grid shows a step's notes on their lanes (eng_drum.c step_lanes) and an edit makes the lane its
  * own (grid_own). Live recording on a DRUM track writes hits (seq.c rec_note) */
-static int grid_on(void) { return !ui.home && !ui.menu && !ui.confirm && cur_page()->graph == GR_ROLL && drum_track(TSEL); }
+static int grid_on(void) { return 0; }   /* RONDO: no DRUM grid (the tracker shows a kit's steps; its keys play) */
 /* SEQ > DETAIL (1.5.1, Discussion #199; params.c, between STEP and AUTOMATION): a step page as STEP (the cursor, the
  * roll's keys, the grid's lane and page keys), its knobs the cursor step's CHANCE RATCH NUDGE VEL (ui_input.c sd_turn),
  * its panel their lanes (ui_graph.c graph_detail). No state of its own: the page is what says so */
@@ -732,12 +732,10 @@ static void follow_hold(void)
 static void follow_poll(void)
 {
     uint32_t len = (uint32_t)TSEL->p[P_SLEN], want;
-    if (!song.playing || ui.home || ui.menu || ui.confirm || cur_page()->graph != GR_ROLL || drum_track(TSEL)) {
+    if (!song.playing || ui.home || ui.menu || ui.confirm || cur_page()->graph != GR_ROLL) {
         follow.hold = 0;
         return;
     }
-    if (len <= 16u)
-        return;
     if (ui.entry_open)                                 /* step entry has the keys: stay at the cursor */
         follow_hold();
     if (follow.hold) {
@@ -1747,15 +1745,18 @@ static const param_desc_t *home_param(uint32_t k, int16_t **vp)
 }
 
 /* select track i (KNOB 1 on TRACKS, the editor): its sound, pages and pattern from now on */
+/* RONDO's TRACKER (ui_tracker.c): each track's column, cursor row and FX parameter, the SEQ-held track picker */
+static struct { uint8_t col[NTRK], cur[NTRK], fx[NTRK], pick; } tk;
 static void track_select(uint32_t i)
 {
     if (i >= NTRK || i == song.sel)
         return;
+    tk.cur[song.sel % NTRK] = ui.cursor;         /* (RONDO: each track's tracker keeps its row) */
     song.sel = (uint8_t)i;
     ui.entry_open = 0;
     ui.hot_t = 0;
     ui.ev_keep = 0;                              /* (AUTOMATION: a row kept at its default was the other track's) */
-    ui.cursor = 0;
+    ui.cursor = (uint8_t)(tk.cur[i] < (uint32_t)clamp(trk[i].p[P_SLEN], 1, NSTEP) ? tk.cur[i] : 0u);
     ui.bank = 0;
     follow.hold = 0;                             /* (1.6, #242: the roll follows the new track's playhead) */
     sync_reload = 1;
@@ -1764,6 +1765,8 @@ static void track_select(uint32_t i)
 
 #include "ui_slice.c"                             /* EDIT > SLICES: SLICE's slices by hand (an action page too) */
 #include "ui_events.c"                            /* SEQ > AUTOMATION: locks, events, CHANCE, RATCH as a list (an action page) */
+static void cursor_move(int32_t c);                /* (ui_input.c) */
+#include "ui_tracker.c"                           /* RONDO: SEQ > TRACKER, the track picker */
 #include "midi_learn.c"                           /* MIDI LEARN (1.5): GLO + D4, a knob, a CC */
 
 /* ---------------------------------------------------- action pages --- */

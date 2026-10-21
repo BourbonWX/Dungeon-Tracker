@@ -528,7 +528,7 @@ static void tracks_edit(uint32_t slot, int32_t steps)
 /* SEQ > STEP's piano roll (not the DRUM grid, whose white keys stay its steps): where step recording writes */
 static int roll_on(void)
 {
-    return !ui.home && !ui.menu && !ui.confirm && song.seq_mode && cur_page()->graph == GR_ROLL && !drum_track(TSEL);
+    return !ui.home && !ui.menu && !ui.confirm && song.seq_mode && cur_page()->graph == GR_ROLL;   /* (RONDO: kits too) */
 }
 
 /* SONG: + ADD selected (song_row == count < CHAIN_ROWS): a section there, copying the one before it (the first: every
@@ -890,6 +890,10 @@ static void step_edit(uint32_t slot, int32_t steps)
 {
     step_t *st = &TSEL->step[ui.cursor];
     uint32_t i;
+    if (cur_page()->graph == GR_ROLL) {                   /* RONDO: the TRACKER */
+        tk_edit(slot, steps);
+        return;
+    }
     if (detail_on()) {                                    /* DETAIL (1.5.1): CHANCE RATCH NUDGE VEL */
         follow_hold();
         sd_turn(slot, steps);
@@ -1317,6 +1321,7 @@ static void layer_masks(void);
 static void layer_arm(uint32_t pressed, uint32_t now);
 static uint32_t layer_held(void);
 static int layer_knobs_quiet(void);
+static uint32_t ly_down(uint32_t l);              /* (ui_layer.c; RONDO: SEQ + SELECT) */
 static uint32_t layer_gesture(uint32_t now, uint32_t combo);
 static void layer_show(void);
 static void layer_tap(uint32_t l);
@@ -1347,6 +1352,8 @@ static int page_tap(uint32_t b)
     }
     if (b == B_EDIT && song.seq_mode && !ui.home && cur_page()->graph == GR_ROLL) {   /* STEP: EDIT clears the step */
         uint64_t held = lock_held();
+        if (!held && tk_clear())                        /* RONDO: the TRACKER's cell (NOTE: the step, below) */
+            return 1;
         if (chain_busy()) { ui_message("STOP TO EDIT"); return 1; }
         if (held) {                                     /* a step held: its locks (the step stays) */
             lock_clear(held);
@@ -1554,6 +1561,10 @@ static void ui_input(void)
         panel_enc(EN_ALGO);                             /* (another track: OCT- puts back the layer's track only) */
         if (glo && (sel = panel_enc(EN_SELECT)) != 0)   /* GLO + SELECT: the tempo, a combo (OCT- puts it back) */
             combo = 1;
+        if (ui.ly == LAYER_SEQ && ly_down(LAYER_SEQ) && (s = panel_enc(EN_SELECT)) != 0) {   /* RONDO: SEQ + SELECT: */
+            tk_pick_turn(s);                            /* the track picker (SEQ let go: its tracker) */
+            combo = 1;
+        }
     } else if ((kq = (uint32_t)layer_knobs_quiet()) != 0) {   /* a layer letting go: KNOB 1..4 are nobody's (#39) */
         for (k = 0; k < 4u; k++)
             if (panel_enc(EN_K1 + k) != 0)

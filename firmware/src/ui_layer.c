@@ -163,6 +163,16 @@ static void layer_arm(uint32_t pressed, uint32_t now)
  * opened, or a combo: KNOB 1..4 quiet for a while (#39: the knob still turning is not the page's) */
 static void layer_let_go(uint32_t quiet)
 {
+    if (tk.pick && ui.ly == LAYER_SEQ) {               /* RONDO: a track picked with SELECT: its tracker */
+        ui.ly_t0 = 0;
+        ui.ly = 0;
+        ui.lock = 0;
+        lys.quiet = 1;
+        lys.quiet_t = fm1_ms;
+        tk_pick_done();
+        return;
+    }
+    tk.pick = 0;
     if (eu.on)                                          /* (SEQ TOOLS: an open EUCLID is applied) */
         eu_close(&trk[lys.trk % NTRK], 1);
     if (ui.ly == LAYER_FX && !perf_latch_on)
@@ -1236,6 +1246,27 @@ static void layer_cards(uint32_t l)
     }
 }
 
+/* RONDO: SEQ held, SELECT turned: the four tracks, the one picked raised; SEQ let go opens its tracker */
+static void layer_pick(void)
+{
+    uint32_t k, p = tk.pick ? tk.pick - 1u : song.sel;
+    for (k = 0; k < NTRK; k++) {
+        int32_t y = 6 + (int32_t)k * 26;
+        int sel = k == p;
+        uint16_t bg = sel ? T_THEME : T_SURF, fg = sel ? T_INK : T_TEXT;
+        char b[16];
+        if (sel)
+            cv_rrect(8, y, 224, 24, 4, T_THEME, T_SURF);
+        b[0] = 'T';
+        b[1] = (char)('1' + k);
+        b[2] = 0;
+        cv_text_on(16, y + 3, &AF_M, b, fg, bg);
+        cv_text_on(48, y + 4, &AF_S, ENGINES[trk[k].eng_req % NENGINES]->name, sel ? T_INK : T_MID, bg);
+        trk_short_name(k, b);
+        cv_text_on(112, y + 4, &AF_S, b, fg, bg);
+    }
+}
+
 static void draw_layer(void)
 {
     uint32_t l = ui.layer % LAYER_N, sig = l * 7919u + ux.gen * 977u;
@@ -1261,7 +1292,7 @@ static void draw_layer(void)
     else if (l == LAYER_REC)
         sig += (uint32_t)ui_rec_prefs * 31u + (uint32_t)chain_busy() * 3u + (uint32_t)rec_clearable() * 5u + song.sel * 977u;
     else if (l == LAYER_SEQ)
-        sig += (uint32_t)drum_track(TSEL) * 31u + ui.lane * 5u + (uint32_t)chain_busy() * 3u + (uint32_t)TSEL->p[P_E0] * 131u + song.sel * 977u +
+        sig += tk.pick * 1000003u + (uint32_t)drum_track(TSEL) * 31u + ui.lane * 5u + (uint32_t)chain_busy() * 3u + (uint32_t)TSEL->p[P_E0] * 131u + song.sel * 977u +
                (eu.on ? 7u + eu.hits * 13u + eu.steps * 1031u + eu.rot * 65537u + (uint32_t)TSEL->p[P_SLEN] * 257u : 0u);
     else
         sig += snd_id() * 31u + (uint32_t)preset_favorite() * 5u + (uint32_t)chain_busy() * 3u + up_gen * 101u +
@@ -1277,6 +1308,8 @@ static void draw_layer(void)
             layer_glo();
         else if (l == LAYER_SCL)
             layer_scl();
+        else if (l == LAYER_SEQ && tk.pick)
+            layer_pick();
         else if (l == LAYER_SEQ)
             layer_seq();
         else if (l == LAYER_REC)

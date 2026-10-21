@@ -928,6 +928,9 @@ static void go_title_page(const char *title)
     uint32_t i;
     for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, title); i++)
         ;
+    if (i == NPAGES)                                  /* (RONDO: STEP and DETAIL are the TRACKER now) */
+        for (i = 0; i < NPAGES && PAGES[i].graph != GR_ROLL; i++)
+            ;
     ui.home = 0;
     ui.page = (uint8_t)i;
     page_entered();

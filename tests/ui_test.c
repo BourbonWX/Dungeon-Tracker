@@ -9831,6 +9831,7 @@ static int test_edit_quick_actions(void)
     return bad;
 }
 
+#ifndef UI_TEST_NO_MAIN                          /* (RONDO: tests/tracker_test.c includes this harness) */
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -9928,4 +9929,5 @@ int main(void)
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);
     return bad ? 1 : 0;
 }
+#endif
 #endif
