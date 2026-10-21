@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # RONDO's own host checks: the CYCLE engines and the voice layout (tests/rondo_test.c), with demo WAVs in
 # build/rondo_demo; the TRACKER and the SEQ + SELECT track picker (tests/tracker_test.c);
-# EDIT > DICE (tests/dice_test.c, with demos of eight rolls per role). Run from the repo root after the generate step (build/gen):
+# EDIT > DICE (tests/dice_test.c, with demos of eight rolls per role); the HOME dungeon (tests/dungeon_test.c). Run from the repo root after the generate step (build/gen):
 #   sh tests/run_rondo.sh            (NOCOST=1 skips the timing comparison)
 set -e
 cd "$(dirname "$0")/.."
@@ -14,3 +14,5 @@ ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/tracker_test t
 build/host/tracker_test
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/dice_test tests/dice_test.c -lm
 build/host/dice_test build/rondo_demo
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/dungeon_test tests/dungeon_test.c -lm
+build/host/dungeon_test

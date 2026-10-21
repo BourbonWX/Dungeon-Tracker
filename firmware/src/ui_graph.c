@@ -2231,6 +2231,8 @@ static void graph_song(void)
                      i < 4u ? "[K3] ADD SECTION" : "[SAVE] PROJECT A-D", T_MID, T_SURF, x0 - 10 - SG_X0);
     }
 }
+#include "ui_dungeon.c"                          /* RONDO: HOME's dungeon crawl */
+
 /* RONDO: EDIT > DICE (ui_dice.c). The dice in a grid of three across: each a die face (its pips: where its first value
  * sits in its range) and the part's name and value; a held die filled in the theme with HOLD, the cursor's framed;
  * just after a roll the rolled dice tumble for a few frames */
@@ -2362,7 +2364,7 @@ static void draw_graph(void)
         graph_ht = 100;
     } else if (ui.home) {
         cv_oy = 0;
-        graph_scope(c);
+        graph_dungeon();                             /* RONDO: the dungeon (ui_dungeon.c), in place of the scope */
     } else {
         switch (pg->graph) {
         case GR_ADSR:

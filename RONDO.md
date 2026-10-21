@@ -85,6 +85,31 @@ sounds, T3 bass sounds (low ratios, often a sub, short envelopes), T4 leads. A r
 RATIO keeps musical; if you hold a bright COLOR, RATIO rolls only among ratios that suit it. Successive rolls are one
 undo (SAVE held); `tests/dice_test.c` listens to 900 rolls and checks none clip, carry DC, hang or turn harsh.
 
+## HOME: the dungeon
+
+HOME's view is a small first-person dungeon crawl played by your song. While the transport runs, the party walks
+one square per beat at the song's tempo. Goblins, skeletons and slimes come up the corridor and are fought one round
+per beat, and every fifth floor has an ogre in the middle. Stopped, the party makes CAMP and heals.
+
+| Track | Adventurer | Fights with |
+|---|---|---|
+| T1 | FTR fighter | a sword |
+| T2 | CLR cleric | heals the party when it is hurt, otherwise a strike |
+| T3 | DWF dwarf | an axe, more hit points |
+| T4 | MAG mage | a bolt every other beat, hits hard |
+
+* Every track that has steps and is not muted joins the party. With no steps anywhere the view reads NO PARTY.
+* Each adventurer's level (L1–L9, in the HUD) is how much its track does. Levels rise with:
+  * notes on, and distinct pitches (on a kit, distinct drums);
+  * chords and parameter locks;
+  * chances, conditions, ratchets and nudges.
+* After 24 squares the party takes the stairs one floor down (B1, B2, …). Monsters grow with depth. A party that
+  falls retreats one floor up, healed.
+* A lone simple loop stays near the top (B4 or so after ten minutes). A full, busy four-track song goes past B30.
+
+The game is display only. Nothing in it touches the sound or the saved project, and it starts over at power-on. It
+draws from the palette, so it follows MENU > COLOR.
+
 ## The tracker (SEQ)
 
 Tap **SEQ**: the selected track's **TRACKER** (tap again: AUTOMATION). Steps run top to bottom, `00` to LEN − 1; the
@@ -126,6 +151,7 @@ otherwise they just play. SAVE held undoes, as everywhere in Felucca.
   layer's 16 white keys) but still plays in projects and user presets that use it.
 * Presets of the CYC engines cannot be starred as favourites (Felucca's settings keep rows 14 and 15 of the
   favourites for MIDI LEARN and other settings).
+* HOME shows the dungeon instead of the scope.
 * The splash and version read `RONDO R0.1`.
 * `RONDO_LAYOUT=0` builds Felucca's shared 8-voice budget and power-on sounds (used to run Felucca's own tests).
 * The voice counts are `TRK_CAP` in `firmware/src/core.h`; change them there if you want another layout.
@@ -154,7 +180,7 @@ git submodule update --init                             # firmware/engines (Felu
 ### Tests
 
 ```sh
-sh tests/run_rondo.sh          # RONDO's own checks (tests/rondo_test.c) and demo WAVs in build/rondo_demo
+sh tests/run_rondo.sh          # RONDO's checks (engines, tracker, dice, dungeon) and demo WAVs in build/rondo_demo
 ```
 
 `tests/run_tests.sh` is Felucca's full suite; build it with `CC="cc -DRONDO_LAYOUT=0"` to check Felucca's behaviour
