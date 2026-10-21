@@ -425,8 +425,12 @@ static uint32_t layer_btn(void);
  * track's (its patch's operators, ui_fm6op.c) */
 static int page_visible(uint32_t i)
 {
+    uint32_t ckit = TSEL->eng_req % NENGINES == ENGI_CKIT;   /* RONDO: FMKIT's pages */
+    if (PAGES[i].scope == SC_TRACK && PAGES[i].graph == GR_NONE && PAGES[i].fam == FAM_EDIT &&
+        PAGES[i].id[0] >= P_FM1_ATK && PAGES[i].id[0] <= P_FM4_LEVEL && PAGES[i].title[0] != 'O')
+        return ckit;                                  /* KICK SNARE HAT PERC SHAPE (not DIGITAL's OP pages) */
     if (PAGES[i].scope == SC_TRACK && PAGES[i].id[0] >= P_LN0 && PAGES[i].id[0] <= P_LN7)
-        return TSEL->eng_req % NENGINES == ENGI_DRUM;
+        return TSEL->eng_req % NENGINES == ENGI_DRUM || (ckit && PAGES[i].id[0] == P_LN0);   /* (FMKIT: LANES) */
     if (PAGES[i].id[0] == P_FTYPE)                    /* FILTER (1.5, #104): ANALOG's */
         return ENGINES[TSEL->eng_req % NENGINES] == &ENG_ANALOG;
     if (PAGES[i].graph >= GR_FMOP && PAGES[i].graph <= GR_FMENV)
@@ -1377,6 +1381,8 @@ static void apply_preset_to(track_t *t, uint32_t pi)
             t->p[P_DIST + i] = (int16_t)(pr->fx[i] ? pr->fx[i] - 1 : FX_DEF[i]);
     }
     fm6_track_loaded(t);                              /* FM6: the preset's patch (its SLOT) */
+    if (t->eng_req % NENGINES == ENGI_CKIT)           /* RONDO: the kit's four voices */
+        ck_kit_load(t, pi);
     load_end(t);
 }
 
@@ -1441,6 +1447,8 @@ static void clean_engine_of(track_t *t)
         t->p[P_REL] = CLEAN_REL;
     }
     fm1_irq_on();
+    if (ei == ENGI_CKIT)                              /* RONDO: FMKIT's clean sound: its first kit's voices */
+        ck_kit_load(t, 0);
     if (ei == ENGI_FM6) {                             /* the init voice as the track's own patch (SLOT: OWN) */
         uint8_t v[FP_SIZE + 1u];
         fm6_unpack(FM6_INIT, v);

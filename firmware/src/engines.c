@@ -40,6 +40,7 @@ static uint8_t eng_mem_owner[NPART];       /* engine index + 1 whose state is in
 #if FELUCCA_SLICE
 #include "eng_slice.c"
 #endif
+#include "eng_cycle.c"          /* RONDO: CYCLE KIT (14) and CYCLE TONE (15) */
 
 /* the editor protocol, user presets and projects store these indices: append, never reorder */
 static const engine_t *const ENGINES[NENGINES] = {
@@ -63,6 +64,8 @@ static const engine_t *const ENGINES[NENGINES] = {
 #if FELUCCA_SLICE
     &ENG_SLICE,                  /* 13 (FELUCCA_SLICE=0 builds without it) */
 #endif
+    &ENG_CKIT,                   /* 14 (ENGI_CKIT): RONDO */
+    &ENG_CTONE,                  /* 15 (ENGI_CTONE): RONDO */
 };
 
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
@@ -112,17 +115,17 @@ static const char *snd_missing(const track_t *t, uint32_t *code)
  * engine indices, never DIGITAL's reserved 1 (with FELUCCA_FM4 it follows FM6). The indices stay as they are (the
  * stores and the protocol hold them); only this table orders them */
 static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
+    14, 15,                      /* RONDO: FMKIT, FMTONE first */
     0,                           /* ANALOG */
     12,                          /* FM6 */
 #if FELUCCA_FM4
     1,                           /* DIGITAL */
 #endif
     2, 3, 4, 5, 6, 7, 8, 9,      /* PHASE LOFI SAMPLE VOICE TRIO WHEEL GRAIN PHYS */
+#if !FELUCCA_FM4
     11,                          /* NOISE */
-#if FELUCCA_SLICE
-    13,                          /* SLICE */
 #endif
-    10,                          /* DRUM */
+    10,                          /* DRUM (RONDO: SLICE, 13, not offered: core.h NENG_SHOWN) */
 };
 
 /* the engines one can pick (engine 1 only with FELUCCA_FM4), in ENGINE_ORDER: eng_ok(e), the n-th of them
@@ -187,6 +190,11 @@ static const struct {
 #define NPATTERNS (sizeof PATTERNS / sizeof PATTERNS[0])
 
 /* the parts at power-on (engine, preset, PATTERNS[n - 1] in the sequencer, 0 = empty: all are): bass, pad, lead, drums */
-static const uint8_t TRK_DEF[NPART][3] = {{0, 4, 0}, {ENGI_FM6, 4, 0}, {3, 0, 0}, {ENGI_DRUM, 0, 0}}; /* ANALOG ACID,
-                                                                       * FM6 PAD (was DIGITAL PAD), LOFI PULSE LD, DRUM KIT */
+/* RONDO: T1 drums (FMKIT, the BEAT pattern), T2 chords / pads (FMTONE FM PAD), T3 bass (FMTONE FM BASS, mono),
+ * T4 lead (FMTONE FM LEAD); the sequencers empty but the drums' */
+#if RONDO_LAYOUT
+static const uint8_t TRK_DEF[NPART][3] = {{ENGI_CKIT, 0, 12}, {ENGI_CTONE, 0, 0}, {ENGI_CTONE, 5, 0}, {ENGI_CTONE, 8, 0}};
+#else
+static const uint8_t TRK_DEF[NPART][3] = {{0, 4, 0}, {ENGI_FM6, 4, 0}, {3, 0, 0}, {ENGI_DRUM, 0, 0}};   /* Felucca's */
+#endif
 static uint32_t trk_def_engine(uint32_t i) { return TRK_DEF[i % NPART][0]; }

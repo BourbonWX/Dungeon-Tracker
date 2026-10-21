@@ -57,10 +57,12 @@ static int ev_id_ok(const track_t *t, uint32_t id)
     const param_desc_t *d;
     if (ev_sid(id))
         return 1;
-    if (id >= P_COUNT || !motion_param(id) || id == P_ED_FX || (id >= P_FM1_ATK && id <= P_FM4_LEVEL))
+    if (id >= P_FM1_ATK && id <= P_FM4_LEVEL)          /* RONDO: FMKIT's voice values, on a FMKIT track */
+        return t->eng_req % NENGINES == ENGI_CKIT;
+    if (id >= P_COUNT || !motion_param(id) || id == P_ED_FX)
         return 0;
     if (id >= P_LN0 && id <= P_LN7)
-        return drum_track(t);
+        return t->eng_req % NENGINES == ENGI_CKIT ? id < P_LN0 + CK_N : drum_track(t);
     d = track_desc(t, id);
     return d && d->label && d->label[0] && d->label[0] != '-' && d->max > d->min;
 }

@@ -114,6 +114,8 @@ static uint32_t drum_lane(uint32_t note)
 static uint32_t drum_swaps(const track_t *t)
 {
     uint32_t kit = drum_kit_plays(t->p[P_E0]);
+    if (t->eng_req % NENGINES != ENGI_DRUM)              /* (RONDO: FMKIT's E0 is TUNE, no kit swaps lanes) */
+        return 0;
     return kit >= DK_80 ? DK_SWAP[kit - DK_80] : 0u;
 }
 

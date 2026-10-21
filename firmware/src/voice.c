@@ -111,8 +111,9 @@ static void track_lfo_tick(track_t *t)                  /* (one core: the whole 
 /* voices the engine may use (POLY and UNISON): its cap, else all of them */
 static uint32_t trk_nvoice(const track_t *t)
 {
-    uint32_t c = ENGINES[t->engine]->poly;
-    return c && c < NVOICE ? c : NVOICE;
+    uint32_t c = ENGINES[t->engine]->poly, cap = TRK_CAP[(uint32_t)(t - trk) % NPART];   /* RONDO: the track's cap */
+    c = c && c < NVOICE ? c : NVOICE;
+    return c < cap ? c : cap;
 }
 
 /* the part's voice mode: P_VOICE, POLY for an engine of hits (engine_t.oneshot: DRUM) */
@@ -188,7 +189,7 @@ static int voice_room(track_t *t, int soft)
 {
     track_t *vp = 0;
     uint32_t k;
-    if (voices_busy() < NVOICE)
+    if (voices_busy() < NBUDGET)
         return 1;
     k = voice_victim(t, soft, &vp);
     if (k == NVOICE)
@@ -217,8 +218,8 @@ static voice_t *voice_alloc(track_t *t, uint32_t note)
 {
     uint32_t i, np = trk_nvoice(t), best = np, low = np, nfree = 0;
     int32_t bd = 0x7FFFFFFF;
-    if (t->engine == ENGI_DRUM) {
-        voice_t *v = drum_reuse(t, note);
+    if (t->engine == ENGI_DRUM || t->engine == ENGI_CKIT) {   /* (RONDO: FMKIT, a voice per lane too) */
+        voice_t *v = t->engine == ENGI_DRUM ? drum_reuse(t, note) : ck_reuse(t, note);
         if (v)
             return voice_reuse(t, v);
     }
@@ -227,7 +228,7 @@ static voice_t *voice_alloc(track_t *t, uint32_t note)
             return voice_reuse(t, &t->v[i]);
         nfree += !t->v[i].active;
     }
-    if (nfree && voices_busy() >= NVOICE) {
+    if (nfree && voices_busy() >= NBUDGET) {
         track_t *vp = 0;
         uint32_t k = voice_victim(t, 0, &vp);
         if (k < np && vp == t)
@@ -670,7 +671,7 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     int32_t tune_fine = (song.g[G_TUNE] * 16 - tune * 100) * 2367 / 16000;   /* rest, in 1/4096 (1 ct = 2.367) */
     int32_t bend, bend16, bend_fine;
     uint32_t ti = (uint32_t)(t - trk);
-    if (ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM) {
+    if (ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM || ENGINES[eng_idx(t->eng_req)] == &ENG_CKIT) {
         midi_bend_q8[ti] = midi_bend_target[ti] = 0;
     } else {
         int32_t d = midi_bend_target[ti] - midi_bend_q8[ti];

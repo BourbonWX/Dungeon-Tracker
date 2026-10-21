@@ -225,6 +225,7 @@ static const uint8_t MIDI_CC_ENG[NENGINES] = {
 #if FELUCCA_SLICE
     0x80,                                             /* SLICE TONE */
 #endif
+    0x32, 0x25,                                       /* RONDO: FMKIT COLOR DECAY, FMTONE COLOR FDBK */
 };
 /* a CC sets parameter id of track t as a knob would: 0..127 over its range */
 static void midi_cc_set(track_t *t, uint32_t id, uint32_t value)
@@ -406,6 +407,6 @@ static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t ch, uint3
         midi_control(ch, d1, d2);
     } else if (st == 0xD0u)
         mod_midi(midi_track(ch), st, d1, d2);
-    else if (st == 0xC0u && mpc_io)                /* Program Change: the main loop loads it (ui.c midi_pc_poll) */
+    else if (st == 0xC0u && mpc_io && RONDO_PC_IN)  /* Program Change: the main loop loads it (ui.c midi_pc_poll) */
         mpc_io[trk_index(midi_track(ch))] = (uint8_t)(0x80u | d1);
 }

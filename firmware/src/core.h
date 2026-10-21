@@ -8,7 +8,24 @@
 #include <stdint.h>
 
 /* ------------------------------------------------------------ sizes --- */
-#define NVOICE 8                 /* voices per part, and the budget shared by all parts */
+#define NVOICE 8                 /* voices per part (each part's array) */
+/* RONDO: a fixed voice layout. Each track has its own cap (TRK_CAP) and the budget is their sum, so no track ever takes
+ * a voice from another: T1 DRUMS 4 (KICK SNARE HAT PERC), T2 CHORDS / PADS 4, T3 BASS 1 (mono), T4 LEAD 3 */
+#ifndef RONDO_LAYOUT
+#define RONDO_LAYOUT 1           /* 0: Felucca's shared budget of 8 and its power-on sounds (the upstream tests) */
+#endif
+/* RONDO: Program Change in is ignored by default. A sequencer such as the QY70 sends its own (GM / XG) program numbers
+ * at the start of a song, which would load other sounds onto the tracks; RONDO_PC_IN=1 builds Felucca's behaviour */
+#ifndef RONDO_PC_IN
+#define RONDO_PC_IN (!RONDO_LAYOUT)
+#endif
+#if RONDO_LAYOUT
+#define NBUDGET 12               /* voices sounding at once, all tracks */
+static const uint8_t TRK_CAP[4] = {4, 4, 1, 3};
+#else
+#define NBUDGET NVOICE
+static const uint8_t TRK_CAP[4] = {NVOICE, NVOICE, NVOICE, NVOICE};
+#endif
 #define NPART 4                  /* synth parts: tracks 1..4 */
 #define NTRK NPART               /* tracks (the formats and the protocol count these): every track is a part */
 #define NSTEP 64
@@ -28,10 +45,16 @@
                                             * second core (mod.c, voice.c SPREAD, eng_formant.c): one each with two cores,
                                             * one for all with one, as up to 1.6 */
 #define C1_PI(t) ((uint32_t)((t) - trk) % C1_NP)   /* a part's copy */
-#define NENGINES (13 + FELUCCA_SLICE)   /* SLICE (13) comes last: the other engines keep their numbers */
+#if !FELUCCA_SLICE
+#error "RONDO: the CYCLE engines are 14 and 15, after SLICE (13): build with FELUCCA_SLICE=1"
+#endif
+#define NENGINES 16              /* RONDO: SLICE (13), then CYCLE KIT (14) and CYCLE TONE (15), eng_cycle.c */
 #define ENGI_DIGITAL 1u          /* reserved without FELUCCA_FM4: never selectable (eng_ok), its sounds load as FM6 */
-#define NENG_SHOWN (NENGINES - !FELUCCA_FM4)   /* the engines one can pick: PRESETS, the EDIT layer, the editor,
-                                                * in the display order of engines.c ENGINE_ORDER */
+/* the engines one can pick (PRESETS, the EDIT layer, the editor), in the display order of engines.c ENGINE_ORDER.
+ * RONDO: all but two, so the EDIT layer's 16 white keys still hold every engine, INIT and CLEAN (ui_layer.c LY_INIT):
+ * SLICE (13) is not offered (its sounds in projects and user presets still play), and in FELUCCA_FM4 builds (tests only)
+ * DIGITAL is offered instead of NOISE */
+#define NENG_SHOWN (NENGINES - 2)
 #define UP_SLOTS 32u             /* user presets (upreset.c) */
 
 /* ------------------------------------------------------- parameters --- */
@@ -108,6 +131,8 @@ static void params_by_count(int16_t *out, const int16_t *in, uint32_t np, const 
 /* engine indices the stores name (engines.c ENGINES[]: append-only) */
 #define ENGI_PHYS 9u
 #define ENGI_DRUM 10u
+#define ENGI_CKIT 14u                    /* RONDO: CYCLE KIT (eng_cycle.c) */
+#define ENGI_CTONE 15u                   /* RONDO: CYCLE TONE */
 /* PHYS MODEL DRUM (MODEL 4, before 1.0) -> the DRUM engine, its E values in place: {MODEL, TUNE, TONE, DECY,
  * SNAP, ACC, KICK 0..127, PERC 0..127} -> {KIT, TUNE, TONE, DECY, SNAP, ACC, KICK 0..1, DRV 0}. 1 = it was one
  * (its engine is ENGI_DRUM now); projects (project.c) and user presets (upreset.c) */

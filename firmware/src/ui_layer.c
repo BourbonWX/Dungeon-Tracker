@@ -565,8 +565,21 @@ static uint32_t eqa_drum_on(const track_t *t, uint32_t l) { return !((drum_mute[
 #define EQA_LANE(l) {LK_SET, EQ_SHOW_MUTE, l, drum_lane_abbr, eqa_drum_mute, eqa_drum_on}
 static const eqa_t EQA_DRUM[NLANE] = {EQA_LANE(0), EQA_LANE(1), EQA_LANE(2), EQA_LANE(3), EQA_LANE(4), EQA_LANE(5),
     EQA_LANE(6), EQA_LANE(7)};
+/* RONDO: FMKIT, black keys 1..4 mute its voices KICK SNARE HAT PERC (eng_cycle.c ck_render reads drum_mute) */
+static const char *eqa_ck_name(const track_t *t, uint32_t l) { (void)t; return N_CK_ABBR[l & 3u]; }
+static void eqa_ck_mute(track_t *t, uint32_t l, uint32_t down)
+{
+    uint32_t k = trk_index(t) % NPART;
+    if (!down)
+        return;
+    drum_mute[k] ^= (uint8_t)(1u << l);
+    ui_say(N_CK_LANE[l & 3u], (drum_mute[k] >> l) & 1u ? " MUTED" : " ON");
+}
+#define EQA_CK(l) {LK_SET, EQ_SHOW_MUTE, l, eqa_ck_name, eqa_ck_mute, eqa_drum_on}
+static const eqa_t EQA_CKIT[CK_N] = {EQA_CK(0), EQA_CK(1), EQA_CK(2), EQA_CK(3)};
 static const eqa_set_t EQA[] = {
     {ENGI_DRUM, NLANE, EQA_DRUM},
+    {ENGI_CKIT, CK_N, EQA_CKIT},
 };
 typedef char eqa_fits[NLANE <= 11 ? 1 : -1];       /* (11 black keys) */
 

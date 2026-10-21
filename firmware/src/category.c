@@ -11,7 +11,7 @@
 enum { CAT_NONE, CAT_BASS, CAT_LEAD, CAT_PAD, CAT_PLUCK, CAT_KEYS, CAT_DRUM, CAT_FX, CAT_OTHER, CAT_N };
 static const char *const CAT_NAME[CAT_N] = {"-", "BASS", "LEAD", "PAD", "PLUCK", "KEYS", "DRUM", "FX", "OTHER"};
 /* the category a sound without one is listed under: a kit (DRUM, SLICE: engines 10, 13) DRUM, any other OTHER */
-static uint32_t cat_of_engine(uint32_t e) { return e == 10u || e == 13u ? CAT_DRUM : CAT_OTHER; }
+static uint32_t cat_of_engine(uint32_t e) { return e == 10u || e == 13u || e == 14u ? CAT_DRUM : CAT_OTHER; }   /* (14: RONDO's FMKIT) */
 
 #ifndef UP_HOST
 /* the factory presets' categories: per engine number (engines.c ENGINES[]), a letter per preset in its order (B BASS,
@@ -35,6 +35,9 @@ static const char *const PRESET_CAT[16] = {
     "FFFF",                      /* 11 NOISE: WIND, RAIN, ARCADE, METAL */
     "KUBLPUKU",                  /* 12 FM6: TINE EP, BELL, FM BASS, BRASS, PAD, MARIMBA, ORGAN, PLUCK */
     "DD",                        /* 13 SLICE: CHOP, STUTTER */
+    "DDDDDD",                    /* 14 FMKIT (RONDO): CYCLE 808ISH 909ISH GRIT METAL DUB */
+    "PKKPKBBBLLLU",              /* 15 FMTONE (RONDO): FM PAD, CHORD EP, STAB, GLASS PAD, ORGAN, FM BASS, SUB BASS,
+                                  * PLUCK BASS, FM LEAD, SYNC LEAD, BRASS, BELL */
 };
 static uint32_t preset_cat(uint32_t e, uint32_t k)    /* factory preset k of engine e */
 {
