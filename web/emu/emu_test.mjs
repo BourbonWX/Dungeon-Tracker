@@ -11,7 +11,7 @@
 // Then the cost: 1 s of a heavy song (FM6, PHYS, GRAIN chords, DRUM) against real time (BENCH_MAX, default 0.5:
 // fails above half of real time on this machine).
 import fs from "fs";
-import { storeSectors, restoreSectors, midiKnob, KNOB_CC, MASTER_CC } from "./worklet.js";
+import { WASI_STUB, storeSectors, restoreSectors, midiKnob, KNOB_CC, MASTER_CC } from "./worklet.js";
 
 const wasmPath = process.argv[2] || "build/emu/felucca.wasm", nativePath = process.argv[3];
 const bytes = fs.readFileSync(wasmPath);
@@ -21,7 +21,7 @@ let fails = 0;
 const check = (what, ok) => { console.log(`emu: ${what.padEnd(76)} ${ok ? "ok" : "FAIL"}`); if (!ok) fails++; };
 
 async function device(saved) {
-  const { instance } = await WebAssembly.instantiate(bytes, {});
+  const { instance } = await WebAssembly.instantiate(bytes, WASI_STUB);
   const ex = instance.exports, mem = ex.memory;
   ex._initialize();
   ex.web_nor_erase();
