@@ -1239,6 +1239,8 @@ static uint32_t graph_signature(void)
                                                      * levels, FB; the operator pages: the operator, the stage) */
         h ^= (fm6_pgen[(t - trk) % NTRK] + 1u) * 2246822519u + (fop_op + 1u) * 40503u + (fop_stg + 1u) * 7919u;
     if (pg->scope == SC_ENGINE && ENGINES[t->eng_req % NENGINES] == &ENG_SAMPLE) h ^= sample_wave.pos * 13u + sample_wave.key;
+    if (pg->graph == GR_DICE)                        /* RONDO: DICE: holds, cursor, the roll tumbling */
+        h ^= dice.hold[song.sel % NTRK] * 40503u + dice.cur[song.sel % NTRK] * 7919u + (dice.anim ? ui.frame : 0u) * 2654435761u;
     if (pg->graph == GR_ROLL) {                      /* (RONDO: the tracker's rows, columns, FX parameter, follow) */
         uint32_t ph = song.playing ? t->seq_idx : 0xFFFFu;
         h ^= (tk_center(t) + 1u) * 2654435761u + tk.col[song.sel % NTRK] * 7919u + tk.fx[song.sel % NTRK] * 104729u;
@@ -2229,6 +2231,45 @@ static void graph_song(void)
                      i < 4u ? "[K3] ADD SECTION" : "[SAVE] PROJECT A-D", T_MID, T_SURF, x0 - 10 - SG_X0);
     }
 }
+/* RONDO: EDIT > DICE (ui_dice.c). The dice in a grid of three across: each a die face (its pips: where its first value
+ * sits in its range) and the part's name and value; a held die filled in the theme with HOLD, the cursor's framed;
+ * just after a roll the rolled dice tumble for a few frames */
+static void dice_pips(int32_t x, int32_t y, uint32_t f, uint16_t fg)
+{
+    static const uint16_t P[7] = {0, 0x010, 0x101, 0x111, 0x145, 0x155, 0x16D};   /* bit r * 3 + c of the 3 x 3 */
+    uint32_t b, m = P[f < 7u ? f : 6u];
+    for (b = 0; b < 9u; b++)
+        if ((m >> b) & 1u)
+            cv_rect(x + 3 + (int32_t)(b % 3u) * 6, y + 3 + (int32_t)(b / 3u) * 6, 3, 3, fg);
+}
+static void graph_dice(const track_t *t, uint16_t c)
+{
+    uint32_t n = dice_count(t), k = song.sel % NTRK, d;
+    (void)c;
+    if (!dice_engine_ok(t)) {
+        panel_note("FMTONE / FMKIT", "ONLY", 0);
+        return;
+    }
+    for (d = 0; d < n; d++) {
+        int32_t x = 6 + (int32_t)(d % 3u) * 76, y = 3 + (int32_t)(d / 3u) * 39;
+        int held = (dice.hold[k] >> d) & 1u, cur = d == dice.cur[k] % n;
+        uint16_t bg = held ? T_THEME : T_RAISE, fg = held ? T_INK : T_TEXT;
+        uint32_t face = dice.anim && !held ? 1u + dice_rand() % 6u : dice_face(t, d);
+        char b[12];
+        cv_rrect(x, y, 72, 36, 5, bg, T_SURF);
+        if (cur)
+            cv_frame(x - 1, y - 1, 74, 38, T_ACCENT);
+        cv_rrect(x + 4, y + 6, 24, 24, 4, held ? T_INK : T_SURF, bg);
+        dice_pips(x + 4, y + 6, face, held ? T_THEME : T_TEXT);
+        cv_text_on(x + 32, y + 2, &AF_S, dice_name(t, d), held ? T_INK : T_MID, bg);
+        dice_text(t, d, b);
+        b[7] = 0;
+        cv_text_on(x + 32, y + 17, &AF_S, b, fg, bg);
+    }
+    if (dice.anim)
+        dice.anim--;
+}
+
 /* RONDO: SEQ > TRACKER (ui_tracker.c). A header of the column names (the cursor's column in the accent), then the
  * steps as rows, the middle row the cursor's (the playing one while following); the cursor's row on RAISE, its cell
  * framed; the playing row marked on the left in the accent; every fourth step number brighter (the beats); an empty
@@ -2329,6 +2370,10 @@ static void draw_graph(void)
             break;
         case GR_LFO:
             graph_lfo(t, c);
+            break;
+        case GR_DICE:
+            cv_oy = 0;
+            graph_dice(t, c);
             break;
         case GR_ROLL:
             cv_oy = 0;

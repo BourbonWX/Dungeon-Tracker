@@ -8,6 +8,8 @@ installer's package format) and adds:
   PITCH, DECAY, COLOR, SWEEP, SHAPE and LEVEL.
 * **FMTONE** (engine 15) — a two-operator FM voice with a sub and a detuned second carrier, for chords, pads, basses
   and leads, with a timbre envelope (COLOR / CNTR / MSUS) instead of an operator editor.
+* **DICE sound design**: on FMTONE and FMKIT tracks, every part of the sound is a die. Roll, hold the dice you like,
+  roll again, and the rest change around them, always inside ranges that sound musical.
 * **A tracker sequencer** in place of Felucca's step grid and piano roll: every track has its own tracker screen,
   steps as rows top to bottom, and **SEQ held + SELECT turned** picks the track whose tracker opens when SEQ is let go.
 * **A fixed voice layout**, so no track ever steals a voice from another:
@@ -61,6 +63,27 @@ is off.
 
 **Presets** — FMKIT: CYCLE KIT, 808ISH, 909ISH, GRIT KIT, METAL KIT, DUB KIT. FMTONE: FM PAD, CHORD EP, STAB,
 GLASS PAD, ORGAN, FM BASS, SUB BASS, PLUCK BASS (the three basses are mono), FM LEAD, SYNC LEAD, BRASS, BELL.
+
+## DICE (EDIT > DICE)
+
+On an FMTONE or FMKIT track, tap **EDIT** until **DICE** (after EDIT 1 and EDIT 2). Each die is one part of the sound:
+
+* FMTONE: RATIO, COLOR, CNTR, MSUS, FDBK, SWEEP, STACK, SUB and ENV (the amplitude envelope).
+* FMKIT: BD, SD, HH, PC (each voice's pitch, decay, color, sweep and shape together), MIX (the four levels) and FEEL
+  (open-hat length, click, drive, variation).
+
+| Control | Does |
+|---|---|
+| **OCT+** | ROLL: every die that is not held gets a new value |
+| KNOB 1 DIE | move between the dice |
+| KNOB 2 HOLD | right holds the die, left lets it go (held dice are filled in) |
+| KNOB 3 WILD | 100 %: a fresh roll; lower: each die only moves part of the way, for small variations |
+| KNOB 4 HIST / **OCT−** | step back through the last eight sounds before each roll (and forward again) |
+
+Play the keys between rolls to hear each one. The dice are weighted by the track's role: T2 rolls pad and chord
+sounds, T3 bass sounds (low ratios, often a sub, short envelopes), T4 leads. A rolled COLOR never goes past what its
+RATIO keeps musical; if you hold a bright COLOR, RATIO rolls only among ratios that suit it. Successive rolls are one
+undo (SAVE held); `tests/dice_test.c` listens to 900 rolls and checks none clip, carry DC, hang or turn harsh.
 
 ## The tracker (SEQ)
 

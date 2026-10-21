@@ -1243,6 +1243,26 @@ static void draw_columns(void)
         }
         return;
     }
+    if (cur_page()->graph == GR_DICE && dice_engine_ok(TSEL)) {   /* RONDO: DICE: DIE HOLD WILD HIST */
+        uint32_t k = song.sel % NTRK, n = dice_count(TSEL), d = dice.cur[k] % n;
+        char w[8], h[8];
+        fmt_int(w, (int32_t)dice_wild(k));
+        draw_column(0, "DIE", dice_name(TSEL, d), "", VAL(0u), -1, ICON_AUTO);
+        draw_column(1, "HOLD", (dice.hold[k] >> d) & 1u ? "ON" : "OFF", "", VAL(1u), -1, ICON_AUTO);
+        draw_column(2, "WILD", w, "%", VAL(2u), (int32_t)dice_wild(k) * 10, ICON_AUTO);
+        if (dice.eng[k] == TSEL->eng_req % NENGINES + 1u && dice.hn[k]) {   /* NOW, or how many rolls back */
+            if (dice.hpos[k]) {
+                h[0] = '-';
+                fmt_int(h + 1, (int32_t)dice.hpos[k]);
+            } else {
+                str_cpy(h, "NOW", 8);
+            }
+            draw_column(3, "HIST", h, "", VAL(3u), -1, ICON_AUTO);
+        } else {
+            draw_column(3, "HIST", "--", "", T_DIM, -1, ICON_AUTO);
+        }
+        return;
+    }
     if (cur_page()->graph == GR_ROLL) {              /* RONDO: the TRACKER: ROW COL, the cell's value, its second */
         const track_t *t = TSEL;
         const step_t *st = &seq_steps(t)[ui.cursor % NSTEP];

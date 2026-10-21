@@ -426,6 +426,8 @@ static uint32_t layer_btn(void);
 static int page_visible(uint32_t i)
 {
     uint32_t ckit = TSEL->eng_req % NENGINES == ENGI_CKIT;   /* RONDO: FMKIT's pages */
+    if (PAGES[i].graph == GR_DICE)                    /* RONDO: DICE, the FM engines' */
+        return ckit || TSEL->eng_req % NENGINES == ENGI_CTONE;
     if (PAGES[i].scope == SC_TRACK && PAGES[i].graph == GR_NONE && PAGES[i].fam == FAM_EDIT &&
         PAGES[i].id[0] >= P_FM1_ATK && PAGES[i].id[0] <= P_FM4_LEVEL && PAGES[i].title[0] != 'O')
         return ckit;                                  /* KICK SNARE HAT PERC SHAPE (not DIGITAL's OP pages) */
@@ -1767,6 +1769,7 @@ static void track_select(uint32_t i)
 #include "ui_events.c"                            /* SEQ > AUTOMATION: locks, events, CHANCE, RATCH as a list (an action page) */
 static void cursor_move(int32_t c);                /* (ui_input.c) */
 #include "ui_tracker.c"                           /* RONDO: SEQ > TRACKER, the track picker */
+#include "ui_dice.c"                              /* RONDO: EDIT > DICE */
 #include "midi_learn.c"                           /* MIDI LEARN (1.5): GLO + D4, a knob, a CC */
 
 /* ---------------------------------------------------- action pages --- */
@@ -1782,6 +1785,7 @@ static uint32_t act_cols(void)                   /* the columns that are actions
     if (ui.home)
         return 0;
     if (pg->graph == GR_EVENTS) return 16u;     /* AUTOMATION: no knob is an action; OCT+ by the row (ev_oct) */
+    if (pg->graph == GR_DICE) return 16u;       /* RONDO: DICE: OCT+ ROLL, OCT- back in HIST */
     if (pg->graph == GR_TOOLS) return 15u;
     if (pg->graph == GR_SONG)
         return 1u;                               /* PLAY / STOP (also the PLAY button) */
@@ -1805,6 +1809,7 @@ static uint32_t act_col(void)
 {
     if (!ui.home && cur_page()->graph == GR_SONG) return 1u;
     if (!ui.home && cur_page()->graph == GR_EVENTS) return 5u;
+    if (!ui.home && cur_page()->graph == GR_DICE) return 5u;
     return !ui.home && cur_page()->graph == GR_PATS ? 2u : ui.act;
 }
 
@@ -1813,6 +1818,7 @@ static const char *act_name(uint32_t c)          /* column c's action (the foote
     static const char *const UP_GO[3] = {"LOAD", "ERASE", "SAVE"};
     uint32_t id = cur_page()->id[c & 3u];
     if (cur_page()->graph == GR_EVENTS) return ev_act_name();
+    if (cur_page()->graph == GR_DICE) return "ROLL";
     if (cur_page()->graph == GR_TOOLS) {
         static const char *const actions[] = {"CLEAR", "INIT", "DELETE", "CLEAR"};
         return (c & 3u) == 1u && ui.tl_clean ? "CLEAN" : actions[c & 3u];   /* (1.5.5: KNOB 2 on: CLEAN INIT) */
@@ -1838,6 +1844,7 @@ static int act_ready(void)
     if (!c--)
         return 0;
     if (cur_page()->graph == GR_EVENTS) return ev_act_ready();
+    if (cur_page()->graph == GR_DICE) return 1;
     if (cur_page()->graph == GR_TOOLS)                  /* one case per column: CLEAR PAT, INIT, DELETE ROW, CLEAR SONG */
         return !chain_busy() && (c == 0u ? !seq_is_empty(TSEL) || motion_count(TSEL) : c == 1u ? 1 :
                                  c == 2u ? ui.song_row < chain_config.count : chain_config.count != 0u);
