@@ -23,7 +23,7 @@ static const char *const PRESET_CAT[16] = {
                                   * PLUCK, BRASS, WIND, STRINGS */
     "",                          /* 1 DIGITAL (retired) */
     "LKPLUU",                    /* 2 PHASE: BRASS, ORGAN, STRING, RESO, BELL, WIRE */
-    "LBLLLLBBULFDDDKLP",         /* 3 LOFI: PULSE LD, WAVE BASS, ARP 8BIT, WAVE LEAD, STEP LEAD; RE-1: SQUARE 50,
+    "LBLLLLBBULFDDDKLP",         /* 3 CHIP (Felucca's LOFI): PULSE LD, WAVE BASS, ARP 8BIT, WAVE LEAD, STEP LEAD; RE-1: SQUARE 50,
                                   * TRI BASS, PULSE BASS, CHIP PLUCK, FAST ARP, LASER ZAP, CHIP KICK, NOISE HAT,
                                   * NOISE SNR, WAVE ORGAN, 8BIT SAW, VOX CHOIR */
     "KKLL",                      /* 4 SAMPLE: PIANO, (PIANO: the retired TRANH's alias), FLUTE, SAX */

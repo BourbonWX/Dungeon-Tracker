@@ -8,9 +8,10 @@ installer's package format) and adds:
   PITCH, DECAY, COLOR, SWEEP, SHAPE and LEVEL.
 * **FMTONE** (engine 15) — a two-operator FM voice with a sub and a detuned second carrier, for chords, pads, basses
   and leads, with a timbre envelope (COLOR / CNTR / MSUS) instead of an operator editor.
-* **Chip presets** for Felucca's LOFI engine: twelve more (square and pulse leads, a staircase-triangle bass, plucks,
+* **CHIP**, Felucca's LOFI engine renamed for what it plays (its first knob, Felucca's CHIP, is now MODE), with
+  twelve more presets (square and pulse leads, a staircase-triangle bass, plucks,
   arps, zaps, chip kick, noise hat and snare, a wave-RAM organ and choir).
-* **DICE sound design**: on FMTONE, FMKIT and LOFI tracks, every part of the sound is a die. Roll, hold the dice you like,
+* **DICE sound design**: on FMTONE, FMKIT and CHIP tracks, every part of the sound is a die. Roll, hold the dice you like,
   roll again, and the rest change around them, always inside ranges that sound musical.
 * **A tracker sequencer** in place of Felucca's step grid and piano roll: every track has its own tracker screen,
   steps as rows top to bottom, and **SEQ held + SELECT turned** picks the track whose tracker opens when SEQ is let go.
@@ -66,12 +67,12 @@ is off.
 **Presets** — FMKIT: CYCLE KIT, 808ISH, 909ISH, GRIT KIT, METAL KIT, DUB KIT. FMTONE: FM PAD, CHORD EP, STAB,
 GLASS PAD, ORGAN, FM BASS, SUB BASS, PLUCK BASS (the three basses are mono), FM LEAD, SYNC LEAD, BRASS, BELL.
 
-**LOFI** (Felucca's chip engine: CHIP WAVE DUTY CRSH / SWP VIB ARP TONE) — Felucca's five (PULSE LD, WAVE BASS,
+**CHIP** (Felucca's LOFI engine: MODE WAVE DUTY CRSH / SWP VIB ARP TONE; Felucca calls MODE "CHIP") — Felucca's five (PULSE LD, WAVE BASS,
 ARP 8BIT, WAVE LEAD, STEP LEAD) and RE-1's chip set:
 
 | Preset | What it is |
 |---|---|
-| SQUARE 50 | STEP chip, 50 % square lead with vibrato |
+| SQUARE 50 | MODE STEP, a 50 % square lead with vibrato |
 | TRI BASS | the 32-step staircase triangle, mono |
 | PULSE BASS | 25 % pulse with a stepped decay (DCY D10) |
 | CHIP PLUCK | 25 % pulse, a short stepped decay (D3), poly |
@@ -86,12 +87,12 @@ ARP 8BIT, WAVE LEAD, STEP LEAD) and RE-1's chip set:
 
 ## DICE (EDIT > DICE)
 
-On an FMTONE, FMKIT or LOFI track, tap **EDIT** until **DICE** (after EDIT 1 and EDIT 2). Each die is one part of the sound:
+On an FMTONE, FMKIT or CHIP track, tap **EDIT** until **DICE** (after EDIT 1 and EDIT 2). Each die is one part of the sound:
 
 * FMTONE: RATIO, COLOR, CNTR, MSUS, FDBK, SWEEP, STACK, SUB and ENV (the amplitude envelope).
-* LOFI: CHIP, WAVE, DUTY, CRSH, SWEEP, VIB, ARP, TONE and ENV. DUTY follows the WAVE just rolled (a wave-RAM table
-  for WRAM, a pulse width for PLS) and CRSH follows the CHIP (on STEP it is the stepped decay, DCY). Chords and bass
-  never roll NOISE or a chord ARP; only a lead with a short STEP decay rolls a SWEEP (a zap). CHIP, WAVE, DUTY, CRSH,
+* CHIP: MODE, WAVE, DUTY, CRSH, SWEEP, VIB, ARP, TONE and ENV. DUTY follows the WAVE just rolled (a wave-RAM table
+  for WRAM, a pulse width for PLS) and CRSH follows the MODE (on STEP it is the stepped decay, DCY). Chords and bass
+  never roll NOISE or a chord ARP; only a lead with a short STEP decay rolls a SWEEP (a zap). MODE, WAVE, DUTY, CRSH,
   ARP and ENV are choices, so at a WILD below 100 % they change or not (by that chance) rather than part way.
 * FMKIT: BD, SD, HH, PC (each voice's pitch, decay, color, sweep and shape together), MIX (the four levels) and FEEL
   (open-hat length, click, drive, variation).
@@ -107,7 +108,7 @@ On an FMTONE, FMKIT or LOFI track, tap **EDIT** until **DICE** (after EDIT 1 and
 Play the keys between rolls to hear each one. The dice are weighted by the track's role: T2 rolls pad and chord
 sounds, T3 bass sounds (low ratios, often a sub, short envelopes), T4 leads. A rolled COLOR never goes past what its
 RATIO keeps musical; if you hold a bright COLOR, RATIO rolls only among ratios that suit it. Successive rolls are one
-undo (SAVE held); `tests/dice_test.c` listens to 900 rolls per engine (FMTONE, LOFI) and checks none clip, carry DC,
+undo (SAVE held); `tests/dice_test.c` listens to 900 rolls per engine (FMTONE, CHIP) and checks none clip, carry DC,
 hang or turn harsh.
 
 ## Live effects

@@ -78,7 +78,7 @@ static const char *const N_IRATE[] = {"689", "919", "1.1k", "1.4k", "1.8k", "2.2
 static const char *const N_MSRC[] = {"OFF", "LFO", "ENV", "VEL", "KEY", "RAND", "MODW", "AT", "EXPR", "S&H", "SLEW"};
 static const char *const N_MDST[] = {"OFF", "PITCH", "CUT", "SHP", "AMP", "PAN", "DIST", "CHO", "DLY", "REV", "RATE",
                                      "VIB", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "DEPTH", "VEL", "TIME"};
-static const char *const N_ENGNAME[] = {"ANALOG", FELUCCA_FM4 ? "DIGITAL" : "-", "PHASE", "LOFI", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN", "PHYS",
+static const char *const N_ENGNAME[] = {"ANALOG", FELUCCA_FM4 ? "DIGITAL" : "-", "PHASE", "CHIP", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN", "PHYS",
                                              "DRUM", "NOISE", "FM6",
 #if FELUCCA_SLICE
                                              "SLICE",
@@ -504,7 +504,7 @@ static const page_t PAGES[] = {
     {"CHORD", FAM_SCL, SC_TRACK, GR_CHORD, {P_CHRD, P_VOIC, 0xFF, 0xFF}},   /* SCL again: the chord keys (chord.c) */
     {"EDIT 1", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E0, P_E1, P_E2, P_E3}},
     {"EDIT 2", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E4, P_E5, P_E6, P_E7}},
-    {"DICE", FAM_EDIT, SC_TRACK, GR_DICE, {0xFF, 0xFF, 0xFF, 0xFF}},   /* RONDO: FMTONE / FMKIT / LOFI only (ui_dice.c) */
+    {"DICE", FAM_EDIT, SC_TRACK, GR_DICE, {0xFF, 0xFF, 0xFF, 0xFF}},   /* RONDO: FMTONE / FMKIT / CHIP only (ui_dice.c) */
 #if RONDO_LAYOUT
     {"MORPH", FAM_EDIT, SC_TRACK, GR_MORPH, {0xFF, 0xFF, 0xFF, 0xFF}},  /* RONDO: SOUND MORPH: TARGET AMOUNT (morph.c) */
 #endif

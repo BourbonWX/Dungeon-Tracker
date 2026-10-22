@@ -559,8 +559,8 @@ static int demos(const char *dir)
         fclose(f);
         n++;
     }
-    /* MODW -> VIB: LOFI WAVE LEAD, the mod wheel (CC1) rises over 4 s: vibrato from none to deep */
-    e = eng_by_name("LOFI");
+    /* MODW -> VIB: CHIP (LOFI) WAVE LEAD, the mod wheel (CC1) rises over 4 s: vibrato from none to deep */
+    e = eng_by_name("CHIP");
     fresh(e, preset_by_name(e, "WAVE LEAD"));
     t->p[P_LRATE] = 70;
     t->p[P_LD_PIT] = 0;

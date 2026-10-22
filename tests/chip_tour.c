@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * RE-1: audio tours of the LOFI engine through ui_test.c's harness (the real engines, sequencer-free, the mix).
+ * RE-1: audio tours of the CHIP engine (Felucca's LOFI) through ui_test.c's harness (the real engines, sequencer-free, the mix).
  *   build/host/chip_tour presets OUT.wav    each of RE-1's chip presets on T4, two bars of a phrase that suits it
- *   build/host/chip_tour dice ROLE OUT.wav  ROLE 2 chords, 3 bass, 4 lead: that track on LOFI over T1's FMKIT
+ *   build/host/chip_tour dice ROLE OUT.wav  ROLE 2 chords, 3 bass, 4 lead: that track on CHIP over T1's FMKIT
  *                                           beat, eight DICE rolls (OCT+), a bar each, the phrase the same
  * 120 BPM, 16ths. */
 #define UI_TEST_NO_MAIN 1

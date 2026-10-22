@@ -1264,7 +1264,7 @@ static void setup(int s)
         track_select(s == S_DICE_TONE ? 3 : 0); go_page(GR_DICE); dice.rng = 0xD1CEu; dice_roll(); dice.anim = 0;
         TSEL->engine = TSEL->eng_req; ui.msg_t = 0;
         break;
-    case S_DICE_LOFI:                                   /* (T4 on LOFI, rolled; DIE on DUTY, CHIP held) */
+    case S_DICE_LOFI:                                   /* (T4 on CHIP, rolled; DIE on DUTY, MODE held) */
         track_select(3); set_engine_of(TSEL, ENGI_LOFI); apply_preset_to(TSEL, 5);
         TSEL->engine = TSEL->eng_req; go_page(GR_DICE); dice.rng = 0xC41Bu; dice.hold[3] = 1u; dice_roll();
         dice.cur[3] = 2; dice.anim = 0; ui.msg_t = 0;

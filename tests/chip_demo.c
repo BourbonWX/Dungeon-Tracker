@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * RE-1: a chiptune demo of the LOFI engine (Felucca-Engines eng_lofi.c) through ui_test.c's harness: the real
- * engines, sequencer and mix. T1 FMKIT, T2 LOFI ARP 8BIT (its arpeggio plays the chords), T3 LOFI WAVE BASS,
- * T4 LOFI PULSE LD, then STEP LEAD for the second half.
+ * RE-1: a chiptune demo of the CHIP engine (Felucca-Engines eng_lofi.c, Felucca's LOFI) through ui_test.c's harness: the real
+ * engines, sequencer and mix. T1 FMKIT, T2 CHIP ARP 8BIT (its arpeggio plays the chords), T3 CHIP WAVE BASS,
+ * T4 CHIP PULSE LD, then STEP LEAD for the second half.
  *   build/host/chip_demo OUT.wav */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"

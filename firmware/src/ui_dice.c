@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 RONDO contributors. Built on Felucca (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* RONDO's EDIT > DICE: sound design by rolling dice, on FMTONE, FMKIT and (RE-1) LOFI tracks. Each die is one part of the sound;
+/* RONDO's EDIT > DICE: sound design by rolling dice, on FMTONE, FMKIT and (RE-1) CHIP tracks. Each die is one part of the sound;
  * OCT+ rolls every die that is not held, so a sound you like can be kept part by part while the rest is rolled
  * again (an offshoot of it). The dice only land on values that sound musical: each draws from ranges and weighted
  * choices set for the engine and the track's role (T2 chords / pads, T3 bass, T4 lead; others as T2).
  *   FMTONE  RATIO COLOR CNTR MSUS FDBK SWEEP STACK SUB (its eight values) and ENV (the amplitude envelope, one of a
  *           role's shapes)
- *   LOFI    CHIP WAVE DUTY CRSH SWEEP VIB ARP TONE (its eight values) and ENV. DUTY follows the WAVE rolled (a
- *           wave RAM table, or a pulse width), CRSH the CHIP (STEP: a stepped decay, DCY); a chord or bass track
+ *   CHIP    MODE WAVE DUTY CRSH SWEEP VIB ARP TONE (its eight values) and ENV. DUTY follows the WAVE rolled (a
+ *           wave RAM table, or a pulse width), CRSH the MODE (STEP: a stepped decay, DCY); a chord or bass track
  *           never rolls NOISE or a chord ARP
  *   FMKIT   BD SD HH PC (each voice's PITCH DECAY COLOR SWEEP SHAPE together), MIX (the four levels) and FEEL (OPEN
  *           CLICK DRV VARI)
@@ -36,7 +36,7 @@ static int dice_kit(const track_t *t) { return t->eng_req % NENGINES == ENGI_CKI
 static int dice_lofi(const track_t *t) { return t->eng_req % NENGINES == ENGI_LOFI; }
 static uint32_t dice_count(const track_t *t) { return dice_kit(t) ? 6u : 9u; }
 static const char *const DICE_TONE_N[9] = {"RATIO", "COLOR", "CNTR", "MSUS", "FDBK", "SWEEP", "STACK", "SUB", "ENV"};
-static const char *const DICE_LOFI_N[9] = {"CHIP", "WAVE", "DUTY", "CRSH", "SWEEP", "VIB", "ARP", "TONE", "ENV"};
+static const char *const DICE_LOFI_N[9] = {"MODE", "WAVE", "DUTY", "CRSH", "SWEEP", "VIB", "ARP", "TONE", "ENV"};
 static const char *const DICE_KIT_N[6] = {"BD", "SD", "HH", "PC", "MIX", "FEEL"};
 static const char *dice_name(const track_t *t, uint32_t d)
 {
@@ -129,12 +129,13 @@ static void dice_env(const uint8_t (*E)[4], int16_t *v)
         v[k] = (int16_t)clamp((int32_t)e[k] + (e[k] ? dice_in(-6, 6) : 0), 0, 127);
 }
 
-/* LOFI's dice (eng_lofi.c). The roll goes die by die, in order, so DUTY and CRSH read the CHIP and WAVE just rolled */
+/* CHIP's dice (eng_lofi.c, Felucca's LOFI). The roll goes die by die, in order, so DUTY and CRSH read the MODE and WAVE
+ * just rolled */
 static void dice_fresh_lofi(const track_t *t, uint32_t d, int16_t *v, uint32_t role)
 {
     uint32_t r = role - 1u, chip = (uint32_t)t->p[P_E0], wave = (uint32_t)t->p[P_E1];
     switch (d) {
-    case 0: {                                             /* CHIP: 4BIT 4B/2 8BIT 1BIT STEP (1BIT: never, a pulse at 1 bit is lopsided) */
+    case 0: {                                             /* MODE: 4BIT 4B/2 8BIT 1BIT STEP (1BIT: never, a pulse at 1 bit is lopsided) */
         static const uint8_t W[3][5] = {{3, 1, 3, 0, 5}, {3, 1, 2, 0, 6}, {3, 1, 3, 0, 6}};
         v[0] = (int16_t)dice_pick(W[r], 5);
         break;

@@ -8,9 +8,9 @@
  * 5. the sound of 300 rolls per role (a note held 0.4 s, let go): never full scale for one voice, no DC over 1 % of the
  *    peak, the voice free after its release (10 s), and never brighter than 2.5 x the brightest factory preset.
  * 6. the kit: 200 rolls, each voice struck: it sounds, never at full scale, it ends.
- * 7. (RE-1) LOFI: the page shows; WILD 100 rolls stay in their role's choices (no NOISE, no chord ARP on chords or
+ * 7. (RE-1) CHIP (Felucca's LOFI): the page shows; WILD 100 rolls stay in their role's choices (no NOISE, no chord ARP on chords or
  *    bass; DUTY on a table or a width; CRSH a decay or a light crush); 300 rolls per role heard as in 5, against
- *    LOFI's brightest tonal preset; the new presets: each sounds, never full scale, ends. */
+ *    CHIP's brightest tonal preset; the new presets: each sounds, never full scale, ends. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
@@ -287,15 +287,15 @@ int main(int argc, char **argv)
         ok3(what, !quiet && !over && !hung);
     }
 
-    /* 7. LOFI */
+    /* 7. CHIP */
     {
         uint32_t bad = 0, role, pg;
         for (pg = 0; pg < NPAGES && PAGES[pg].graph != GR_DICE; pg++)
             ;
         set_engine_of(&trk[1], ENGI_LOFI);
         track_select(1);
-        ok3("LOFI: DICE shows, nine dice, CHIP first", page_visible(pg) && dice_engine_ok(&trk[1]) &&
-            dice_count(&trk[1]) == 9u && str_eq(dice_name(&trk[1], 0), "CHIP"));
+        ok3("CHIP: DICE shows, nine dice, MODE first", page_visible(pg) && dice_engine_ok(&trk[1]) &&
+            dice_count(&trk[1]) == 9u && str_eq(dice_name(&trk[1], 0), "MODE"));
         for (role = 0; role < 3u; role++)
             for (r = 0; r < 300u; r++) {
                 track_t *t = &trk[1 + role];
@@ -315,7 +315,7 @@ int main(int argc, char **argv)
                 bad += t->p[P_E0] == 3 || (wave == 0 && duty < 32);
                 bad += t->p[P_E7] < 70 || t->p[P_ATK] > 60;
             }
-        snprintf(what, sizeof what, "LOFI WILD 100: every die in its role's choices (900 rolls, %u off)", bad);
+        snprintf(what, sizeof what, "CHIP WILD 100: every die in its role's choices (900 rolls, %u off)", bad);
         ok3(what, !bad);
     }
     {
@@ -355,7 +355,7 @@ int main(int argc, char **argv)
                            t->p[P_DEC], t->p[P_SUS], t->p[P_REL], pk, dc, br);
             }
         }
-        snprintf(what, sizeof what, "LOFI: 900 rolls heard: full scale %u, DC %u, hung %u, harsher than 2.5 x %u (%.3f vs %.3f)",
+        snprintf(what, sizeof what, "CHIP: 900 rolls heard: full scale %u, DC %u, hung %u, harsher than 2.5 x %u (%.3f vs %.3f)",
                  over, dcs, hung, harsh, worst, brmax);
         ok3(what, !over && !dcs && !hung && !harsh);
         over = hung = 0;
@@ -371,7 +371,7 @@ int main(int argc, char **argv)
             if (getenv("DICE_DBG"))
                 printf("  %-10s pk %d dc %.3f br %.3f\n", e->presets[p].name, pk, dc, br);
         }
-        snprintf(what, sizeof what, "LOFI's %u chip presets: quiet %u, full scale %u, hung %u", nnew, quiet, over, hung);
+        snprintf(what, sizeof what, "CHIP's %u chip presets: quiet %u, full scale %u, hung %u", nnew, quiet, over, hung);
         ok3(what, nnew >= 12u && !quiet && !over && !hung);
         {   /* the hits, a 1.5 ms gate (two control blocks: the shortest MIDI drum note): each still sounds 20 ms or more */
             uint32_t cut = 0;
