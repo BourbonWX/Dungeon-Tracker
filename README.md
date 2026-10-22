@@ -1,3 +1,7 @@
+> **This is Dungeon Tracker**, a fork of Felucca 1.6.1 for the M-VAVE FM-1: an old-school tracker-style FM
+> groovebox with a dungeon crawl played by the song. Start with [DUNGEON-TRACKER.md](DUNGEON-TRACKER.md). Felucca's own
+> README follows, unchanged.
+
 # Felucca
 
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)

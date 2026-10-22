@@ -205,6 +205,7 @@ static void fl_plain_window_init(void) {}
 #include "../../firmware/src/storage.c"
 #include "../../firmware/src/upreset.c"
 #include "../../firmware/src/project.c"
+#include "../../firmware/src/boot_song.c"      /* Dungeon Tracker: the power-on song (main.c) */
 
 /* ------------------------------------------------- main.c and its HAL --- */
 #if FELUCCA_CPU2
@@ -261,6 +262,7 @@ static void cdc_task(void) {}
 
 /* --------------------------------------------------------- the device --- */
 static uint32_t web_booted, web_boot_ms, web_last_frame;
+static uint32_t web_seed_v;                               /* Dungeon Tracker: the power-on song's seed (the page's) */
 
 /* main.c fm1_main's boot, up to the main loop (no USB, no UART, no panel setup) */
 static void web_power_on(void)
@@ -280,10 +282,16 @@ static void web_power_on(void)
     kb_boot_hold = 1;                     /* main.c (#137): the keys silent under the splash */
     audio_init();
     boot_leds();                          /* main.c: the power-on LED sweep, from the scan's start */
-    autosave_boot(boot_clean);            /* main.c: the last session's music (1.2, project.c) */
+    {
+        int restored = autosave_boot(boot_clean);   /* main.c: the last session's music (1.2, project.c) */
 #if RONDO_LAYOUT
-    bank_boot();                          /* main.c: RONDO's PATTERN BANK */
+        bank_boot();                      /* main.c: RONDO's PATTERN BANK */
 #endif
+        if (boot_song_wanted(restored)) { /* main.c: a song of its own (boot_song.c), the page's seed */
+            boot_song(web_seed_v ? web_seed_v : 0x0DDBA11u);
+            boot_song_settle();
+        }
+    }
     web_boot_ms = fm1_ms + 430u;         /* main.c: 30 + 400 ms before the first frame */
     web_booted = 1;
 }
@@ -372,6 +380,7 @@ EXPORT uint8_t *web_nor(void) { return nor; }
 EXPORT uint32_t web_nor_size(void) { return sizeof nor; }
 EXPORT void web_nor_erase(void) { memset(nor, 0xFF, sizeof nor); }
 EXPORT uint32_t web_flash_writes_count(void) { return web_flash_writes; }
+EXPORT void web_seed(uint32_t s) { web_seed_v = s; }   /* (before web_boot: the power-on song's seed) */
 EXPORT void web_boot(void)
 {
     if (!web_booted)

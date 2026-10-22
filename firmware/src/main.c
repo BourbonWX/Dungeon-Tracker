@@ -98,6 +98,21 @@ static void fm1_fault(const fm1_crash_t *c)
     fm1_reboot();
 }
 
+/* a seed that differs from one power-on to the next: the ADC's noise (the battery divider, the MASTER pot: their low
+ * bits wander), the timer as the conversions finish (their time varies), the boot counter and whatever the .noinit
+ * block held at a cold start */
+static uint32_t boot_entropy(void)
+{
+    uint32_t h = 2166136261u ^ fm1_ticks(), i;
+    for (i = 0; i < 48u; i++) {
+        int32_t a = fm1_adc_read(FM1_ADC_BATT), b = fm1_adc_read(FM1_ADC_MASTER);
+        h = (h ^ (uint32_t)a ^ ((uint32_t)b << 10) ^ (fm1_ticks() << 20)) * 16777619u;
+    }
+    h ^= felucca_dbg.boots * 2654435761u;
+    h ^= felucca_dbg.prev_frames * 40503u;
+    return h ? h : 1u;
+}
+
 /* power-on: the parts with their default sounds (TRK_DEF); the sequencers empty */
 static void felucca_init(void)
 {
@@ -210,10 +225,16 @@ static void fm1_main(void)
         panel_setup();                        /* OCT- + OCT+ held at power-on */
         settings_save();
     }
-    autosave_boot(boot_clean);                /* (1.2) the last session's music, under the splash */
+    {
+        int restored = autosave_boot(boot_clean);   /* (1.2) the last session's music, under the splash */
 #if RONDO_LAYOUT
-    bank_boot();                              /* RONDO: the PATTERN BANK A..F (project.c) */
+        bank_boot();                          /* RONDO: the PATTERN BANK A..F (project.c) */
 #endif
+        if (boot_song_wanted(restored)) {     /* Dungeon Tracker: none of the user's: a song of its own (boot_song.c) */
+            boot_song(boot_entropy());
+            boot_song_settle();
+        }
+    }
     for (ms = 0; ms < 400u; ms += 10u) {      /* the splash; the pot followed (MIDI IN plays under it) */
         fm1_delay_ms(10);
         master_poll();

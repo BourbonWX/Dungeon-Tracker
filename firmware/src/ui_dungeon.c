@@ -98,6 +98,16 @@ static uint32_t dg_rand(void)
     return s;
 }
 static int dg_roll(uint32_t pct) { return dg_rand() % 100u < pct; }
+static uint8_t dg_played;                                /* the transport played since power-on (HOME's PRESS PLAY) */
+/* a message on a plate of the view's far colour, centred across the view (over a monster too: it reads) */
+static void dg_plate(int32_t cx, uint16_t ceil, const char *mm)
+{
+    int32_t w = text_w(&AF_S, mm) + 12, x = cx - w / 2;
+    uint16_t plate = ux_mix(T_BG, ceil, 40);
+    cv_rrect(x, DG_Y0 + 12, w, AF_S_CAP_H + 8, 3, plate, ceil);
+    GFX_HOOK_ALIGN(DG_X0, 0, DG_X0 + DG_W, 0, AL_H | AL_PASS, "dungeon message centred across the view");
+    cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, mm, T_TEXT, plate);
+}
 static void dg_say(const char *m)
 {
     dg.msg = m;
@@ -394,6 +404,8 @@ static void dg_tick(void)
     dg.t_ms = now;
     if (dt > 200u)
         dt = 200u;
+    if (song.playing)
+        dg_played = 1;                                   /* (played on any page: HOME's PRESS PLAY goes) */
     dg_party();
     if (!dg_game) {
         dg_stroll(dt);
@@ -603,8 +615,12 @@ static void graph_dungeon(void)
     }
     b[0] = DG_HEAD[dg.heading & 3u];                     /* the compass */
     b[1] = 0;
+    if (song.playing)
+        dg_played = 1;
     if (!dg_game) {                                      /* off: the scenery, the compass and the party, nothing else */
         cv_text_on(DG_X0 + 4, DG_Y0, &AF_S, b, T_MID, ceil);
+        if (!dg_played && dg_party_n())                  /* (Dungeon Tracker: until the first PLAY, the way in) */
+            dg_plate(cx, ceil, "PRESS PLAY");
         goto party;
     }
     /* the monster */
@@ -644,13 +660,8 @@ static void graph_dungeon(void)
     {   /* the message on a plate of the view's far colour (over a monster too: it reads, whatever is behind) */
         const char *mm = !song.playing || !dg_party_n() ? (!dg_party_n() ? "NO PARTY: ADD STEPS" : "CAMP") :
                          dg.msg_f && dg.msg ? dg.msg : 0;
-        if (mm) {
-            int32_t w = text_w(&AF_S, mm) + 12, x = cx - w / 2;
-            uint16_t plate = ux_mix(T_BG, ceil, 40);
-            cv_rrect(x, DG_Y0 + 12, w, AF_S_CAP_H + 8, 3, plate, ceil);
-            GFX_HOOK_ALIGN(DG_X0, 0, DG_X0 + DG_W, 0, AL_H | AL_PASS, "dungeon message centred across the view");
-            cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, mm, T_TEXT, plate);
-        }
+        if (mm)
+            dg_plate(cx, ceil, mm);
     }
 party:
     /* the party: four slots, class, level, health */

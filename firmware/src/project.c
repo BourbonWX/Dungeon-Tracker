@@ -1510,6 +1510,7 @@ static void bank_bound(chain_pattern_t *c)
 }
 /* power-on, after autosave_boot: the six from the flash; the current one the autosave's (its music is that one's
  * latest), else the first stored one put on the tracks, else A (the music as it is) */
+static uint8_t bank_flash_used;                /* the patterns the flash held at power-on (bank_boot; boot_song: none) */
 static void bank_boot(void)
 {
     uint32_t p;
@@ -1528,6 +1529,7 @@ static void bank_boot(void)
         bank.used |= (uint8_t)(1u << p);
     }
 #endif
+    bank_flash_used = bank.used;
     if (bank_boot_cur >= 1u && bank_boot_cur <= NBANK) {
         bank.cur = (uint8_t)(bank_boot_cur - 1u);
     } else {

@@ -8,7 +8,7 @@
 #   sh tests/run_rondo.sh            (NOCOST=1 skips the timing comparison)
 set -e
 cd "$(dirname "$0")/.."
-[ -f build/gen/felucca_tables.h ] || { echo "run the generate step first (RE-1.md, Building)"; exit 1; }
+[ -f build/gen/felucca_tables.h ] || { echo "run the generate step first (DUNGEON-TRACKER.md, Building)"; exit 1; }
 mkdir -p build/host build/rondo_demo
 ${CC:-cc} -O2 -w -Ibuild/gen -Ifirmware/src -o build/host/rondo_test tests/rondo_test.c -lm
 build/host/rondo_test build/rondo_demo
@@ -42,3 +42,7 @@ tail -1 build/host/editor.txt
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -o build/host/descdump tests/descdump.c -lm
 build/host/descdump > build/host/desc.json
 if command -v node >/dev/null 2>&1; then node web/test_web.mjs > build/host/web.txt || { grep FAIL build/host/web.txt; exit 1; }; tail -1 build/host/web.txt; fi
+# Dungeon Tracker's power-on song (tests/boot_song_test.c; WAVs of four power-ons in build/boot_song)
+mkdir -p build/boot_song
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/boot_song_test tests/boot_song_test.c -lm
+build/host/boot_song_test build/boot_song

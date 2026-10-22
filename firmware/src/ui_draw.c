@@ -1479,40 +1479,80 @@ static void draw_columns(void)
 }
 
 
-/* The power-on splash (main.c fm1_main, web/emu felucca_web.c; 1.1.5): a RAISE square centred on the screen, square
- * corners (in every style; LINE too: RAISE from the palette's SURF), in it in AF_M, the ink SPL_PAD in from the left:
- * at the top the name and the version, the first line's capitals' top SPL_PAD down; at the bottom the maker and
- * "with community", the last line's capitals' bottom (its baseline) SPL_PAD up from the square's bottom. Both
- * margins are measured to the capitals (the descender of "community" hangs into the bottom one, as off a baseline).
- * The square (176 x 176) is more than the canvas (CV_MAX, 240 x 124): it is filled straight on the screen and its
- * two text bands drawn on it as canvases, the top one from the square's top edge, the bottom one to its bottom edge.
- * In the saved palette (settings_init before it) */
-#define SPL_SQ 176                                  /* the square (even: centred exactly) */
-#define SPL_X0 ((240u - SPL_SQ) / 2u)               /* its top-left on the screen (x and y) */
-#define SPL_PAD 16                                  /* the text's inset: left (its ink), top and bottom (the capitals) */
-#define SPL_PITCH 20                                /* line to line */
-static const char *const SPLASH_LINES[] = {"RE-1", FELUCCA_VERSION, "Random Encounters", "a Felucca fork"};   /* RONDO: RE-1 */
-/* a band of two lines, h tall, at y on the screen: the first line's top at ly; the two lines' capitals declared
- * against al0..al1 (mode: AL_V the band centred there, AL_B the last baseline on al1) */
-static void splash_band(uint32_t y, uint32_t h, int32_t ly, const char *const *l, uint32_t mode, int32_t al0,
-                        int32_t al1, const char *tag)
+/* The power-on splash (main.c fm1_main, web/emu felucca_web.c): DUNGEON TRACKER's marquee. The two words centred,
+ * one over the other, in a blocky arcade lettering of its own (SPL_GLYPH: 6 x 7 cells, strokes two cells wide, each
+ * cell SPL_S px), each word two-toned (its top rows one colour, the rest another), a drop shadow and a dark line
+ * under every row of cells (scanlines); a double rule above and below, the version and the fork's credit under it.
+ * Drawn straight on the screen (a run of cells a fill), in the saved palette (settings_init before it): every
+ * colour a palette's own, so GREY and MONO stay neutral */
+#define SPL_S 4                                     /* a cell, px */
+#define SPL_GW 6                                    /* a glyph: 6 x 7 cells, a cell apart */
+#define SPL_GH 7
+static const struct { char c; uint8_t row[SPL_GH]; } SPL_GLYPH[] = {   /* bit 5 the left cell */
+    {'D', {0x3E, 0x33, 0x33, 0x33, 0x33, 0x33, 0x3E}}, {'U', {0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x1E}},
+    {'N', {0x33, 0x3B, 0x3F, 0x37, 0x33, 0x33, 0x33}}, {'G', {0x1F, 0x30, 0x30, 0x37, 0x33, 0x33, 0x1E}},
+    {'E', {0x3F, 0x30, 0x30, 0x3E, 0x30, 0x30, 0x3F}}, {'O', {0x1E, 0x33, 0x33, 0x33, 0x33, 0x33, 0x1E}},
+    {'T', {0x3F, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C}}, {'R', {0x3E, 0x33, 0x33, 0x3E, 0x36, 0x33, 0x33}},
+    {'A', {0x1E, 0x33, 0x33, 0x3F, 0x33, 0x33, 0x33}}, {'C', {0x1F, 0x30, 0x30, 0x30, 0x30, 0x30, 0x1F}},
+    {'K', {0x33, 0x36, 0x3C, 0x38, 0x3C, 0x36, 0x33}},
+};
+static const uint8_t *spl_glyph(char c)
 {
-    cv_begin(SPL_SQ, h, T_RAISE);
-    GFX_HOOK_ALIGN(0, al0, 0, al1, mode | AL_N(2), tag);
-    cv_text_on(SPL_PAD, ly, &AF_M, l[0], T_TEXT, T_RAISE);
-    cv_text_on(SPL_PAD, ly + SPL_PITCH, &AF_M, l[1], T_TEXT, T_RAISE);
-    cv_blit(SPL_X0, y);
+    uint32_t i;
+    for (i = 0; i < NELEM(SPL_GLYPH); i++)
+        if (SPL_GLYPH[i].c == c)
+            return SPL_GLYPH[i].row;
+    return 0;
 }
+/* a word's width, px */
+static int32_t spl_width(const char *w)
+{
+    int32_t n = 0;
+    while (w[n])
+        n++;
+    return n ? (n * (SPL_GW + 1) - 1) * SPL_S : 0;
+}
+/* the word at y, centred: pass 0 the shadow (dx, dy), pass 1 the letters (rows < split: top, the rest: low), the
+ * scanline (a 1 px line in `scan` at the bottom of every cell row) over them */
+static void spl_word(const char *w, int32_t y, uint16_t top, uint16_t low, uint16_t shade, uint16_t scan)
+{
+    int32_t x0 = HALF_UP(240 - spl_width(w)), pass, r, c, i;
+    for (pass = 0; pass < 2; pass++)
+        for (i = 0; w[i]; i++) {
+            const uint8_t *g = spl_glyph(w[i]);
+            int32_t gx = x0 + i * (SPL_GW + 1) * SPL_S + (pass ? 0 : 2), gy = y + (pass ? 0 : 3);
+            if (!g)
+                continue;
+            for (r = 0; r < SPL_GH; r++)
+                for (c = 0; c < SPL_GW; c++) {
+                    int32_t run = 0;
+                    if (!((g[r] >> (SPL_GW - 1 - c)) & 1u) || (c && ((g[r] >> (SPL_GW - c)) & 1u)))
+                        continue;                       /* (a run starts here: set, the cell before it clear) */
+                    while (c + run < SPL_GW && ((g[r] >> (SPL_GW - 1 - c - run)) & 1u))
+                        run++;
+                    if (!pass) {
+                        lcd_fill((uint32_t)(gx + c * SPL_S), (uint32_t)(gy + r * SPL_S), (uint32_t)(run * SPL_S), SPL_S, shade);
+                    } else {
+                        lcd_fill((uint32_t)(gx + c * SPL_S), (uint32_t)(gy + r * SPL_S), (uint32_t)(run * SPL_S), SPL_S - 1,
+                                 r < 3 ? top : low);
+                        lcd_fill((uint32_t)(gx + c * SPL_S), (uint32_t)(gy + r * SPL_S + SPL_S - 1), (uint32_t)(run * SPL_S), 1, scan);
+                    }
+                }
+        }
+}
+#define SPL_W1 60                                   /* DUNGEON's top; TRACKER's 40 px below it */
+#define SPL_W2 (SPL_W1 + 40)
 static void draw_splash(void)
 {
-    int32_t h = SPL_PAD - AF_M_CAP_Y + SPL_PITCH + AF_M.h;     /* a band: its two lines, the descenders in */
-    int32_t lb = h - SPL_PAD - AF_M_CAP_H - AF_M_CAP_Y;         /* the bottom band's last line: its top */
     lcd_fill(0, 0, 240, 240, T_BG);
-    lcd_fill(SPL_X0, SPL_X0, SPL_SQ, SPL_SQ, T_RAISE);
-    splash_band(SPL_X0, (uint32_t)h, SPL_PAD - AF_M_CAP_Y, SPLASH_LINES, AL_V, SPL_PAD,
-                SPL_PAD + SPL_PITCH + AF_M_CAP_H, "splash name + version SPL_PAD from the top");
-    splash_band(SPL_X0 + SPL_SQ - (uint32_t)h, (uint32_t)h, lb - SPL_PITCH, SPLASH_LINES + 2, AL_B, 0, h - SPL_PAD,
-                "splash maker's baseline SPL_PAD from the bottom");
+    lcd_fill(20u, SPL_W1 - 18, 200u, 2, T_THEME);          /* the marquee's rules: double, above and below */
+    lcd_fill(20u, SPL_W1 - 13, 200u, 1, T_DIM);
+    lcd_fill(20u, SPL_W2 + SPL_GH * SPL_S + 14, 200u, 1, T_DIM);
+    lcd_fill(20u, SPL_W2 + SPL_GH * SPL_S + 18, 200u, 2, T_THEME);
+    spl_word("DUNGEON", SPL_W1, T_ACCENT, T_ACCENT != T_THEME ? T_THEME : T_MID, T_RAISE, T_BG);   /* (MONO: one accent) */
+    spl_word("TRACKER", SPL_W2, T_TEXT, T_MID, T_RAISE, T_BG);
+    draw_text_box(0, 186, 240, &AF_S, FELUCCA_VERSION, T_MID, 1);
+    draw_text_box(0, 206, 240, &AF_S, "a Felucca fork", T_DIM, 1);
     lcd_sync();
 }
 

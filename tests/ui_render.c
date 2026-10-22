@@ -238,6 +238,7 @@ static void cs_hook(const char *v, const char *u);
 #define CARD_HOOK(v, u) cs_hook(v, u)
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
+#include "../firmware/src/boot_song.c"   /* Dungeon Tracker: the power-on song (S_HOME_BOOT) */
 
 static uint8_t large_on;                         /* the LARGE pass: every scene with MENU > LARGE ON */
 /* the card values set in S (ui_draw.c CARD_HOOK: M too wide for the card with its unit), distinct, for the report
@@ -758,7 +759,7 @@ static void sg_fresh(void)
  * OP LEVEL pages and the algorithm charts, exist only there: fm4_screen) */
 #define E_FM (FELUCCA_FM4 ? ENGI_DIGITAL : ENGI_FM6)
 
-enum { S_HOME, S_HOME_IDLE, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TURN, S_MESSAGE, S_MESSAGE_KEY, S_MESSAGE_NOFILE, S_PRESETS, S_PRESETS_NOFAV, S_USER, S_PHRASES, S_PROJECT, S_TOOLS,
+enum { S_HOME, S_HOME_IDLE, S_HOME_BOOT, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TURN, S_MESSAGE, S_MESSAGE_KEY, S_MESSAGE_NOFILE, S_PRESETS, S_PRESETS_NOFAV, S_USER, S_PHRASES, S_PROJECT, S_TOOLS,
        S_SONG_EMPTY, S_SONG, S_STEP, S_AUTO_STEPS, S_AUTO_ADD_CHANCE, S_MOTION, S_DRUM, S_DRUM_HAND, S_DRUM_CYM, S_MIXER,
        S_MIXER_HOME, S_MIXER_PAN,
        S_ENV, S_ENVDEST, S_LFO, S_MOD, S_FX, S_SLICER, S_DLY, S_SCL, S_CHORD, S_CHORD_WIDE, S_CHORD_OFF, S_CHORD_KIT, S_ARP, S_VOICE, S_CLOCK, S_MENU_MIDI,
@@ -793,7 +794,7 @@ enum { S_HOME, S_HOME_IDLE, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TURN, S_MESSAGE,
        S_DETAIL_COND, S_DETAIL_FILL, S_AUTO_COND, S_GLO_FILL, S_SEQ_EUCLID, S_SEQ_EUCLID_DRUM, S_SEQ_EUCLID_64,
        S_MENU_SELECT, S_PROJECT_ERASE, S_CONFIRM_ERASE_PROJ, S_TOOLS_CLEAN, S_CONFIRM_CLEAN,
        S_MENU_MIDI_TRACK, S_MENU_MIDI_TCH_UNUSED, S_MENU_MIDI_AUTO, S_HOME_TRACKS_MIDI, S_MIXER_MIDI, S_EDIT_PHASE_FOLD, S_COUNT };
-static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_fallen", "home_cross", "home_turn", "message", "message_key", "message_nofile", "presets", "presets_nofav", "user",
+static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_boot", "home_fallen", "home_cross", "home_turn", "message", "message_key", "message_nofile", "presets", "presets_nofav", "user",
     "phrases", "project", "tools", "song_empty", "song", "step", "auto_steps", "auto_add_chance", "automation", "drum",
     "drum_hand", "drum_cym", "mixer", "mixer_from_home", "mixer_pan", "env", "env_dest", "lfo", "mod", "fx", "slicer", "dly", "scl", "chord", "chord_wide", "chord_off", "chord_kit", "arp",
     "voice", "clock", "menu_midi", "edit_analog", FELUCCA_FM4 ? "edit_digital" : "edit_fm6", "op_env", "edit_wheel", "edit_sample",
@@ -1030,6 +1031,8 @@ static void setup(int s)
         dg.dead = 4; dg.hp[2] = 0; dg.hp[0] = 2; dg.mon = DM_SKEL; dg.mon_dist = 1; dg.mon_max = 30; dg.mon_hp = 17;
         dg.floor = 7; dg.kills = 12; dg_say("FIGHTER FALLS: T3 CUT"); dg.msg_f = 250; dg.swing[0] = 6; break;
     case S_HOME_IDLE: song.playing = 0; song.batt_raw = 570; ui.hot_col = 1; ui.hot_t = 30; break;
+    case S_HOME_BOOT:                               /* Dungeon Tracker: just powered on, its own song, stopped: PRESS PLAY */
+        song.playing = 0; boot_song(0x5EEDu); boot_song_settle(); ui_home_view = HV_SCOPE; dg_played = 0; dg.lvl_ms = 0; dg_party(); break;
     case S_MESSAGE: ui_say("LOADED ", "07 A VERY LONG PATTERN NAME"); break;
     case S_MESSAGE_KEY: ui_message("[SAVE] HOLD TO UNDO"); break;            /* a message with a keycap */
     case S_MESSAGE_NOFILE:                          /* a missing sample (ui_input.c sample_notice): USR2 */
@@ -1796,34 +1799,37 @@ static void draw(int s)
     }
     if (s == S_SPLASH) {                          /* the power-on splash (main.c, before the UI): its lines, the version
                                                    * shown FELUCCA_VERSION (run_tests.sh: src/felucca.c's) */
-        static const char WANT[] = "RE-1|" FELUCCA_VERSION "|Random Encounters|a Felucca fork";   /* RONDO: RE-1 */
+        static const char WANT[] = FELUCCA_VERSION "|a Felucca fork";   /* Dungeon Tracker: the words are drawn, not text */
         splash_seen[0] = 0;
         in_splash = 1;
         draw_splash();
         in_splash = 0;
-        {   /* the square whole on the screen (176 x 176 at 32,32, more than the canvas): its edges and square corners
-             * RAISE, BG just outside; its text's ink 16 px in from the left and the top (the bottom: AL_B, the hook) */
-            const int32_t q0 = 32, q1 = 32 + 176 - 1;
-            uint16_t bg = host_screen[0], ra = host_screen[(uint32_t)(q0 + 1) * 240u + (uint32_t)q0 + 1];
-            int32_t i, x, y, ix = 999, iy = 999, bad = ra == bg;
-            for (i = q0 - 1; i <= q1 + 1; i++) {
-                int32_t in = i >= q0 && i <= q1;
-                bad |= host_screen[(uint32_t)(q0 - 1) * 240u + (uint32_t)i] != bg || host_screen[(uint32_t)(q1 + 1) * 240u + (uint32_t)i] != bg
-                    || host_screen[(uint32_t)i * 240u + (uint32_t)(q0 - 1)] != bg || host_screen[(uint32_t)i * 240u + (uint32_t)(q1 + 1)] != bg;
-                if (in)
-                    bad |= host_screen[(uint32_t)q0 * 240u + (uint32_t)i] != ra || host_screen[(uint32_t)q1 * 240u + (uint32_t)i] != ra
-                        || host_screen[(uint32_t)i * 240u + (uint32_t)q0] != ra || host_screen[(uint32_t)i * 240u + (uint32_t)q1] != ra;
-            }
-            for (y = q0; y <= q1; y++)
-                for (x = q0; x <= q1; x++)
-                    if (host_screen[(uint32_t)y * 240u + (uint32_t)x] != ra) {
-                        if (x - q0 < ix) ix = x - q0;
-                        if (y - q0 < iy) iy = y - q0;
+        {   /* the marquee: each word's ink (rows SPL_W1.., SPL_W2.., its shadow in) centred within 2 px and on the screen,
+             * its letters' two colours there (the top rows not the bottom ones), the rules either side of it */
+            static const struct { int32_t y; const char *w; } W[2] = {{SPL_W1, "DUNGEON"}, {SPL_W2, "TRACKER"}};
+            uint16_t bg = host_screen[0];
+            int32_t k, x, y;
+            for (k = 0; k < 2; k++) {
+                int32_t x0 = 999, x1 = -1, h = SPL_GH * SPL_S + 3;
+                for (y = W[k].y; y < W[k].y + h; y++)
+                    for (x = 0; x < 240; x++)
+                        if (host_screen[(uint32_t)y * 240u + (uint32_t)x] != bg) {
+                            if (x < x0) x0 = x;
+                            if (x > x1) x1 = x;
+                        }
+                {
+                    int32_t left = x0, right = 239 - (x1 - 2), w = spl_width(W[k].w);   /* (the shadow's 2 px out) */
+                    uint16_t top = bg, low = bg;
+                    for (x = HALF_UP(240 - w); x < HALF_UP(240 - w) + w && (top == bg || low == bg); x++) {   /* (the first ink of each) */
+                        if (top == bg) top = host_screen[(uint32_t)(W[k].y + 1) * 240u + (uint32_t)x];
+                        if (low == bg) low = host_screen[(uint32_t)(W[k].y + 6 * SPL_S + 1) * 240u + (uint32_t)x];
                     }
-            if (bad || ix != 16 || iy != 16) {
-                if (rep) fprintf(rep, "FIND %-26s the splash square not whole (edges %s) or its text not 16 px in (left %d, top %d)\n",
-                                 cur_name, bad ? "off" : "ok", (int)ix, (int)iy);
-                nfind++;
+                    if (x1 < 0 || left < 8 || abs(left - right) > 2 || top == bg || low == bg || (top == low && k == 0 && ux.mid != ux.text)) {   /* (MONO: black and white, one tone) */
+                        if (rep) fprintf(rep, "FIND %-26s the splash's %s not centred or not two-toned (left %d right %d)\n",
+                                         cur_name, W[k].w, (int)left, (int)right);
+                        nfind++;
+                    }
+                }
             }
         }
         if (strcmp(splash_seen, WANT)) {
