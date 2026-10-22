@@ -408,7 +408,7 @@ static void ui_leds(void)
         led_put(nl, panel.btn[FAM_BTN[fam]], 1);
     if ((k = arp_led()) != 2u && (!ui.layer || layer_btn() != B_ARP))
         led_put(nl, panel.btn[B_ARP], FAM_BTN[fam] == B_ARP ? !k : (int)k);   /* (on ARP's page: dark flashes) */
-    if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3]))
+    if (!ui.layer && (perf_latched || perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3] || mk_x[0] || mk_x[1] || mk_x[2] || mk_x[3]))
         led_put(nl, panel.btn[B_FX], 1);                /* FX LATCH: lit while an effect or a macro is on */
     if (ui.layer)                                       /* the layer's button breathes while its map is up */
         led_put(nb, panel.btn[layer_btn()], 1);
@@ -956,6 +956,23 @@ static void edit_param(uint32_t slot, int32_t steps)
         dice_edit(slot, steps);
         return;
     }
+#if RONDO_LAYOUT
+    if (pg->graph == GR_MFX) {                            /* RONDO: FX > MASTER: KNOB k picks slot k's effect, past */
+        uint32_t e = mk_eff(slot), j, k;                  /* the ones the other knobs have; the one it leaves goes */
+        for (j = 0; j < MK_N; j++) {                      /* back to rest (no knob would turn it off) */
+            e = (e + (steps > 0 ? 1u : MK_N - 1u)) % MK_N;
+            for (k = 0; k < 4u && (k == slot || mk_eff(k) != e); k++)
+                ;
+            if (k == 4u)
+                break;
+        }
+        if (e != mk_eff(slot)) {
+            *mk_val(mk_eff(slot)) = 0;
+            mk_assign(slot, e);
+        }
+        return;
+    }
+#endif
     if (pg->graph == GR_SONG) {                       /* KNOB 1 SECTION, 2 TRACK, 3 PAT (A..D, -), 4 REPS */
         chain_row_t *r;
         if (slot == 0u) {
@@ -1053,6 +1070,14 @@ static void edit_param(uint32_t slot, int32_t steps)
     if (!d || !vp || d->max == d->min)
         return;
     v = param_turn(d, *vp, accel(EN_K1 + slot, steps, d->fmt == F_ENUM ? 0 : d->max - d->min));
+#if RONDO_LAYOUT
+    if (vp == &TSEL->p[P_ITYPE] && v != *vp && v >= IT_FILTER) {   /* RONDO: FILTR DUCK REPT come with their own A B C */
+        uint32_t k;                                       /* (their meanings are new); REPT at MIX 0: MIX arms it */
+        for (k = 0; k < 3u; k++)
+            TSEL->p[P_IA + k] = ins_desc(v, k)->def;
+        TSEL->p[P_IMIX] = v == IT_REPEAT ? 0 : 127;
+    }
+#endif
     *vp = (int16_t)v;
     if (pg->scope != SC_GLOBAL) {
         motion_capture(TSEL, (uint32_t)(vp - TSEL->p), *vp);
@@ -1537,7 +1562,9 @@ static void ui_input(void)
     if (!layer_allowed()) {
         perf_kill = 1;                                  /* (effects off until their keys are let go) */
         perf_latched = 0;                               /* (FX LATCH: the latched ones and the macros off) */
+#if !RONDO_LAYOUT
         perf_k[0] = perf_k[1] = perf_k[2] = perf_k[3] = 0;
+#endif                                                  /* (RONDO: the master knobs stay through a menu or dialog) */
     }
     else if (!kb_layer)
         perf_kill = 0;

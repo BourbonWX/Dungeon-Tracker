@@ -1243,6 +1243,13 @@ static void draw_columns(void)
         }
         return;
     }
+#if RONDO_LAYOUT
+    if (cur_page()->graph == GR_MFX) {                /* RONDO: FX > MASTER: the four the FX layer's knobs ride */
+        for (c = 0; c < 4u; c++)
+            draw_column(c, "", MK_NAME[mk_eff(c)], "", VAL(c), -1, MK_ICON[mk_eff(c)]);
+        return;
+    }
+#endif
     if (cur_page()->graph == GR_DICE && dice_engine_ok(TSEL)) {   /* RONDO: DICE: DIE HOLD WILD HIST */
         uint32_t k = song.sel % NTRK, n = dice_count(TSEL), d = dice.cur[k] % n;
         char w[8], h[8];

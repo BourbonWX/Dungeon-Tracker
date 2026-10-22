@@ -123,6 +123,8 @@ static void ck_note_on(track_t *t, voice_t *v)
     if (dofs >= 120)                                      /* an open hat (120) or a cymbal (121): OPEN's length */
         dofs = 12 + clamp(p[P_E3], 0, 127) * 48 / 127 + (dofs == 121 ? 12 : 0);   /* x2 .. x32 */
     v->s[0] = (int32_t)lane;
+    if (lane == CK_KICK && t == &trk[0])
+        duck_kick();                                      /* (the INSERT's DUCK on the other tracks: core.h) */
     v->s[1] = 1 << 30;
     v->s[2] = 1 << 30;
     v->s[3] = lane == CK_HAT ? 0 : 1 << 30;
@@ -160,7 +162,7 @@ static void ck_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
     uint32_t lane = (uint32_t)v->s[0] & 3u, i, pi = (uint32_t)(t - trk) % NPART;
     int32_t a0 = v->s[1], pe0 = v->s[2], me0 = v->s[3], ns = v->s[4], flt = v->s[5];
     uint32_t ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
-    int32_t col = clamp(p[CK_COLOR(lane)] + p[P_E2], 0, 127), shp = clamp(p[CK_SHAPE(lane)], 0, 127);
+    int32_t col = clamp(p[CK_COLOR(lane)] + p[P_E2] + mk_x[3] * 2 / 5, 0, 127), shp = clamp(p[CK_SHAPE(lane)], 0, 127);   /* (RIDE) */
     int32_t didx = p[CK_DECAY(lane)] * 120 / 127 + 12 + p[P_E1] * 24 / 64 + v->s[7];
     int32_t a1 = cyc_mul30(a0, cyc_kb(didx)), pe1, me1, p16, sw16, lv = clamp(p[P_LN0 + lane], 0, 127);
     int32_t click = lane == CK_HAT ? 0 : clamp(p[P_E4], 0, 127), drv = clamp(p[P_E6], 0, 127), g = 0, mk = 0;
@@ -396,9 +398,10 @@ static void ct_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
     const int16_t *p = t->p;
     int32_t me0 = v->s[0], pe0 = v->s[1], fbs = v->s[2], dc = v->s[3], ms = clamp(p[P_E3], 0, 127) << 23;
     int32_t me1 = ms + cyc_mul30(me0 - ms, cyc_kb(p[P_E2] * 143 / 127)), pe1 = cyc_mul30(pe0, cyc_kb(60));
-    int32_t col = clamp(p[P_E1] + ((m->shape - (64 << 8)) >> 8) + (m->cutoff >> 8) + (v->vel - 96) / 4, 0, 127);
+    int32_t col = clamp(p[P_E1] + ((m->shape - (64 << 8)) >> 8) + (m->cutoff >> 8) + (v->vel - 96) / 4 + mk_x[3] * 2 / 5, 0, 127);
     int32_t ki = cyc_idx(col), k0 = (int32_t)(((int64_t)ki * (me0 >> 15)) >> 15), k1 = (int32_t)(((int64_t)ki * (me1 >> 15)) >> 15);
-    int32_t fb = p[P_E4] * p[P_E4] * 5 >> 2, stk = p[P_E6] * 258, sub = p[P_E7] * 258, sw = p[P_E5];
+    int32_t e4 = clamp(p[P_E4] + mk_x[3] / 4, 0, 127);    /* (the FX layer's RIDE: a little more FDBK) */
+    int32_t fb = e4 * e4 * 5 >> 2, stk = p[P_E6] * 258, sub = p[P_E7] * 258, sw = p[P_E5];
     uint32_t inc = m->inc, minc, inc2, i, ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
     if (sw && pe0 > (1 << 16)) {                          /* SWEEP: the pitch starts away from the note */
         int32_t d16 = sw * 384 / 64;                      /* +-24 semitones */

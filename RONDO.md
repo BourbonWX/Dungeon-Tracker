@@ -85,6 +85,58 @@ sounds, T3 bass sounds (low ratios, often a sub, short envelopes), T4 leads. A r
 RATIO keeps musical; if you hold a bright COLOR, RATIO rolls only among ratios that suit it. Successive rolls are one
 undo (SAVE held); `tests/dice_test.c` listens to 900 rolls and checks none clip, carry DC, hang or turn harsh.
 
+## Live effects
+
+There are two layers of effects: one effect on each track, set up while you produce and ridden live with ARP held;
+and four master effects on the whole mix, ridden with FX held.
+
+### One effect per track (FX > INSERT, ridden with ARP held)
+
+Every track has an INSERT: one effect, three settings (A B C) and a dry / wet MIX. Pick it on FX > INSERT (TYPE and
+A B C); **INSERT 2** has the four you ride: A, B, C and MIX. Felucca's SOFT HARD FOLD FUZZ CRUSH PHASR FLANG CHOR are all
+there, and RONDO adds three:
+
+| TYPE | A | B | C | |
+|---|---|---|---|---|
+| **FILTR** | CUT | RES | MODE (LP, LP+BP, BP, BP+HP, HP) | a resonant state-variable filter; MODE blends smoothly from low-pass to high-pass |
+| **DUCK** | DEPTH | REL (release) | SHAPE | the track dips at every kick of T1 and comes back over REL; SHAPE holds it down longer (a pump) |
+| **REPT** | RATE (1/8 1/8T 1/16 1/16T 1/32 1/64) | DECAY | PITCH (−4 … +4 semitones a pass) | a beat repeat of this track only |
+
+* **DUCK**'s kick: on an FMKIT T1, the KICK voice; a DRUM kit, its kick; any other engine on T1, every note.
+* **REPT** starts when MIX comes up from 0: at the next RATE boundary it grabs one RATE of the track and repeats it,
+  each pass DECAY quieter and PITCH higher or lower. MIX back to 0 lets the live sound back in. Picking REPT sets MIX to
+  0, so it waits for you. (It shares the SLICER's buffer: with the track's SLICER on STUT, or one of FX's buffer
+  effects running, REPT stands aside.)
+* Picking FILTR, DUCK or REPT loads their own starting values for A B C.
+
+**Hold ARP** and KNOB 1–4 are the selected track's A, B, C and MIX, from any page. The map shows each track's effect.
+While ARP is held, **black keys 1–4** switch the knobs to T1–T4; let go of ARP and you are back on the track you
+were on. With the track armed (REC) and playing, the rides are recorded as automation, like any knob. A tap of ARP still
+opens the ARP page.
+
+### Four master effects (FX held, KNOB 1–4)
+
+**Hold FX** and KNOB 1–4 are four master effects. Pick which four on **FX > MASTER** (KNOB k chooses knob k's effect;
+saved with the project). The pool:
+
+| Effect | Knob |
+|---|---|
+| FILTER | left a low-pass, right a high-pass (Felucca's) |
+| CRUSH | bit crush (Felucca's) |
+| THROW | the mix into the delay and reverb (Felucca's) |
+| DEPTH | how much of FX's key effects you hear (Felucca's; SHIMR while OCT UP / DN plays) |
+| ISOLATR | left takes the lows away, right the highs (a DJ kill) |
+| WASH | the mix into the reverb, and the reverb bigger |
+| PUMP | the whole mix ducks on every beat, in time |
+| RIDE | every FMKIT / FMTONE track brighter (COLOR and FDBK up) |
+
+**The knobs stay where you leave them** when you let go of FX (through the menu too), so you can build up and hold a
+drop. The FX button stays lit while any master effect is on. **FX + OCT−** sets all of them back to rest.
+A project from before keeps FILTER, CRUSH, THROW, DEPTH.
+
+FX's white keys (repeat, reverse, tape stop, freeze, octaves, flanger, phaser, throws) and black-key mutes work as
+before.
+
 ## HOME: the dungeon
 
 HOME's view is a first-person dungeon corridor. While the transport runs, the party walks one square per beat at the
@@ -188,6 +240,12 @@ otherwise they just play. SAVE held undoes, as everywhere in Felucca.
 * HOME shows the dungeon corridor instead of the scope (MENU > DISPLAY > HOME: DUNGEON, TRACKS, LEVELS).
 * A sixth MENU tab, GAME, holds DUNGEON OFF / ON: the dungeon's game, where a fallen adventurer cuts its track. Off at
   power-on, not saved. (Felucca's tests that count five tabs fail in a RONDO build; they pass with `RONDO_LAYOUT=0`.)
+* INSERT gains FILTR, DUCK and REPT; INSERT 2 is A B C MIX. ARP held is a layer (the track's effect to ride); a
+  tap still opens ARP.
+* FX's knobs are four master effects from a pool (FX > MASTER, saved in the project's otherwise unused `G_ENGGO`), and
+  they stay put when FX is let go; FX + OCT− resets them (it no longer shifts the octave). Felucca's tests that expect
+  the snap back, the octave shift or ARP's hold fail in a RONDO build; with `RONDO_LAYOUT=0` the three INSERTs, the
+  pool and the layer are left out and those tests pass.
 * The splash and version read `RONDO R0.1`.
 * `RONDO_LAYOUT=0` builds Felucca's shared 8-voice budget and power-on sounds (used to run Felucca's own tests).
 * The voice counts are `TRK_CAP` in `firmware/src/core.h`; change them there if you want another layout.
@@ -216,7 +274,7 @@ git submodule update --init                             # firmware/engines (Felu
 ### Tests
 
 ```sh
-sh tests/run_rondo.sh          # RONDO's checks (engines, tracker, dice, dungeon) and demo WAVs in build/rondo_demo
+sh tests/run_rondo.sh          # RONDO's checks (engines, tracker, dice, dungeon, live effects), demo WAVs in build/rondo_demo
 ```
 
 `tests/run_tests.sh` is Felucca's full suite; build it with `CC="cc -DRONDO_LAYOUT=0"` to check Felucca's behaviour

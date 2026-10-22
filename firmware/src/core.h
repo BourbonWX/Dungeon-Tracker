@@ -408,6 +408,20 @@ static inline uint32_t swing_step_len(const track_t *t, uint32_t base, uint32_t 
     return base + (uint32_t)((idx & 1u) ? -sw : sw);
 }
 
+/* RONDO: the INSERT's DUCK (fx.c ins_duck). rondo_clock counts the mix's samples (fx.c mix_block, after the block's
+ * events); a kick of track 1 (eng_cycle.c ck_note_on's KICK lane, voice.c for other engines) stamps duck_at with it, so
+ * every DUCK insert knows how long ago the last kick was, sounding or not since */
+static volatile uint32_t rondo_clock, duck_at;
+/* RONDO: the FX layer's four new master effects' values (perform.c MK_ISO ..): ISOLATOR -100..100, WASH PUMP RIDE 0..100;
+ * RIDE (mk_x[3]) is the FM engines' (eng_cycle.c: COLOR and FDBK up) */
+static volatile int8_t mk_x[4];
+static volatile uint8_t duck_seen;                       /* a kick since power-on (before it: nothing ducks) */
+static inline void duck_kick(void)
+{
+    duck_at = rondo_clock;
+    duck_seen = 1;
+}
+
 /* ----------------------------------------------------------- system --- */
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")   /* slot store before the index update */
 static volatile uint32_t fm1_ms;  /* milliseconds since boot (TIMER4-based, TIMER5 ISR in main.c) */

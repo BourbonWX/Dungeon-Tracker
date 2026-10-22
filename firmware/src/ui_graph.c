@@ -450,9 +450,110 @@ static void graph_fx(const track_t *t, uint16_t c)
  * scale) across, output up, dry and wet blended by MIX (fx.c ins_shape: the same shape; the dry diagonal RAISE); the
  * swept ones as two cycles of their sweep, as deep as DEPTH (FLANG the squared triangle, CHOR a sine, PHASR a
  * triangle). OFF: the dry diagonal, dim */
+#if RONDO_LAYOUT
+/* RONDO: a master effect's value as its card shows it (and FX > MASTER): FILTER LP / HP, ISOLATR LOW / HIGH (cut), DEPTH
+ * 100 - its value (SHIMR while OCT UP / DN plays), the others %; OFF at rest */
+static const char *mk_text(uint32_t e, char *val, const char **unit)
+{
+    int32_t v = *mk_val(e), a = v < 0 ? -v : v;
+    *unit = "";
+    if (e == MK_DEPTH && !perf_harm_on()) {
+        fmt_int(val, 100 - v);
+        *unit = "%";
+        return val;
+    }
+    if (!v)
+        return "OFF";
+    fmt_int(val, a);
+    *unit = e == MK_FILTER ? (v < 0 ? "LP" : "HP") : e == MK_ISO ? (v < 0 ? "LOW" : "HIGH") : "%";
+    return val;
+}
+static const uint16_t MK_ICON[MK_N] = {ICON_CUTOFF, ICON_BITS, ICON_DELAY, ICON_MIX, ICON_LEVEL, ICON_REVERB, ICON_PULSE,
+                                       ICON_TONE};
+/* RONDO: FX > MASTER. The four knobs the FX layer's KNOB 1..4 ride, a row each: the knob, the effect, its value now
+ * (dim at rest) */
+static void graph_mfx(uint16_t c)
+{
+    uint32_t k;
+    for (k = 0; k < 4u; k++) {
+        int32_t y = 8 + (int32_t)k * 22;
+        uint32_t e = mk_eff(k);
+        char val[12], b[16];
+        const char *unit, *v = mk_text(e, val, &unit);
+        int on = *mk_val(e) || (e == MK_DEPTH && !perf_harm_on());
+        b[0] = 'K';
+        b[1] = (char)('1' + k);
+        b[2] = 0;
+        cv_text_on(PANEL_X0 + 4, y, &AF_M, b, T_MID, T_SURF);
+        cv_icon_on(PANEL_X0 + 34, y + 2, 12, MK_ICON[e], on ? c : T_DIM, T_SURF);
+        cv_text_on(PANEL_X0 + 54, y, &AF_M, MK_NAME[e], T_TEXT, T_SURF);
+        str_cpy(b, v, sizeof b);
+        if (*unit) {                                     /* ("40 LP", "70 %"; OFF has none) */
+            str_cpy(b + str_len(b), " ", sizeof b - str_len(b));
+            str_cpy(b + str_len(b), unit, sizeof b - str_len(b));
+        }
+        cv_text_r(PANEL_X0 + PANEL_W - 4, y + 2, &AF_S, b, on ? c : T_DIM, T_SURF);
+    }
+}
+#endif
+
+/* RONDO's three (fx.c ins_filter ..): FILTR its response (10 octaves across, CUT's place; 0 dB a third down, 1.6 px a
+ * dB; a resonant bump, LP -> BP -> HP along MODE), DUCK the gain over two beats with a kick on each (REL at the tempo,
+ * SHAPE's bend; DEPTH deep), REPT eight passes of RATE as bars (DECAY lower each, PITCH tilting each up or down;
+ * MIX 0: dim, armed) */
+static void graph_insert_rondo(const track_t *t, uint16_t c, int32_t ty)
+{
+    int32_t x, py = 0, top = 8, bot = graph_ht - 8, h = bot - top, m = t->p[P_IMIX];
+    uint16_t col = m ? c : T_DIM;
+    if (ty == IT_FILTER) {
+        int32_t xc = PANEL_W * t->p[P_IA] / 127, res = t->p[P_IB], mo = t->p[P_IC], oct = PANEL_W / 10;
+        int32_t wl = mo < 64 ? 64 - mo : 0, wb = mo < 64 ? mo : 127 - mo, wh = mo < 64 ? 0 : mo - 64, ws = wl + wb + wh;
+        int32_t y0 = top + h / 3, bw = oct * (14 - res * 10 / 127) / 10;
+        cv_rect(PANEL_X0, y0, PANEL_W, 1, T_RAISE);
+        cv_line(PANEL_X0 + xc, top, PANEL_X0 + xc, bot, T_RAISE);
+        for (x = 0; x < PANEL_W; x++) {
+            int32_t d = x - xc, ad = d < 0 ? -d : d, bump = ad < bw ? res * 18 * (bw - ad) / (127 * bw) : 0;
+            int32_t lp = (d < 0 ? 0 : -12 * d / oct) + bump, hp = (d > 0 ? 0 : -12 * -d / oct) + bump, bp = -6 * ad / oct + bump;
+            int32_t db = (lp * wl + bp * wb + hp * wh) / (ws ? ws : 1), y = clamp(y0 - db * 16 / 10, top, bot);
+            if (x)
+                cv_line_t(PANEL_X0 + x - 1, py, PANEL_X0 + x, y, col, 2);
+            py = y;
+        }
+    } else if (ty == IT_DUCK) {
+        uint32_t beat = (uint32_t)FS * 60u / (uint32_t)clamp(song.g[G_BPM], 20, 300);
+        uint32_t rel = TIME_MS_X10[clamp(t->p[P_IB], 0, 127)] * 441u / 100u + 64u;
+        int32_t dep = t->p[P_IA], sh = t->p[P_IC];
+        for (x = 0; x < PANEL_W; x++) {
+            uint32_t e = (uint32_t)((uint64_t)beat * 2u * (uint32_t)x / PANEL_W) % beat;   /* samples since the kick */
+            int32_t d = e >= rel ? 0 : 32767 - (int32_t)((uint64_t)e * 32767u / rel), y;
+            d += (int32_t)(((int64_t)d * (32767 - d) >> 15) * sh / 127);
+            y = top + (int32_t)((int64_t)h * d * dep / 127 / 32767);
+            if (x)
+                cv_line_t(PANEL_X0 + x - 1, py, PANEL_X0 + x, y, col, 2);
+            py = y;
+        }
+        cv_rect(PANEL_X0, top, 2, h, T_ACCENT);                  /* the kicks */
+        cv_rect(PANEL_X0 + PANEL_W / 2, top, 2, h, T_ACCENT);
+    } else {                                                     /* REPT */
+        int32_t k, g = 32768, dec = 32768 - t->p[P_IB] * 129, semi = clamp(t->p[P_IC], 0, 127) * 9 / 128 - 4;
+        int32_t w = PANEL_W / 8;
+        for (k = 0; k < 8; k++) {
+            int32_t bh = h * g / 32768, xb = PANEL_X0 + k * w, tilt = clamp(semi * 3 * k, -h / 2, h / 2);
+            if (bh > 2) {
+                cv_rrect(xb + 2, bot - bh, w - 4, bh, 2, k ? T_RAISE : col, T_SURF);
+                cv_line_t(xb + 4, bot - bh / 2 + tilt / 2, xb + w - 5, bot - bh / 2 - tilt / 2, col, 2);
+            }
+            g = (g * dec) >> 15;
+        }
+    }
+}
 static void graph_insert(const track_t *t, uint16_t c)
 {
     int32_t x, cy = graph_ht / 2, a = 38 * graph_ht / 100, py = cy, ty = clamp(t->p[P_ITYPE], 0, IT_N - 1);
+    if (ty >= IT_FILTER) {
+        graph_insert_rondo(t, c, ty);
+        return;
+    }
     int32_t m = ins_mixq(t->p[P_IMIX]), g = 4096 + t->p[P_IA] * t->p[P_IA] * 3, lvl = LEVEL_Q12[t->p[P_IC] & 127];
     uint32_t sh = ins_bits_sh(t->p[P_IA]);
     cv_rect(PANEL_X0, cy, PANEL_W, 1, T_RAISE);
@@ -2377,6 +2478,11 @@ static void draw_graph(void)
             cv_oy = 0;
             graph_dice(t, c);
             break;
+#if RONDO_LAYOUT
+        case GR_MFX:
+            graph_mfx(c);
+            break;
+#endif
         case GR_ROLL:
             cv_oy = 0;
             graph_tracker(t, c);                      /* RONDO: the TRACKER (Felucca's roll, grid and DETAIL: unused) */
