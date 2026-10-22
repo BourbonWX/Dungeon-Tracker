@@ -251,6 +251,16 @@ static void step_set_nudge(step_t *s, int32_t v)
  * value holds until another one changes it. One record per (track, step, id), of either kind */
 #define MOTION_LOCK 0x80u
 #define MOTION_ID(e) ((uint32_t)(e)->param & 0x7Fu)
+/* RONDO: the TRACKER's commands (ui_tracker.c, seq.c ph_*): step records (MOTION_LOCK) on ids past the parameters, so
+ * they are saved and undone as the FX column's locks are; never a parameter (motion.c skips them as it plays):
+ *   CMD_SPD   SPEED x1 / 1/2 / x2 from this row on (until another, or the pattern's loop comes round)
+ *   CMD_LOOP  after this row, back N rows (1 2 4 8), M times (1..8): N rows played M + 1 times (value N index x 8 + M - 1)
+ *   CMD_LPIT  the LOOP's pitch step a pass, -12..+12 semitones (notes only: a kit's hits stay) */
+#define CMD_SPD (P_COUNT + 0u)
+#define CMD_LOOP (P_COUNT + 1u)
+#define CMD_LPIT (P_COUNT + 2u)
+#define NCMD 3u
+static inline int cmd_id(uint32_t id) { return RONDO_LAYOUT && id >= P_COUNT && id < P_COUNT + NCMD; }
 typedef struct { uint8_t place, param; int8_t value; } motion_event_t;
 typedef struct { uint8_t count, on, rsv[2]; motion_event_t event[MOTION_MAX]; } motion_store_t;
 _Static_assert(sizeof(motion_store_t) == 388u, "motion disk layout (FUN10)");
@@ -351,6 +361,14 @@ typedef struct track {
     uint8_t sp_alt;              /* SPREAD: the side the next voice starts on (alternating, voice.c voice_start) */
     int16_t m_rnd;               /* .. its RAND */
     int32_t m_env;               /* the amp envelope of voice m_vi, last block (Q15) */
+    /* RONDO: the TRACKER's commands (seq.c ph_*): the row playing (the step seq_idx keeps the time), SPEED (0 x1,
+     * 1 1/2, 2 x2), the second half of a 1/2 row, the LOOP's passes and pitch, x2's second row due at pr_mid_at. 16
+     * bytes after an int32 (the size stays a multiple of 16) */
+    uint8_t pr_on, pr_row, pr_spd, pr_half, pr_lp, pr_mid;
+    int8_t pr_semi;
+    uint8_t pr_rsv;
+    uint32_t pr_mid_at;
+    uint8_t pr_rsv2[4];
 } track_t;
 /* the audio ISR indexes trk[] with a multiply by a small immediate and a shift while the size is a multiple of 16; 1.5's
  * new track parameters (the INSERT, the filter TYPE, ENV SYNC) and state would make it no multiple (the constant

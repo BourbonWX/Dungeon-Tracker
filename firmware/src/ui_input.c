@@ -957,6 +957,12 @@ static void edit_param(uint32_t slot, int32_t steps)
         return;
     }
 #if RONDO_LAYOUT
+    if (pg->graph == GR_VARY) {                           /* RONDO: VARY (ui_vary.c) */
+        vary_edit(slot, steps);
+        return;
+    }
+#endif
+#if RONDO_LAYOUT
     if (pg->graph == GR_MFX) {                            /* RONDO: FX > MASTER: KNOB k picks slot k's effect, past */
         uint32_t e = mk_eff(slot), j, k;                  /* the ones the other knobs have; the one it leaves goes */
         for (j = 0; j < MK_N; j++) {                      /* back to rest (no knob would turn it off) */
@@ -1100,6 +1106,12 @@ static void act_do(void)
         dice_roll();
         return;
     }
+#if RONDO_LAYOUT
+    if (cur_page()->graph == GR_VARY) {                    /* RONDO: VARY: the same, on the pattern */
+        vary_roll();
+        return;
+    }
+#endif
     if (cur_page()->graph == GR_TOOLS) {
         if (chain_busy()) { ui_message("STOP TO EDIT"); return; }
         if (!act_ready()) {                               /* nothing there to clear or delete */
@@ -1768,6 +1780,10 @@ static void ui_input(void)
     } else if (act_cols() && (oct & 1u)) {              /* OCT- drops it, or (none picked) goes HOME */
         if (cur_page()->graph == GR_DICE)               /* (RONDO: DICE: back one in HIST) */
             dice_hist(1);
+#if RONDO_LAYOUT
+        else if (cur_page()->graph == GR_VARY)          /* (RONDO: VARY: the same) */
+            vary_hist(1);
+#endif
         else if (cur_page()->graph != GR_PATS && ui.act)
             ui.act = 0;
         else

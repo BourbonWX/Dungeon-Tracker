@@ -2,7 +2,7 @@
  * RONDO: SEQ > TRACKER and the SEQ + SELECT track picker (src/ui_tracker.c), through ui_test.c's harness (the real UI
  * sources against stub buttons, knobs and display).
  *   build/host/tracker_test           (tests/run_rondo.sh)
- * 1. SEQ opens the TRACKER (the only step page; AUTOMATION after it), its columns per track kind.
+ * 1. SEQ opens the TRACKER (the only step page; AUTOMATION and VARY after it), its columns per track kind.
  * 2. a kit track: BD / SD hits and accents, HH . -> x closed -> o open (one lane at a time), PC c t r b (one of the
  *    grid's four lanes), EDIT clears the cell.
  * 3. a melodic track: KNOB 3 on an empty NOTE writes the last note, then transposes; KNOB 4 LEN ties; VEL and FLAG;
@@ -47,13 +47,14 @@ int main(void)
     ok2("SEQ opens the TRACKER (the step page), song.seq_mode on", !ui.home && cur_page()->graph == GR_ROLL &&
         str_eq(cur_page()->title, "TRACKER") && song.seq_mode);
     {
-        uint32_t n = 0, auto_ok = 0;
+        uint32_t n = 0, auto_ok = 0, vary_ok = 0;
         for (i = 0; i < NPAGES; i++)
             if (PAGES[i].fam == FAM_SEQ) {
                 n++;
                 auto_ok |= PAGES[i].graph == GR_EVENTS;
+                vary_ok |= PAGES[i].graph == GR_VARY;
             }
-        ok2("SEQ's pages: TRACKER and AUTOMATION only (no STEP, no DETAIL)", n == 2u && auto_ok);
+        ok2("SEQ's pages: TRACKER, AUTOMATION and VARY (no STEP, no DETAIL)", n == 3u && auto_ok && vary_ok);
     }
     ok2("a kit track: 9 columns BD SD HH PC VEL CHN RAT NDG FX; a melodic one 6", tk_ncols(&trk[0]) == 9u &&
         tk_colkind(&trk[0], 0) == TC_BD && tk_colkind(&trk[0], 8) == TC_FX && tk_ncols(&trk[1]) == 6u &&

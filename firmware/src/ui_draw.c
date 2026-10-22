@@ -1250,6 +1250,29 @@ static void draw_columns(void)
         return;
     }
 #endif
+#if RONDO_LAYOUT
+    if (cur_page()->graph == GR_VARY) {               /* RONDO: VARY: DIE HOLD WILD HIST */
+        uint32_t k = song.sel % NTRK, d = vary.cur[k] % VARY_N;
+        char w[8], h[8];
+        fmt_int(w, (int32_t)vary_wild(k));
+        draw_column(0, "DIE", VARY_NAME[d], "", VAL(0u), -1, ICON_AUTO);
+        draw_column(1, "HOLD", (vary.hold[k] >> d) & 1u ? "ON" : "OFF", "", VAL(1u), -1, ICON_AUTO);
+        draw_column(2, "WILD", w, "%", VAL(2u), (int32_t)vary_wild(k) * 10, ICON_AUTO);
+        if (vary.ok[k] && vary.hn[k] && vary.sig[k] == vary_pat_sig(TSEL)) {
+            if (vary.hpos[k] >= vary.hn[k])
+                str_cpy(h, "ORIG", 8);
+            else if (vary.hpos[k]) {
+                h[0] = '-';
+                fmt_int(h + 1, (int32_t)vary.hpos[k]);
+            } else
+                str_cpy(h, "NOW", 8);
+            draw_column(3, "HIST", h, "", VAL(3u), -1, ICON_AUTO);
+        } else {
+            draw_column(3, "HIST", "--", "", T_DIM, -1, ICON_AUTO);
+        }
+        return;
+    }
+#endif
     if (cur_page()->graph == GR_DICE && dice_engine_ok(TSEL)) {   /* RONDO: DICE: DIE HOLD WILD HIST */
         uint32_t k = song.sel % NTRK, n = dice_count(TSEL), d = dice.cur[k] % n;
         char w[8], h[8];

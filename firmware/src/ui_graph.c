@@ -2373,6 +2373,49 @@ static void graph_dice(const track_t *t, uint16_t c)
         dice.anim--;
 }
 
+#if RONDO_LAYOUT
+/* RONDO: SEQ > VARY (ui_vary.c). The six dice in two rows of three (a die's face from its seed, its name, what it did in
+ * the pattern shown: how many steps; held: THEME, the cursor's framed; tumbling a moment after a roll), under them
+ * the pattern's first 32 steps as a strip: a step that plays THEME, one the dice changed from the original ACCENT,
+ * empty RAISE */
+static void graph_vary(const track_t *t, uint16_t c)
+{
+    uint32_t k = song.sel % NTRK, d, i, len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP), shown = vary_shown(k);
+    (void)c;
+    for (d = 0; d < VARY_N; d++) {
+        int32_t x = 6 + (int32_t)(d % 3u) * 76, y = 3 + (int32_t)(d / 3u) * 39;
+        int held = (vary.hold[k] >> d) & 1u, cur = d == vary.cur[k] % VARY_N;
+        uint16_t bg = held ? T_THEME : T_RAISE, fg = held ? T_INK : T_TEXT;
+        uint32_t face = vary.anim && !held ? 1u + vary_rand() % 6u : vary.seed[k][d] ? 1u + vary.seed[k][d] % 6u : 1u;
+        char b[12];
+        cv_rrect(x, y, 72, 36, 5, bg, T_SURF);
+        if (cur)
+            cv_frame(x - 1, y - 1, 74, 38, T_ACCENT);
+        cv_rrect(x + 4, y + 6, 24, 24, 4, held ? T_INK : T_SURF, bg);
+        dice_pips(x + 4, y + 6, face, held ? T_THEME : T_TEXT);
+        cv_text_on(x + 32, y + 2, &AF_S, VARY_NAME[d], held ? T_INK : T_MID, bg);
+        if (shown) {
+            fmt_int(b, (int32_t)vary.cnt[k][d]);
+        } else {
+            str_cpy(b, "-", 12);
+        }
+        cv_text_on(x + 32, y + 17, &AF_S, b, fg, bg);
+    }
+    for (i = 0; i < 32u && i < len; i++) {
+        const step_t *s = &t->step[i];
+        int32_t x = 6 + (int32_t)i * 7, y = 82;
+        int on = s->time == ST_NOTE && (s->n || s->hit), tie = s->time == ST_TIE;
+        int ch = shown && memcmp(s, &vary_base[k][i], sizeof *s) != 0;
+        cv_rect(x, y, 6, 12, ch ? T_ACCENT : on ? T_THEME : tie ? T_MID : T_RAISE);
+        if (i % 4u == 0u)
+            cv_rect(x, y + 13, 6, 1, T_MID);
+    }
+    if (vary.anim)
+        vary.anim--;
+}
+
+#endif
+
 /* RONDO: SEQ > TRACKER (ui_tracker.c). A header of the column names (the cursor's column in the accent), then the
  * steps as rows, the middle row the cursor's (the playing one while following); the cursor's row on RAISE, its cell
  * framed; the playing row marked on the left in the accent; every fourth step number brighter (the beats); an empty
@@ -2401,11 +2444,11 @@ static void graph_tracker(const track_t *t, uint16_t c)
         if ((uint32_t)si == ui.cursor) {
             bg = T_RAISE;
             cv_rrect(6, y, 228, TK_ROW, 3, T_RAISE, T_SURF);
-        } else if (song.playing && (uint32_t)si == t->seq_idx) {   /* the playing row: a band */
-            bg = T_GRID;
+        } else if (song.playing && (uint32_t)si == (t->pr_on ? t->pr_row : t->seq_idx)) {   /* the playing row: a band */
+            bg = T_GRID;                                 /* (RONDO: the row the commands play) */
             cv_rect(6, y, 228, TK_ROW, T_GRID);
         }
-        if (song.playing && (uint32_t)si == t->seq_idx)
+        if (song.playing && (uint32_t)si == (t->pr_on ? t->pr_row : t->seq_idx))
             cv_rect(3, y + 2, 3, TK_ROW - 4, T_ACCENT);
         fmt_int(b, si);
         if (si < 10) {
@@ -2478,6 +2521,12 @@ static void draw_graph(void)
             cv_oy = 0;
             graph_dice(t, c);
             break;
+#if RONDO_LAYOUT
+        case GR_VARY:
+            cv_oy = 0;
+            graph_vary(t, c);
+            break;
+#endif
 #if RONDO_LAYOUT
         case GR_MFX:
             graph_mfx(c);

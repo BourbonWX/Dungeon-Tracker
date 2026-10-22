@@ -204,7 +204,7 @@ MENU > COLOR.
 
 ## The tracker (SEQ)
 
-Tap **SEQ**: the selected track's **TRACKER** (tap again: AUTOMATION). Steps run top to bottom, `00` to LEN − 1; the
+Tap **SEQ**: the selected track's **TRACKER** (tap again: AUTOMATION, then VARY). Steps run top to bottom, `00` to LEN − 1; the
 cursor's row sits in the middle and, while the transport plays, the view follows the playing row (marked on the left)
 until you touch a knob. Every fourth step number is brighter, and a dot after a number means the step has a lock.
 
@@ -229,16 +229,63 @@ TOOLS (LEN, DIV, SWING, GATE, euclid, double, half, …).
 | CHN | chance %, or a condition `1:2` … `4:4`, `FIL`, `!FI` | chance, then conditions | – |
 | R | ratchet 2–4 | ×1–×4 | – |
 | N | nudge −8…+7 sixteenths | nudge | – |
-| FX | a parameter lock: short name + hex value (`BDP41`, `DEC3A`) | lock the parameter on this step | which parameter (the engine's eight, a kit's voice values, level, pan, envelope, sends) |
+| FX | a command (below), or a parameter lock: short name + hex value (`BDP41`, `DEC3A`) | set it on this step | which: SPEED, LOOP, PITCH, then the parameters (the engine's eight, a kit's voice values, level, pan, envelope, sends) |
 
 **EDIT** clears the cursor's cell (on NOTE: the whole step and its locks, and the cursor moves down). Keys: with the
 track armed (**REC**) and the transport stopped they write the cursor's step (on a kit, its drums) and move down;
 otherwise they just play. SAVE held undoes, as everywhere in Felucca.
 
+### Commands (the FX column)
+
+The first three entries of KNOB 4's FX list are commands, in the spirit of a ProTracker effect column. A row with one
+shows it in words, whichever FX entry is picked:
+
+| Command | Shown | KNOB 3 | Does |
+|---|---|---|---|
+| SPEED | `HALF`, `DBL`, `SPx1` | x1, 1/2, x2 | from this row on, half time (each row holds two steps, its note twice as long) or double time (two rows a step); `SPx1` back to normal |
+| LOOP | `L2x3` | rows back (1, 2, 4, 8) × times (1–8) | after this row, jump back that many rows, that many times: `L2x3` plays the last two rows three more times |
+| PITCH | `P+2` | −12…+12 | on a LOOP row: each pass of the loop that many semitones up or down (notes only; a kit's drums stay) |
+
+**The pattern keeps its length.** The track's loop always takes the time it did; when it comes round, it starts again
+at row `00`, at normal speed, with no loop or pitch, so a track with commands never drifts from the others or from a
+SONG's sections. A half-time section or a long roll simply leaves the rows after it unplayed for that pass, so put
+them where you want the drop or the fill. The tracker's playing row follows the row actually played. While SPEED is
+1/2 or x2, ratchets play once; a track with commands plays every step on its start (no nudge). Commands are saved
+with the project, undone with SAVE held, and listed on AUTOMATION.
+
+### VARY: sequence dice (SEQ > VARY)
+
+DICE for patterns. **OCT+** rolls a variation of the selected track's pattern; dice you hold keep their choices, the
+rest roll again.
+
+| Die | Does |
+|---|---|
+| HITS | adds hits on empty steps (a melodic track repeats the note before; a kit picks one of its drums, hats likeliest), drops a few off-beat ones |
+| NOTES | a melodic track: moves notes 1–3 semitones or an octave, onto the track's scale; a kit: swaps drums for their kin (closed / open hat, snare / clap, tom / rim / bell) |
+| SHIFT | moves off-beat hits a step early or late |
+| RATCH | adds ×2 / ×3 ratchets, more in the last quarter (fills) |
+| ACC | accents on and off, velocities up and down |
+| PROB | adds a chance (50–90 %) or a 1:2 / 2:2 condition on off-beat steps |
+
+| Control | Does |
+|---|---|
+| **OCT+** | ROLL: every die not held rolls; the variation is written into the pattern (SAVE held undoes it) |
+| KNOB 1 DIE | move between the dice |
+| KNOB 2 HOLD | hold the die (filled in) or let it go |
+| KNOB 3 WILD | how much each die does (50 % at first) |
+| KNOB 4 HIST / **OCT−** | the last eight rolls, newest first, then ORIG: the original back |
+
+Every roll starts from the **original** (the pattern as it was at the first roll), not from the last roll, so rolling
+never drifts away. A die decides step by step from its own seed, so a held die makes the same choices on the same
+steps whatever the others roll. Change the pattern by hand and the next roll takes it as the new original. The strip
+under the dice shows the first 32 steps, the ones the dice changed in the accent colour. Downbeats are left alone by
+HITS and SHIFT, a kit's kick never changes drum, and the steps' locks and commands stay where they are. Not while a
+SONG plays.
+
 ## Differences from Felucca, in short
 
 * SEQ's STEP and DETAIL pages (piano roll, drum grid, per-step detail lanes) are replaced by the TRACKER; AUTOMATION
-  stays. Felucca's own UI tests that drive the grid or the roll no longer apply.
+  stays, and VARY joins it. The TRACKER's commands are step records on ids past the parameters (`CMD_*`, core.h). Felucca's own UI tests that drive the grid or the roll no longer apply.
 * Engines 14 and 15 added; SLICE (13) is no longer offered in the engine lists (so all engines still fit the EDIT
   layer's 16 white keys) but still plays in projects and user presets that use it.
 * Presets of the CYC engines cannot be starred as favourites (Felucca's settings keep rows 14 and 15 of the
@@ -280,7 +327,7 @@ git submodule update --init                             # firmware/engines (Felu
 ### Tests
 
 ```sh
-sh tests/run_rondo.sh          # RONDO's checks (engines, tracker, dice, dungeon, live effects), demo WAVs in build/rondo_demo
+sh tests/run_rondo.sh          # RONDO's checks (engines, tracker, commands, vary, dice, dungeon, live effects), demo WAVs
 ```
 
 `tests/run_tests.sh` is Felucca's full suite; build it with `CC="cc -DRONDO_LAYOUT=0"` to check Felucca's behaviour

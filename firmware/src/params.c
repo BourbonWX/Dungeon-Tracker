@@ -238,8 +238,20 @@ static const param_desc_t GP[G_COUNT] = {
     [G_DRREV] = PD("-", F_INT, 0, 0, 0),
 };
 
+/* RONDO: the TRACKER's commands (core.h CMD_*) as the FX column and AUTOMATION name and step them */
+static const char *const N_CSPD[] = {"x1", "1/2", "x2"};
+static const char *const N_CLOOP[] = {"1x1", "1x2", "1x3", "1x4", "1x5", "1x6", "1x7", "1x8", "2x1", "2x2", "2x3", "2x4",
+                                      "2x5", "2x6", "2x7", "2x8", "4x1", "4x2", "4x3", "4x4", "4x5", "4x6", "4x7", "4x8",
+                                      "8x1", "8x2", "8x3", "8x4", "8x5", "8x6", "8x7", "8x8"};
+static const param_desc_t CMD_DESC[NCMD] = {
+    {"SPEED", F_ENUM, 0, 2, 0, N_CSPD, 0},
+    {"LOOP", F_ENUM, 0, 31, 0, N_CLOOP, 0},
+    {"PITCH", F_SEMI, -12, 12, 0, 0, 0},
+};
 static const param_desc_t *track_desc(const track_t *t, uint32_t id)
 {
+    if (cmd_id(id))
+        return &CMD_DESC[id - P_COUNT];
     if (t->eng_req % NENGINES == ENGI_CKIT && id < P_E0) {   /* RONDO: FMKIT's voice values (eng_cycle.c) */
         const param_desc_t *d = ck_param_desc(id);
         if (d)
@@ -261,6 +273,8 @@ static const param_desc_t *track_desc(const track_t *t, uint32_t id)
  * only; range and default are the same): what the editor protocol, user presets and projects use */
 static const param_desc_t *param_desc_of(uint32_t e, uint32_t id)
 {
+    if (cmd_id(id))
+        return &CMD_DESC[id - P_COUNT];                /* (RONDO: a TRACKER command, core.h) */
     return id >= P_E0 ? &ENGINES[e]->edit[id - P_E0] : &TP[id];
 }
 
@@ -455,7 +469,7 @@ enum { FAM_HOME, FAM_ENV, FAM_LFO, FAM_FX, FAM_SCL, FAM_EDIT, FAM_GLO, FAM_SAVE,
 enum { SC_TRACK, SC_GLOBAL, SC_ENGINE, SC_STEP, SC_TRK };   /* SC_TRK: the TRACKS page (ui_input.c tracks_edit) */
 enum { GR_NONE, GR_ADSR, GR_LFO, GR_STEPS, GR_ARP, GR_SCALE, GR_FX, GR_ROLL, GR_BROWSE, GR_SLOTS, GR_USER, GR_TRK,
        GR_SLCR, GR_MOD, GR_PATS, GR_SONG, GR_TOOLS, GR_CHORD, GR_SLICES, GR_EVENTS,
-       GR_FMOP, GR_FMOP2, GR_FMENV, GR_INS, GR_DICE, GR_MFX };   /* (GR_DICE: RONDO's EDIT > DICE, ui_dice.c) */   /* (GR_STEPS: SEQ TOOLS' knobs; GR_FMOP..: FM6's operator pages, ui_fm6op.c) */
+       GR_FMOP, GR_FMOP2, GR_FMENV, GR_INS, GR_DICE, GR_MFX, GR_VARY };   /* (GR_DICE: RONDO's EDIT > DICE, ui_dice.c) */   /* (GR_STEPS: SEQ TOOLS' knobs; GR_FMOP..: FM6's operator pages, ui_fm6op.c) */
 
 typedef struct {
     const char *title;
@@ -526,6 +540,9 @@ static const page_t PAGES[] = {
     {"TRACKER", FAM_SEQ, SC_STEP, GR_ROLL, {0, 1, 2, 3}},   /* RONDO (ui_tracker.c): in place of Felucca's STEP and DETAIL */
     {"AUTOMATION", FAM_SEQ, SC_TRACK, GR_EVENTS, {0xFF, 0xFF, 0xFF, 0xFF}},  /* the locks, events, CHANCE and RATCH as a
                                                                              * list, PLAY and CLEAR (ui_events.c) */
+#if RONDO_LAYOUT
+    {"VARY", FAM_SEQ, SC_TRACK, GR_VARY, {0xFF, 0xFF, 0xFF, 0xFF}},        /* RONDO: sequence dice (ui_vary.c) */
+#endif
     /* HOME's pages (1.2): HOME tapped on HOME the MIXER (up to 1.1.5 GLO's; LEVEL PAN REV MUTE), again CLOCK (up to 1.1.5
      * GLO > GLOBAL; its TUNE is MENU > AUDIO's now), again HOME (ui.c home_tap) */
     {"MIXER", FAM_TRK, SC_TRK, GR_TRK, {0, 1, 2, 3}},

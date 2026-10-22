@@ -766,7 +766,7 @@ enum { S_HOME, S_HOME_IDLE, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TURN, S_MESSAGE,
        S_SONG_LANES, S_SONG_LANES_PLAYING, S_SONG_LANES_SILENT, S_SONG_PICTURES, S_HEAD_SLOT, S_HEAD_SLOT_EDITED, S_HEAD_SLOT_SONG,
        S_MENU_TUNE, S_MENU_INFO, S_HOME_TRACKS, S_HOME_TRACKS_STOPPED, S_HOME_TRACKS_HOT, S_MENU_HOME, S_HOME_LEVELS, S_HELP_HOME, S_HELP_USER, S_HELP_GRID, S_HELP_LFO, S_HELP_GLO, S_HELP_SEQ, S_MENU_HELP,
        S_INSERT_CRUSH, S_INSERT_FOLD, S_INSERT_PHASER, S_INSERT_OFF, S_INSERT_MIX, S_INSERT_FILTR, S_INSERT_DUCK, S_INSERT_REPT,
-       S_LAYER_ARP, S_LAYER_ARP_OFF, S_MFX, S_FX_MASTER,
+       S_LAYER_ARP, S_LAYER_ARP_OFF, S_MFX, S_FX_MASTER, S_TRACKER_CMD, S_AUTO_CMD, S_VARY, S_VARY_KIT,
        S_ENV_SYNC, S_ENV_DEST_SYNC, S_FILTER,
        S_LEARN_WAIT, S_LEARN_PICK, S_LEARN_SET, S_LEARN_LONG, S_GLO_LEARN, S_MENU_LCLEAR, S_MENU_LCLEAR_NONE,
        S_DLY_DOT, S_DLY_DOT16, S_FX_THROW,
@@ -797,7 +797,7 @@ static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_fallen", 
     "song_lanes", "song_lanes_playing", "song_lanes_silent", "song_pictures", "head_slot", "head_slot_edited", "head_slot_song",
     "menu_tune", "menu_info", "home_tracks", "home_tracks_stopped", "home_tracks_hot", "menu_home", "home_levels", "help_home", "help_user", "help_grid", "help_lfo", "layer_glo_help", "layer_seq_help", "menu_help",
     "insert_crush", "insert_fold", "insert_phaser", "insert_off", "insert_mix", "insert_filtr", "insert_duck", "insert_rept",
-    "layer_arp", "layer_arp_off", "master", "fx_master",
+    "layer_arp", "layer_arp_off", "master", "fx_master", "tracker_cmd", "auto_cmd", "vary", "vary_kit",
     "env_sync", "env_dest_sync", "filter",
     "learn_wait", "learn_pick", "learn_set", "learn_long", "layer_glo_learn", "menu_learn_clear", "menu_learn_clear_none",
     "dly_dotted", "dly_dotted_16", "perform_throw",
@@ -990,6 +990,8 @@ static void setup(int s)
     dg_cut = 0;
     dg_game = 0;                                     /* (the game off, as at power-on: HOME's corridor alone) */
     mk_reset();                                      /* (RONDO: the master knobs at rest, the first four) */
+    memset(&vary, 0, sizeof vary);                   /* (RONDO: VARY from scratch, the rolls the same each run) */
+    vary.rng = 12345u;
     song.g[G_ENGGO] = 0;
     switch (s) {
     case S_HOME: song.octave = 2; song.rec = 1; usb.config = 1; break;
@@ -1187,6 +1189,25 @@ static void setup(int s)
     case S_LAYER_ARP:
         go_home(); track_select(2); set_ins_ui(IT_FILTER, 70, 100, 30, 127);
         trk[0].p[P_ITYPE] = IT_DUCK; trk[1].p[P_ITYPE] = IT_REPEAT; ui.layer = LAYER_ARP;
+        break;
+    /* RONDO: the TRACKER's commands in the FX column (SPEED 1/2 on 08, LOOP 2x3 + PITCH +2 on 07, x2 on 12), playing
+     * (the row the commands play marked); AUTOMATION listing them; VARY after a roll (a melodic track, a kit) */
+    case S_TRACKER_CMD:
+        track_select(1); go_page(GR_ROLL);
+        motion_set_lock(TSEL, 8, CMD_SPD, 1); motion_set_lock(TSEL, 7, CMD_LOOP, 10); motion_set_lock(TSEL, 7, CMD_LPIT, 2);
+        motion_set_lock(TSEL, 12, CMD_SPD, 2);
+        { uint32_t c; for (c = 0; c < 9u && tk_col() != TC_FX; c++) tk.col[1]++; }
+        ui.cursor = 7; song.playing = 1; TSEL->seq_idx = 9; TSEL->pr_on = 1; TSEL->pr_row = 6; follow.hold = 1;
+        break;
+    case S_AUTO_CMD:
+        track_select(1); motion_set_lock(TSEL, 7, CMD_LOOP, 10); motion_set_lock(TSEL, 7, CMD_LPIT, 2);
+        motion_set_lock(TSEL, 8, CMD_SPD, 1); go_page(GR_EVENTS);
+        break;
+    case S_VARY:
+        track_select(1); go_page(GR_VARY); vary.wild[1] = 71; vary.hold[1] = 2; vary.cur[1] = 1; vary_roll(); vary.anim = 0;
+        break;
+    case S_VARY_KIT:
+        track_select(0); go_page(GR_VARY); vary.wild[0] = 91; vary_roll(); vary_roll(); vary_hist(1); vary.anim = 0;
         break;
     case S_LAYER_ARP_OFF: go_home(); track_select(3); trk[3].p[P_ITYPE] = 0; ui.layer = LAYER_ARP; break;
     case S_MFX:

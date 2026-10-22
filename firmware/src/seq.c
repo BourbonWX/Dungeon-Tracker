@@ -957,7 +957,7 @@ static __attribute__((noinline)) void seq_step(track_t *t, const step_t *s, uint
             t->rat_left = (uint8_t)(hits - 1u);
     }
     for (i = 0; i < s->n && i < 4u; i++) {
-        uint32_t x = s->note[i];
+        uint32_t x = (uint32_t)clamp((int32_t)s->note[i] + t->pr_semi, 0, 127);   /* (RONDO: a LOOP's pitch, else 0) */
         if (qseq) {                                 /* QNT SEQ: onto the scale now; two notes snapping */
             x = (uint32_t)clamp(scale_snap(t, (int32_t)x + qtrn), 0, 127);   /* together play once */
             for (j = 0; j < m && nn[j] != x; j++)
@@ -1025,7 +1025,8 @@ static __attribute__((noinline)) void seq_audition(void)
  * The step is read again: an edit to fewer parts (or another source in a song) ends the repeats */
 static __attribute__((noinline)) void seq_ratchet(track_t *t, uint32_t period)
 {
-    const step_t *s = &seq_steps(t)[t->seq_idx];
+    uint32_t idx = t->pr_on ? t->pr_row : t->seq_idx;   /* (RONDO: the row the TRACKER's commands play) */
+    const step_t *s = &seq_steps(t)[idx];
     uint32_t hits = step_ratchet(s);
     if (t->rat_left >= hits) {
         t->rat_left = 0;
@@ -1034,7 +1035,7 @@ static __attribute__((noinline)) void seq_ratchet(track_t *t, uint32_t period)
     if (t->seq_pos < (hits - t->rat_left) * (step_samples(t, period, t->seq_idx) / hits))
         return;
     t->rat_left--;
-    seq_step(t, s, t->seq_idx, period, SEQ_REP);
+    seq_step(t, s, idx, period, SEQ_REP);
 }
 
 /* the nudge of step s in 1/NUDGE_DIV of the step (NUDGE, core.h) when it plays off its start: the track's QUANTIZE OFF,
@@ -1157,6 +1158,100 @@ static __attribute__((noinline)) void seq_enter(track_t *t, uint32_t top, uint32
     rec_hold(t, t->seq_idx, len);
 }
 
+#if RONDO_LAYOUT
+/* ------------------------------------------------------------ RONDO: the TRACKER's commands --- */
+/* The step seq_idx keeps the time, as always: the pattern's loop is as long as it ever was, so a track with commands
+ * never drifts from the others, and a SONG's sections count as before. What the commands change is the row that
+ * plays (pr_row): SPEED 1/2 holds each row two steps (its gate twice as long), x2 plays two rows a step (the second at
+ * the step's half, gates halved), LOOP sends the row back N rows M times (LPIT: the notes up or down a pass). When the
+ * step comes round to 0 everything starts over: row 0, x1, no loop, no pitch ("back to the bar"). While SPEED is 1/2
+ * or x2 a row's RATCH plays x1. A track with commands plays every step on its start (no NUDGE, no matrix TIME). Main
+ * loop edits the records; the ISR reads them (a record is published whole: motion.c RING_PUBLISH) */
+static int ph_cmd(const track_t *t, uint32_t row, uint32_t id, int32_t *v)   /* row's command id, from what plays */
+{
+    const motion_store_t *m = chain_motion(t);
+    uint32_t i, place = trk_index(t) << 6 | row;
+    if (!m)
+        return 0;
+    for (i = 0; i < m->count; i++)
+        if (m->event[i].place == place && MOTION_ID(&m->event[i]) == id) {
+            *v = m->event[i].value;
+            return 1;
+        }
+    return 0;
+}
+static int ph_any(const track_t *t)                    /* track t has a command on some step */
+{
+    const motion_store_t *m = chain_motion(t);
+    uint32_t i, k = trk_index(t);
+    if (!m)
+        return 0;
+    for (i = 0; i < m->count; i++)
+        if ((m->event[i].place >> 6) == k && (MOTION_ID(&m->event[i]) == CMD_SPD || MOTION_ID(&m->event[i]) == CMD_LOOP))
+            return 1;
+    return 0;
+}
+static uint32_t ph_next(track_t *t, uint32_t row, uint32_t len)   /* the row after `row`: a LOOP's way back, or on */
+{
+    int32_t v, p;
+    if (ph_cmd(t, row, CMD_LOOP, &v)) {
+        uint32_t n = 1u << (((uint32_t)v >> 3) & 3u), m = ((uint32_t)v & 7u) + 1u;
+        if (t->pr_lp < m) {
+            t->pr_lp++;
+            if (ph_cmd(t, row, CMD_LPIT, &p))
+                t->pr_semi = (int8_t)clamp(t->pr_semi + p, -48, 48);
+            return row + 1u >= n ? row + 1u - n : 0u;
+        }
+        t->pr_lp = 0;
+        t->pr_semi = 0;
+    }
+    return (row + 1u) % len;
+}
+static void ph_play(track_t *t, uint32_t row, uint32_t period)   /* row plays: as step seq_idx would (its locks, chance) */
+{
+    uint32_t at = t->seq_idx;
+    int32_t v;
+    if (ph_cmd(t, row, CMD_SPD, &v) && (uint32_t)v != t->pr_spd) {
+        t->pr_spd = (uint8_t)clamp(v, 0, 2);
+        t->pr_half = 0;
+    }
+    t->pr_row = (uint8_t)row;
+    t->seq_idx = (uint16_t)row;                         /* (the step's condition counts its own loop: seq_cond_miss) */
+    seq_play(t, row, t->pr_spd == 1u ? period * 2u : t->pr_spd == 2u ? period / 2u : period);
+    t->seq_idx = (uint16_t)at;
+    if (t->pr_spd)
+        t->rat_left = 0;
+}
+/* step seq_idx starts (with commands): the row it plays */
+static __attribute__((noinline)) void ph_step(track_t *t, uint32_t len, uint32_t period, uint32_t cur_len)
+{
+    uint32_t row;
+    t->pr_mid = 0;
+    if (!t->pr_on || !t->seq_idx) {                     /* the loop's first step (or the commands just came): from the top */
+        t->pr_on = 1;
+        t->pr_spd = t->pr_half = t->pr_lp = 0;
+        t->pr_semi = 0;
+        row = t->seq_idx % len;                         /* (commands set mid-loop: in step with it) */
+    } else if (t->pr_spd == 1u && !t->pr_half) {
+        t->pr_half = 1;                                 /* 1/2: the row's second step, it sounds on */
+        return;
+    } else {
+        t->pr_half = 0;
+        row = ph_next(t, t->pr_row, len);
+    }
+    ph_play(t, row, period);
+    if (t->pr_spd == 2u) {                              /* x2: the next row at the step's half */
+        t->pr_mid = 1;
+        t->pr_mid_at = cur_len / 2u;
+    }
+}
+static __attribute__((noinline)) void ph_mid(track_t *t, uint32_t len, uint32_t period)   /* x2's second row */
+{
+    t->pr_mid = 0;
+    ph_play(t, ph_next(t, t->pr_row, len), period);
+}
+#endif
+
 static void seq_tick(track_t *t, uint32_t n)
 {
     uint32_t period, len, top;
@@ -1176,12 +1271,24 @@ static void seq_tick(track_t *t, uint32_t n)
         uint32_t cur_len = step_samples(t, period, t->seq_idx);
         if (t->nd_late | t->nd_early)
             seq_nd_due(t, period, len, cur_len, n);
+#if RONDO_LAYOUT
+        if (t->pr_mid && t->seq_pos >= t->pr_mid_at && t->seq_pos < cur_len)
+            ph_mid(t, len, period);                     /* (SPEED x2: the step's second row) */
+#endif
         if (t->seq_pos < cur_len && t->seq_pos != 0x7FFFFFFFu + n)
             break;
         top = t->seq_pos >= 0x7FFFFFFFu;            /* (PLAY, a SONG section: its first step) */
         t->seq_pos = top ? (chain.running ? chain.carry : 0u) : t->seq_pos - cur_len;
         t->seq_idx = (uint16_t)((t->seq_idx + 1u) % len);
         seq_enter(t, top, len);
+#if RONDO_LAYOUT
+        if (ph_any(t)) {                                /* RONDO: the TRACKER's commands play the rows */
+            ph_step(t, len, period, step_samples(t, period, t->seq_idx));
+            continue;
+        }
+        t->pr_on = t->pr_mid = 0;
+        t->pr_semi = 0;
+#endif
         if (t->p[P_SQNT] && !t->nd_fired)
             seq_play_on(t, period);                 /* QUANTIZE ON: every step on its start, as before 1.2 */
         else

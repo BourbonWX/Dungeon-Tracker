@@ -10,6 +10,11 @@
  * sixteenths of a step). FX: a parameter lock, tracker style: the parameter's short name and its value in hex.
  * BD SD HH PC: the kit's four voices; BD and SD o, HH x closed and o open, PC c clap / t tom / r rim / b bell (the grid's
  * eight lanes on four columns); capitals are accents.
+ * FX also holds the COMMANDS (first in KNOB 4's list; seq.c ph_*, core.h CMD_*), shown in words where a row has one:
+ *   SPEED  HALF / DBL / SPx1  from this row: half time, double time, back to x1 (the loop's end puts it back anyway)
+ *   LOOP   L2x3               after this row, back 2 rows, 3 times (1 2 4 8 rows, 1..8 times)
+ *   PITCH  P+2                the LOOP's pitch step a pass (semitones; a kit's hits stay)
+ * The pattern's loop keeps its length: when it comes round, row 00 at x1 (back to the bar).
  * KNOB 1 ROW (the cursor), KNOB 2 COL (the column), KNOB 3 the cell's value, KNOB 4 a second value of the column
  * (NOTE: LEN, VEL: FLAG ACC / SLD, FX: which parameter, a drum column: its accent). EDIT clears the cell (NOTE: the
  * step, its locks with it). Keys: as on Felucca's STEP: armed (REC) and stopped they write the cursor's step (a kit
@@ -43,6 +48,11 @@ static uint32_t tk_fx_list(const track_t *t, uint8_t *ids)
 {
     static const uint8_t COMMON[] = {P_LEVEL, P_PAN, P_ATK, P_DEC, P_SUS, P_REL, P_DIST, P_CHOR, P_DLY, P_REV};
     uint32_t n = 0, i;
+#if RONDO_LAYOUT
+    ids[n++] = (uint8_t)CMD_SPD;                          /* the commands first */
+    ids[n++] = (uint8_t)CMD_LOOP;
+    ids[n++] = (uint8_t)CMD_LPIT;
+#endif
     for (i = 0; i < 8u; i++)
         if (ev_id_ok(t, P_E0 + i))
             ids[n++] = (uint8_t)(P_E0 + i);
@@ -95,6 +105,20 @@ static void tk_fx_short(const track_t *t, uint32_t id, char *b)
         b[3] = 0;
     } else {
         str_cpy(b, nm, 4);
+    }
+}
+/* a command's cell (b holds 8): HALF / DBL / SPx1, L2x3, P+2 */
+static void tk_cmd_text(uint32_t id, int32_t v, char *b)
+{
+    if (id == CMD_SPD) {
+        str_cpy(b, v == 1 ? "HALF" : v == 2 ? "DBL" : "SPx1", 8);
+    } else if (id == CMD_LOOP) {
+        b[0] = 'L';
+        str_cpy(b + 1, N_CLOOP[clamp(v, 0, 31)], 7);
+    } else {
+        b[0] = 'P';
+        b[1] = v < 0 ? '-' : '+';
+        fmt_int(b + 2, v < 0 ? -v : v);
     }
 }
 static void tk_hex2(char *b, uint32_t v)
@@ -195,10 +219,15 @@ static int tk_cell(const track_t *t, uint32_t si, uint32_t c, char *b)
         fmt_int(b + 1, v < 0 ? -v : v);
         return 1;
     }
-    default: {                                            /* FX: the column's parameter, else the step's first lock */
-        uint32_t id = tk_fx_id(t), i;
+    default: {                                            /* FX: the column's parameter, else the step's command, else */
+        uint32_t id = tk_fx_id(t), i;                     /* its first lock */
         int16_t v;
         int on = id != 0xFFu && motion_lock_get(t, si, id, &v);
+#if RONDO_LAYOUT
+        for (i = P_COUNT; i < P_COUNT + NCMD && !on; i++)
+            if (motion_lock_get(t, si, i, &v))
+                on = 1, id = i;                           /* (a command: bright, it shapes the pattern) */
+#endif
         if (!on)
             for (i = 0; i < P_COUNT && !on; i++)
                 if (motion_lock_get(t, si, i, &v))
@@ -206,6 +235,10 @@ static int tk_cell(const track_t *t, uint32_t si, uint32_t c, char *b)
         if (!on) {
             str_cpy(b, "....", 8);
             return 0;
+        }
+        if (cmd_id(id)) {
+            tk_cmd_text(id, v, b);
+            return 1;
         }
         tk_fx_short(t, id, b);
         tk_hex2(b + str_len(b), (uint32_t)clamp(v - track_desc(t, id)->min, 0, 255));
@@ -399,7 +432,7 @@ static uint32_t tk_center(const track_t *t)
 {
     uint32_t len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP);
     if (song.playing && !follow.hold && t->seq_idx < len)
-        return t->seq_idx;
+        return t->pr_on && t->pr_row < len ? t->pr_row : t->seq_idx;   /* (RONDO: the row the commands play) */
     return ui.cursor < len ? ui.cursor : len - 1u;
 }
 
