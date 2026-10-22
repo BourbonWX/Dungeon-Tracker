@@ -8,7 +8,9 @@ installer's package format) and adds:
   PITCH, DECAY, COLOR, SWEEP, SHAPE and LEVEL.
 * **FMTONE** (engine 15) — a two-operator FM voice with a sub and a detuned second carrier, for chords, pads, basses
   and leads, with a timbre envelope (COLOR / CNTR / MSUS) instead of an operator editor.
-* **DICE sound design**: on FMTONE and FMKIT tracks, every part of the sound is a die. Roll, hold the dice you like,
+* **Chip presets** for Felucca's LOFI engine: twelve more (square and pulse leads, a staircase-triangle bass, plucks,
+  arps, zaps, chip kick, noise hat and snare, a wave-RAM organ and choir).
+* **DICE sound design**: on FMTONE, FMKIT and LOFI tracks, every part of the sound is a die. Roll, hold the dice you like,
   roll again, and the rest change around them, always inside ranges that sound musical.
 * **A tracker sequencer** in place of Felucca's step grid and piano roll: every track has its own tracker screen,
   steps as rows top to bottom, and **SEQ held + SELECT turned** picks the track whose tracker opens when SEQ is let go.
@@ -64,11 +66,33 @@ is off.
 **Presets** — FMKIT: CYCLE KIT, 808ISH, 909ISH, GRIT KIT, METAL KIT, DUB KIT. FMTONE: FM PAD, CHORD EP, STAB,
 GLASS PAD, ORGAN, FM BASS, SUB BASS, PLUCK BASS (the three basses are mono), FM LEAD, SYNC LEAD, BRASS, BELL.
 
+**LOFI** (Felucca's chip engine: CHIP WAVE DUTY CRSH / SWP VIB ARP TONE) — Felucca's five (PULSE LD, WAVE BASS,
+ARP 8BIT, WAVE LEAD, STEP LEAD) and RE-1's chip set:
+
+| Preset | What it is |
+|---|---|
+| SQUARE 50 | STEP chip, 50 % square lead with vibrato |
+| TRI BASS | the 32-step staircase triangle, mono |
+| PULSE BASS | 25 % pulse with a stepped decay (DCY D10) |
+| CHIP PLUCK | 25 % pulse, a short stepped decay (D3), poly |
+| FAST ARP | 8BIT pulse, ARP MIN: one note plays a minor chord |
+| LASER ZAP | square swept down fast, short decay |
+| CHIP KICK | the triangle swept down, a very short decay (play it low, about C2–C3) |
+| NOISE HAT | 1-bit noise, a tick (higher notes are brighter) |
+| NOISE SNR | 1-bit noise, held longer and crushed darker |
+| WAVE ORGAN | wave RAM ORGN table |
+| 8BIT SAW | an 8-bit saw lead |
+| VOX CHOIR | wave RAM VOXA ("ah") with a slow attack and vibrato |
+
 ## DICE (EDIT > DICE)
 
-On an FMTONE or FMKIT track, tap **EDIT** until **DICE** (after EDIT 1 and EDIT 2). Each die is one part of the sound:
+On an FMTONE, FMKIT or LOFI track, tap **EDIT** until **DICE** (after EDIT 1 and EDIT 2). Each die is one part of the sound:
 
 * FMTONE: RATIO, COLOR, CNTR, MSUS, FDBK, SWEEP, STACK, SUB and ENV (the amplitude envelope).
+* LOFI: CHIP, WAVE, DUTY, CRSH, SWEEP, VIB, ARP, TONE and ENV. DUTY follows the WAVE just rolled (a wave-RAM table
+  for WRAM, a pulse width for PLS) and CRSH follows the CHIP (on STEP it is the stepped decay, DCY). Chords and bass
+  never roll NOISE or a chord ARP; only a lead with a short STEP decay rolls a SWEEP (a zap). CHIP, WAVE, DUTY, CRSH,
+  ARP and ENV are choices, so at a WILD below 100 % they change or not (by that chance) rather than part way.
 * FMKIT: BD, SD, HH, PC (each voice's pitch, decay, color, sweep and shape together), MIX (the four levels) and FEEL
   (open-hat length, click, drive, variation).
 
@@ -83,7 +107,8 @@ On an FMTONE or FMKIT track, tap **EDIT** until **DICE** (after EDIT 1 and EDIT 
 Play the keys between rolls to hear each one. The dice are weighted by the track's role: T2 rolls pad and chord
 sounds, T3 bass sounds (low ratios, often a sub, short envelopes), T4 leads. A rolled COLOR never goes past what its
 RATIO keeps musical; if you hold a bright COLOR, RATIO rolls only among ratios that suit it. Successive rolls are one
-undo (SAVE held); `tests/dice_test.c` listens to 900 rolls and checks none clip, carry DC, hang or turn harsh.
+undo (SAVE held); `tests/dice_test.c` listens to 900 rolls per engine (FMTONE, LOFI) and checks none clip, carry DC,
+hang or turn harsh.
 
 ## Live effects
 
@@ -413,7 +438,10 @@ sh tests/run_rondo.sh          # RE-1's checks (engines, tracker, commands, vary
 ```
 
 `tests/run_tests.sh` is Felucca's full suite; build it with `CC="cc -DRONDO_LAYOUT=0"` to check Felucca's behaviour
-is unchanged outside the new engines.
+is unchanged outside the new engines. Felucca's `tests/ui_test.c` runs to the end in both layouts (and clean under
+AddressSanitizer); its failures are Felucca behaviour RE-1 changes on purpose (TRACKER in place of STEP / DETAIL and
+the DRUM grid, the two new engines in the lists, the header's pattern letter): 56 with `RONDO_LAYOUT=0`, 190 in the
+RE-1 layout. A change should leave those lists exactly as they are.
 
 ## Flashing (at your own risk)
 

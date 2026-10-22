@@ -432,8 +432,8 @@ static uint32_t layer_btn(void);
 static int page_visible(uint32_t i)
 {
     uint32_t ckit = TSEL->eng_req % NENGINES == ENGI_CKIT;   /* RONDO: FMKIT's pages */
-    if (PAGES[i].graph == GR_DICE)                    /* RONDO: DICE, the FM engines' */
-        return ckit || TSEL->eng_req % NENGINES == ENGI_CTONE;
+    if (PAGES[i].graph == GR_DICE)                    /* RONDO: DICE, the FM engines' (RE-1: and LOFI's) */
+        return ckit || TSEL->eng_req % NENGINES == ENGI_CTONE || TSEL->eng_req % NENGINES == ENGI_LOFI;
 #if RONDO_LAYOUT
     if (PAGES[i].graph == GR_MORPH)                   /* RONDO: MORPH, an engine with presets to morph to */
         return morph_npresets(TSEL) != 0u;

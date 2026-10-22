@@ -77,14 +77,15 @@ int main(int argc, char **argv)
             else { step_clear(&l->step[i]); l->step[i].time = i && LEAD[i - 1u] ? ST_TIE : ST_REST; }
         }
     }
-    for (i = 0; i < NTRK; i++) trk[i].engine = trk[i].eng_req;
     total = FS * 60u / 140u * 4u * 16u;                       /* 16 bars */
-    wav_hdr(w, total + FS);
+    wav_hdr(w, total + FS + CTL);
+    mix_block(o, CTL);                                        /* (the engine switches, on the audio side as on the device) */
+    for (i = 0; i < CTL; i++) wav_put(w, o[2 * i], o[2 * i + 1]);
     seq_start();
     song.playing = 1;
     for (sec = 0; sec < 2u; sec++) {
         uint32_t end = total / 2u * (sec + 1u);
-        if (sec == 1u) { preset_named(&trk[3], "STEP LEAD"); trk[3].engine = trk[3].eng_req; }
+        if (sec == 1u) preset_named(&trk[3], "STEP LEAD");
         while (done < end) {
             uint32_t n = end - done < CTL ? end - done : CTL, k;
             mix_block(o, n);

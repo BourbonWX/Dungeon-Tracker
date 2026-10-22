@@ -31,3 +31,6 @@ build/host/morph_test
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/persistence_test tests/persistence_test.c -lm
 build/host/persistence_test > build/host/persistence.txt || { grep FAIL build/host/persistence.txt; exit 1; }
 tail -1 build/host/persistence.txt                    # (the flash: the PATTERN BANK's pairs too)
+# the audio tools build (tests/chip_demo.c, tests/chip_tour.c: LOFI's demos, run by hand)
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/chip_demo tests/chip_demo.c -lm
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/chip_tour tests/chip_tour.c -lm

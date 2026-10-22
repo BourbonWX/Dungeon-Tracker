@@ -1,11 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 RONDO contributors. Built on Felucca (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* RONDO's EDIT > DICE: sound design by rolling dice, on FMTONE and FMKIT tracks. Each die is one part of the sound;
+/* RONDO's EDIT > DICE: sound design by rolling dice, on FMTONE, FMKIT and (RE-1) LOFI tracks. Each die is one part of the sound;
  * OCT+ rolls every die that is not held, so a sound you like can be kept part by part while the rest is rolled
  * again (an offshoot of it). The dice only land on values that sound musical: each draws from ranges and weighted
  * choices set for the engine and the track's role (T2 chords / pads, T3 bass, T4 lead; others as T2).
  *   FMTONE  RATIO COLOR CNTR MSUS FDBK SWEEP STACK SUB (its eight values) and ENV (the amplitude envelope, one of a
  *           role's shapes)
+ *   LOFI    CHIP WAVE DUTY CRSH SWEEP VIB ARP TONE (its eight values) and ENV. DUTY follows the WAVE rolled (a
+ *           wave RAM table, or a pulse width), CRSH the CHIP (STEP: a stepped decay, DCY); a chord or bass track
+ *           never rolls NOISE or a chord ARP
  *   FMKIT   BD SD HH PC (each voice's PITCH DECAY COLOR SWEEP SHAPE together), MIX (the four levels) and FEEL (OPEN
  *           CLICK DRV VARI)
  * KNOB 1 DIE (the cursor), KNOB 2 HOLD, KNOB 3 WILD (100 %: a fresh roll; lower: each die moves only part of the way
@@ -27,13 +30,27 @@ static struct {
 static int dice_engine_ok(const track_t *t)
 {
     uint32_t e = t->eng_req % NENGINES;
-    return e == ENGI_CTONE || e == ENGI_CKIT;
+    return e == ENGI_CTONE || e == ENGI_CKIT || e == ENGI_LOFI;
 }
 static int dice_kit(const track_t *t) { return t->eng_req % NENGINES == ENGI_CKIT; }
+static int dice_lofi(const track_t *t) { return t->eng_req % NENGINES == ENGI_LOFI; }
 static uint32_t dice_count(const track_t *t) { return dice_kit(t) ? 6u : 9u; }
 static const char *const DICE_TONE_N[9] = {"RATIO", "COLOR", "CNTR", "MSUS", "FDBK", "SWEEP", "STACK", "SUB", "ENV"};
+static const char *const DICE_LOFI_N[9] = {"CHIP", "WAVE", "DUTY", "CRSH", "SWEEP", "VIB", "ARP", "TONE", "ENV"};
 static const char *const DICE_KIT_N[6] = {"BD", "SD", "HH", "PC", "MIX", "FEEL"};
-static const char *dice_name(const track_t *t, uint32_t d) { return dice_kit(t) ? DICE_KIT_N[d % 6u] : DICE_TONE_N[d % 9u]; }
+static const char *dice_name(const track_t *t, uint32_t d)
+{
+    return dice_kit(t) ? DICE_KIT_N[d % 6u] : dice_lofi(t) ? DICE_LOFI_N[d % 9u] : DICE_TONE_N[d % 9u];
+}
+/* a die that is a choice, not a distance (WILD: the chance it changes, not how far) */
+static int dice_discrete(const track_t *t, uint32_t d)
+{
+    if (dice_kit(t))
+        return 0;
+    if (dice_lofi(t))
+        return d <= 3u || d == 6u || d == 8u;             /* CHIP WAVE DUTY CRSH ARP ENV: lists, tables, decays */
+    return d == 0u || d == 8u;                            /* RATIO, ENV */
+}
 static uint32_t dice_wild(uint32_t k) { return dice.wild[k] ? dice.wild[k] - 1u : 100u; }
 
 /* the parameters of die d (ids, at most 5) */
@@ -103,6 +120,92 @@ static uint32_t dice_role(const track_t *t)
     return k == 2u || k == 3u ? k : 1u;
 }
 
+/* the common ENV (ATK DEC SUS REL): one of the role's shapes, a little varied */
+static void dice_env(const uint8_t (*E)[4], int16_t *v)
+{
+    const uint8_t *e = E[dice_rand() % 5u];
+    uint32_t k;
+    for (k = 0; k < 4u; k++)
+        v[k] = (int16_t)clamp((int32_t)e[k] + (e[k] ? dice_in(-6, 6) : 0), 0, 127);
+}
+
+/* LOFI's dice (eng_lofi.c). The roll goes die by die, in order, so DUTY and CRSH read the CHIP and WAVE just rolled */
+static void dice_fresh_lofi(const track_t *t, uint32_t d, int16_t *v, uint32_t role)
+{
+    uint32_t r = role - 1u, chip = (uint32_t)t->p[P_E0], wave = (uint32_t)t->p[P_E1];
+    switch (d) {
+    case 0: {                                             /* CHIP: 4BIT 4B/2 8BIT 1BIT STEP (1BIT: never, a pulse at 1 bit is lopsided) */
+        static const uint8_t W[3][5] = {{3, 1, 3, 0, 5}, {3, 1, 2, 0, 6}, {3, 1, 3, 0, 6}};
+        v[0] = (int16_t)dice_pick(W[r], 5);
+        break;
+    }
+    case 1: {                                             /* WAVE: PLS TRI SAW NOIS WRAM (noise: never) */
+        static const uint8_t W[3][5] = {{5, 1, 1, 0, 5}, {3, 6, 1, 0, 4}, {7, 1, 2, 0, 4}};
+        v[0] = (int16_t)dice_pick(W[r], 5);
+        break;
+    }
+    case 2:                                               /* DUTY: the wave RAM table, or the pulse width */
+        if (wave == 4u) {
+            static const uint8_t W[3][16] = {
+                /* SQ50 SQ25 SQ12 SINE TRI SAW SAW2 BAS1 BAS2 ORGN HOLW VOXA VOXO VOXE BUZZ STAIR */
+                {1, 1, 0, 2, 1, 1, 2, 0, 0, 4, 2, 3, 3, 2, 0, 1},   /* chords / pads */
+                {2, 1, 0, 1, 3, 2, 1, 5, 5, 1, 2, 0, 1, 0, 0, 1},   /* bass */
+                {3, 3, 0, 1, 0, 2, 2, 0, 0, 2, 2, 2, 1, 2, 0, 1},   /* lead (SQ12, BUZZ: too thin and harsh) */
+            };
+            v[0] = (int16_t)(dice_pick(W[r], 16) * 8u + 4u);
+        } else if (wave == 0u) {                          /* STEP: 12.5 25 50 75 %; else 12.5 25 37.5 50 % (12.5: never,
+                                                           * its peak is past full scale) */
+            static const uint8_t S[3][4] = {{0, 3, 4, 1}, {0, 3, 3, 1}, {0, 4, 3, 1}};
+            static const uint8_t P[3][4] = {{0, 3, 2, 4}, {0, 3, 2, 3}, {0, 4, 2, 3}};
+            v[0] = (int16_t)(dice_pick(chip == 4u ? S[r] : P[r], 4) * 32u + 16u);
+        } else
+            v[0] = (int16_t)dice_in(0, 127);              /* (TRI SAW: unused) */
+        break;
+    case 3:                                               /* CRSH; STEP: the decay DCY (b * 4: 0 CONST, D0..D15, L1..) */
+        if (chip == 4u) {
+            static const int8_t D[3][2] = {{7, 15}, {7, 16}, {5, 14}};
+            uint32_t c = dice_rand() % 100u;
+            int32_t b = c < (r == 2u ? 55u : 40u) ? 0 : c < 92u ? dice_in(D[r][0], D[r][1]) : dice_in(19, 26);
+            v[0] = (int16_t)(b ? b * 4 + 1 : 0);
+        } else {
+            uint32_t c = dice_rand() % 100u;
+            v[0] = (int16_t)(c < 60u ? dice_in(0, 8) : c < 92u ? dice_in(8, 40) : dice_in(40, 64));
+        }
+        break;
+    case 4: {                                             /* SWEEP (8: 1/16 st a tick, ~86 st a second): a held note would
+                                                           * fall to nothing, so only a lead's short STEP decay zaps */
+        int32_t b = (int32_t)t->p[P_E3] >> 2;
+        v[0] = (int16_t)(r == 2u && chip == 4u && b >= 1 && b <= 8 && dice_chance(35) ? dice_in(8, 24) : 0);
+        break;
+    }
+    case 5: {                                             /* VIB: a lead often, a bass hardly */
+        static const uint8_t C[3] = {70, 90, 40};
+        static const int8_t S[3][2] = {{6, 20}, {4, 10}, {10, 30}};
+        v[0] = (int16_t)(dice_chance(C[r]) ? 0 : dice_in(S[r][0], S[r][1]));
+        break;
+    }
+    case 6: {                                             /* ARP: OFF OCT MAJ MIN (a chord one: a lead only, seldom) */
+        static const uint8_t W[3][4] = {{7, 2, 0, 0}, {8, 2, 0, 0}, {8, 2, 1, 1}};
+        v[0] = (int16_t)dice_pick(W[r], 4);
+        break;
+    }
+    case 7: {                                             /* TONE */
+        static const int8_t C[3][2] = {{70, 120}, {70, 127}, {90, 127}};
+        v[0] = (int16_t)dice_in(C[r][0], C[r][1]);
+        break;
+    }
+    default: {                                            /* ENV (STEP: the ADSR only gates, REL the tail) */
+        static const uint8_t E[3][5][4] = {
+            {{0, 70, 100, 40}, {0, 90, 110, 60}, {20, 90, 100, 70}, {0, 60, 80, 30}, {40, 100, 110, 80}},
+            {{0, 50, 110, 12}, {0, 40, 127, 8}, {0, 60, 70, 15}, {0, 45, 90, 10}, {0, 55, 50, 12}},
+            {{0, 70, 110, 30}, {0, 60, 127, 40}, {0, 50, 90, 25}, {6, 80, 110, 45}, {0, 40, 70, 20}},
+        };
+        dice_env(E[r], v);
+        break;
+    }
+    }
+}
+
 /* a fresh roll of die d into v[] (its values, in dice_die_ids' order) */
 static void dice_fresh(const track_t *t, uint32_t d, int16_t *v)
 {
@@ -128,6 +231,10 @@ static void dice_fresh(const track_t *t, uint32_t d, int16_t *v)
             v[2] = (int16_t)(dice_chance(60) ? 0 : dice_in(10, 70));   /* DRV */
             v[3] = (int16_t)dice_in(0, 40);               /* VARI */
         }
+        return;
+    }
+    if (dice_lofi(t)) {
+        dice_fresh_lofi(t, d, v, role);
         return;
     }
     switch (d) {
@@ -176,10 +283,7 @@ static void dice_fresh(const track_t *t, uint32_t d, int16_t *v)
             {{0, 50, 90, 12}, {0, 40, 110, 10}, {0, 60, 40, 15}, {2, 55, 70, 20}, {0, 45, 20, 10}},
             {{0, 70, 100, 30}, {4, 60, 110, 40}, {0, 50, 80, 25}, {10, 80, 100, 45}, {0, 40, 60, 20}},
         };
-        const uint8_t *e = E[role - 1u][dice_rand() % 5u];
-        uint32_t k;
-        for (k = 0; k < 4u; k++)
-            v[k] = (int16_t)clamp((int32_t)e[k] + (e[k] ? dice_in(-6, 6) : 0), 0, 127);
+        dice_env(E[role - 1u], v);
         break;
     }
     }
@@ -264,14 +368,13 @@ static void dice_roll(void)
         dice_fresh(t, d, v);
         for (j = 0; j < m; j++) {
             int32_t cur = t->p[ids[j]];
-            int discrete = (!dice_kit(t) && (d == 0u || d == 8u));   /* (RATIO, ENV: a choice, not a distance) */
-            if (discrete)
+            if (dice_discrete(t, d))
                 t->p[ids[j]] = (int16_t)(dice_rand() % 100u < w ? v[j] : cur);
             else
                 t->p[ids[j]] = (int16_t)(cur + (v[j] - cur) * (int32_t)w / 100);
         }
     }
-    if (!dice_kit(t) && w) {                              /* (what the roll changed: a harsh pair gives way) */
+    if (t->eng_req % NENGINES == ENGI_CTONE && w) {       /* (what the roll changed: a harsh pair gives way) */
         uint32_t rolled = ~(uint32_t)dice.hold[k];
         dice_tame(t, rolled);
         if (t->p[P_E1] > 95 && t->p[P_E4] > 40 && ((rolled >> 4) & 1u))   /* (a bright index, much feedback) */

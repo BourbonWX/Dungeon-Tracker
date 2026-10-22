@@ -2398,7 +2398,7 @@ static void graph_dice(const track_t *t, uint16_t c)
     uint32_t n = dice_count(t), k = song.sel % NTRK, d;
     (void)c;
     if (!dice_engine_ok(t)) {
-        panel_note("FMTONE / FMKIT", "ONLY", 0);
+        panel_note("FMTONE, FMKIT, LOFI", "ONLY", 0);
         return;
     }
     for (d = 0; d < n; d++) {

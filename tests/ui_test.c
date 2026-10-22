@@ -990,6 +990,11 @@ static void go_title(const char *title)
     uint32_t i;
     for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, title); i++)
         ;
+    if (i == NPAGES && (str_eq(title, "STEP") || str_eq(title, "DETAIL")))   /* RE-1: TRACKER in their place */
+        for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, "TRACKER"); i++)
+            ;
+    if (i == NPAGES)                                  /* (no such page: stay; never past PAGES[]) */
+        return;
     ui.home = 0;
     ui.page = (uint8_t)i;
     page_entered();
@@ -8972,7 +8977,7 @@ static uint32_t head_ink_cols(int32_t x0, int32_t x1)  /* header columns x0..x1 
 }
 static int head_is(const char *s)
 {
-    char b[3];
+    char b[4];                                         /* (head_slot: up to "A>C") */
     int on = head_slot(b);
     return s ? on && b[0] == s[0] && b[1] == s[1] : !on;
 }
@@ -9755,7 +9760,8 @@ static int test_edit_quick_actions(void)
 
     /* the kit's own names: KIT 66 plays a conga on TOM */
     TSEL->p[P_E0] = 6;                                /* (DK_66) */
-    ok = str_eq(eqa_of(TSEL, 5)->name(TSEL, 5), "CG") && str_eq(eqa_of(TSEL, 0)->name(TSEL, 0), "BD");
+    ok = eqa_of(TSEL, 5) && eqa_of(TSEL, 0) &&       /* (RE-1: none when the track is not a DRUM one) */
+         str_eq(eqa_of(TSEL, 5)->name(TSEL, 5), "CG") && str_eq(eqa_of(TSEL, 0)->name(TSEL, 0), "BD");
     btn_down(B_EDIT); frames(500);
     key_down(black(5)); frame(); key_up(black(5)); frame();
     ok &= msg_is("CONGA MUTED") && drum_mute[3] == (9u | 32u);

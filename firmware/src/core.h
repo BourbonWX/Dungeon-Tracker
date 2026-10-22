@@ -129,6 +129,7 @@ static void params_by_count(int16_t *out, const int16_t *in, uint32_t np, const 
 }
 
 /* engine indices the stores name (engines.c ENGINES[]: append-only) */
+#define ENGI_LOFI 3u                     /* RE-1: the DICE roll it too (ui_dice.c) */
 #define ENGI_PHYS 9u
 #define ENGI_DRUM 10u
 #define ENGI_CKIT 14u                    /* RONDO: CYCLE KIT (eng_cycle.c) */

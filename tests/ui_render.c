@@ -785,7 +785,7 @@ enum { S_HOME, S_HOME_IDLE, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TURN, S_MESSAGE,
        S_INSERT_CRUSH, S_INSERT_FOLD, S_INSERT_PHASER, S_INSERT_OFF, S_INSERT_MIX, S_INSERT_FILTR, S_INSERT_DUCK, S_INSERT_REPT,
        S_LAYER_ARP, S_LAYER_ARP_OFF, S_MFX, S_FX_MASTER, S_TRACKER_CMD, S_AUTO_CMD, S_VARY, S_VARY_KIT,
        S_LAYER_ENV, S_LAYER_ENV_PLAY, S_LAYER_ENV_SONG, S_SONG_BANK, S_SONG_BANK_PLAY, S_HEAD_BANK,
-       S_MORPH, S_MORPH_OFF, S_SONG_ARR, S_SONG_ARR_REC, S_DICE_TONE, S_DICE_KIT, S_EDIT_TONE, S_EDIT_TONE2,
+       S_MORPH, S_MORPH_OFF, S_SONG_ARR, S_SONG_ARR_REC, S_DICE_TONE, S_DICE_KIT, S_DICE_LOFI, S_EDIT_TONE, S_EDIT_TONE2,
        S_ENV_SYNC, S_ENV_DEST_SYNC, S_FILTER,
        S_LEARN_WAIT, S_LEARN_PICK, S_LEARN_SET, S_LEARN_LONG, S_GLO_LEARN, S_MENU_LCLEAR, S_MENU_LCLEAR_NONE,
        S_DLY_DOT, S_DLY_DOT16, S_FX_THROW,
@@ -818,7 +818,7 @@ static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_fallen", 
     "insert_crush", "insert_fold", "insert_phaser", "insert_off", "insert_mix", "insert_filtr", "insert_duck", "insert_rept",
     "layer_arp", "layer_arp_off", "master", "fx_master", "tracker_cmd", "auto_cmd", "vary", "vary_kit",
     "layer_env", "layer_env_play", "layer_env_song", "song_bank", "song_bank_play", "head_bank",
-    "morph", "morph_off", "song_arrange", "song_arrange_rec", "dice_tone", "dice_kit", "edit_tone", "edit_tone2",
+    "morph", "morph_off", "song_arrange", "song_arrange_rec", "dice_tone", "dice_kit", "dice_lofi", "edit_tone", "edit_tone2",
     "env_sync", "env_dest_sync", "filter",
     "learn_wait", "learn_pick", "learn_set", "learn_long", "layer_glo_learn", "menu_learn_clear", "menu_learn_clear_none",
     "dly_dotted", "dly_dotted_16", "perform_throw",
@@ -1263,6 +1263,11 @@ static void setup(int s)
     case S_DICE_TONE: case S_DICE_KIT:
         track_select(s == S_DICE_TONE ? 3 : 0); go_page(GR_DICE); dice.rng = 0xD1CEu; dice_roll(); dice.anim = 0;
         TSEL->engine = TSEL->eng_req; ui.msg_t = 0;
+        break;
+    case S_DICE_LOFI:                                   /* (T4 on LOFI, rolled; DIE on DUTY, CHIP held) */
+        track_select(3); set_engine_of(TSEL, ENGI_LOFI); apply_preset_to(TSEL, 5);
+        TSEL->engine = TSEL->eng_req; go_page(GR_DICE); dice.rng = 0xC41Bu; dice.hold[3] = 1u; dice_roll();
+        dice.cur[3] = 2; dice.anim = 0; ui.msg_t = 0;
         break;
     case S_EDIT_TONE: case S_EDIT_TONE2:
         track_select(2); go_title(s == S_EDIT_TONE ? "EDIT 1" : "EDIT 2"); ui.msg_t = 0;

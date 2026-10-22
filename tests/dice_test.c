@@ -7,7 +7,10 @@
  * 4. HIST: OCT- brings back the sound before the roll exactly, KNOB 4 left the newest again.
  * 5. the sound of 300 rolls per role (a note held 0.4 s, let go): never full scale for one voice, no DC over 1 % of the
  *    peak, the voice free after its release (10 s), and never brighter than 2.5 x the brightest factory preset.
- * 6. the kit: 200 rolls, each voice struck: it sounds, never at full scale, it ends. */
+ * 6. the kit: 200 rolls, each voice struck: it sounds, never at full scale, it ends.
+ * 7. (RE-1) LOFI: the page shows; WILD 100 rolls stay in their role's choices (no NOISE, no chord ARP on chords or
+ *    bass; DUTY on a table or a width; CRSH a decay or a light crush); 300 rolls per role heard as in 5, against
+ *    LOFI's brightest tonal preset; the new presets: each sounds, never full scale, ends. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
@@ -282,6 +285,122 @@ int main(int argc, char **argv)
         }
         snprintf(what, sizeof what, "the kit: 200 rolls x 4 voices struck: quiet %u, full scale %u, not ended in 10 s %u", quiet, over, hung);
         ok3(what, !quiet && !over && !hung);
+    }
+
+    /* 7. LOFI */
+    {
+        uint32_t bad = 0, role, pg;
+        for (pg = 0; pg < NPAGES && PAGES[pg].graph != GR_DICE; pg++)
+            ;
+        set_engine_of(&trk[1], ENGI_LOFI);
+        track_select(1);
+        ok3("LOFI: DICE shows, nine dice, CHIP first", page_visible(pg) && dice_engine_ok(&trk[1]) &&
+            dice_count(&trk[1]) == 9u && str_eq(dice_name(&trk[1], 0), "CHIP"));
+        for (role = 0; role < 3u; role++)
+            for (r = 0; r < 300u; r++) {
+                track_t *t = &trk[1 + role];
+                int32_t chip, wave, duty, cr;
+                track_select(1 + role);
+                set_engine_of(t, ENGI_LOFI);
+                dice.wild[1 + role] = 0;
+                dice.hold[1 + role] = 0;
+                dice_roll();
+                chip = t->p[P_E0], wave = t->p[P_E1], duty = t->p[P_E2], cr = t->p[P_E3];
+                bad += chip < 0 || chip > 4 || wave < 0 || wave > 4 || wave == 3;
+                bad += role < 2u && t->p[P_E6] > 1;
+                bad += wave == 4 && duty % 8 != 4;
+                bad += wave == 0 && duty % 32 != 16;
+                bad += chip == 4 ? (cr && (cr % 4 != 1 || cr / 4 > 26)) : cr > 64;
+                bad += t->p[P_E4] && (role != 2u || t->p[P_E4] < 8 || t->p[P_E4] > 24);
+                bad += t->p[P_E0] == 3 || (wave == 0 && duty < 32);
+                bad += t->p[P_E7] < 70 || t->p[P_ATK] > 60;
+            }
+        snprintf(what, sizeof what, "LOFI WILD 100: every die in its role's choices (900 rolls, %u off)", bad);
+        ok3(what, !bad);
+    }
+    {
+        uint32_t role, over = 0, dcs = 0, hung = 0, harsh = 0, p, quiet = 0, nnew = 0;
+        double brmax = 0, worst = 0;
+        const engine_t *e = ENGINES[ENGI_LOFI];
+        for (role = 0; role < 3u; role++)
+            for (p = 0; p < e->npresets; p++) {
+                int32_t pk;
+                double dc, br;
+                int h;
+                if (p >= 5u)                                     /* (Felucca's five: the chip set is brighter) */
+                    continue;
+                host_preset(&trk[1 + role], ENGI_LOFI, p);
+                listen(1 + role, role == 1u ? 36u : 60u, &pk, &dc, &br, &h);
+                brmax = br > brmax ? br : brmax;
+            }
+        for (role = 0; role < 3u; role++) {
+            track_t *t = &trk[1 + role];
+            host_preset(t, ENGI_LOFI, role == 1u ? 6u : role == 2u ? 5u : 14u);
+            track_select(1 + role);
+            for (r = 0; r < 300u; r++) {
+                int32_t pk;
+                double dc, br;
+                int h;
+                dice_roll();
+                t->engine = t->eng_req;
+                listen(1 + role, role == 1u ? 36u : 60u, &pk, &dc, &br, &h);
+                over += pk >= 32767;
+                dcs += dc > 0.015;                           /* (a low square: 0.4 s ends inside a cycle) */
+                hung += h;
+                harsh += br > brmax * 2.5;
+                worst = br > worst ? br : worst;
+                if (getenv("DICE_DBG") && (pk >= 32767 || dc > 0.01 || br > brmax * 2.5))
+                    printf("  role %u: %d %d %d %d %d %d %d %d env %d %d %d %d: pk %d dc %.3f br %.3f\n", role, t->p[P_E0],
+                           t->p[P_E1], t->p[P_E2], t->p[P_E3], t->p[P_E4], t->p[P_E5], t->p[P_E6], t->p[P_E7], t->p[P_ATK],
+                           t->p[P_DEC], t->p[P_SUS], t->p[P_REL], pk, dc, br);
+            }
+        }
+        snprintf(what, sizeof what, "LOFI: 900 rolls heard: full scale %u, DC %u, hung %u, harsher than 2.5 x %u (%.3f vs %.3f)",
+                 over, dcs, hung, harsh, worst, brmax);
+        ok3(what, !over && !dcs && !hung && !harsh);
+        over = hung = 0;
+        for (p = 5; p < e->npresets; p++, nnew++) {          /* the chip set (RE-1) */
+            int32_t pk;
+            double dc, br;
+            int h;
+            host_preset(&trk[3], ENGI_LOFI, p);
+            listen(3, e->presets[p].e[1] == 3 ? 84u : str_eq(e->presets[p].name, "CHIP KICK") ? 48u : 60u, &pk, &dc, &br, &h);
+            quiet += pk < 1500;
+            over += pk >= 32767;
+            hung += h;
+            if (getenv("DICE_DBG"))
+                printf("  %-10s pk %d dc %.3f br %.3f\n", e->presets[p].name, pk, dc, br);
+        }
+        snprintf(what, sizeof what, "LOFI's %u chip presets: quiet %u, full scale %u, hung %u", nnew, quiet, over, hung);
+        ok3(what, nnew >= 12u && !quiet && !over && !hung);
+        {   /* the hits, a 1.5 ms gate (two control blocks: the shortest MIDI drum note): each still sounds 20 ms or more */
+            uint32_t cut = 0;
+            char names[160] = "";
+            for (p = 5; p < e->npresets; p++) {
+                static int32_t o[CTL];
+                if (!str_eq(e->presets[p].name, "CHIP KICK") && !str_eq(e->presets[p].name, "NOISE HAT") &&
+                    !str_eq(e->presets[p].name, "NOISE SNR") && !str_eq(e->presets[p].name, "LASER ZAP"))
+                    continue;                                /* (the hits; a short note of a tone is short) */
+                uint32_t j, n = 0, loud = 0;
+                track_t *t = &trk[3];
+                host_preset(t, ENGI_LOFI, p);
+                memset(t->v, 0, sizeof t->v);
+                trk_note_on(t, 60, 110);
+                for (n = 0; n < FS / 2u; n += CTL) {
+                    if (n == 2u * CTL)
+                        trk_note_off(t, 60);
+                    track_render(t, o, CTL);
+                    for (j = 0; j < CTL; j++)
+                        loud += abs(o[j]) > 1000;
+                }
+                if (loud < FS / 50u / 4u) {                  /* (a quarter of 20 ms' samples over -30 dB) */
+                    cut++;
+                    if (strlen(names) < 120u) { strcat(names, " "); strcat(names, e->presets[p].name); }
+                }
+            }
+            snprintf(what, sizeof what, "  the hits at a 1.5 ms gate: each sounds out (cut short:%s)", cut ? names : " none");
+            ok3(what, !cut);
+        }
     }
     if (argc > 1) {
         demos(argv[1]);
