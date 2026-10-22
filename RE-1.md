@@ -1,6 +1,6 @@
-# RONDO — a four-track FM groovebox firmware for the M-VAVE FM-1
+# RE-1 (Random Encounters) — a four-track FM groovebox firmware for the M-VAVE FM-1
 
-RONDO is a fork of [Felucca](https://github.com/hugelton/Felucca) 1.6.1 (GPL-3.0) by Leo Kuroshita / Hügelton
+RE-1 ("Random Encounters", formerly RONDO) is a fork of [Felucca](https://github.com/hugelton/Felucca) 1.6.1 (GPL-3.0) by Leo Kuroshita / Hügelton
 Instruments. It keeps everything Felucca does (its sequencer, song mode, effects, the other engines, the web
 installer's package format) and adds:
 
@@ -24,7 +24,7 @@ installer's package format) and adds:
 Any track can still load any engine (ANALOG, FM6, DRUM, …); it just keeps its track's voice count. The budget is
 12 voices at once (Felucca's is 8 shared), all of them light FM voices.
 
-> **Status: untested on hardware.** RONDO builds and passes its tests in the browser emulator and on the host
+> **Status: untested on hardware.** RE-1 builds and passes its tests in the browser emulator and on the host
 > (the firmware's own C code), but no `.fwsc` has been built or flashed yet. Read *Flashing* below before you try.
 
 ## Playing it
@@ -94,7 +94,7 @@ and four master effects on the whole mix, ridden with FX held.
 
 Every track has an INSERT: one effect, three settings (A B C) and a dry / wet MIX. Pick it on FX > INSERT (TYPE and
 A B C); **INSERT 2** has the four you ride: A, B, C and MIX. Felucca's SOFT HARD FOLD FUZZ CRUSH PHASR FLANG CHOR are all
-there, and RONDO adds three:
+there, and RE-1 adds three:
 
 | TYPE | A | B | C | |
 |---|---|---|---|---|
@@ -149,7 +149,7 @@ happens with the game on or off. With the game on, a fight holds the walk, so th
 there, and a party facing a monster goes straight on.
 
 **The game is off by default.** With it off, the corridor is just scenery: no monsters, no dice rolls, nothing cut.
-RONDO is a plain four-track FM groovebox.
+RE-1 is a plain four-track FM groovebox.
 
 **To play:** hold **HOME** for the MENU, turn **ALGORITHM** to the **GAME** tab (one step left from DISPLAY), and
 switch **DUNGEON** on with KNOB 1 or OCT+. A run starts at B1. Goblins, skeletons and slimes come up the corridor
@@ -364,21 +364,22 @@ Switching a track to another engine lets go of the morph (the target named a pre
   favourites for MIDI LEARN and other settings).
 * HOME shows the dungeon corridor instead of the scope (MENU > DISPLAY > HOME: DUNGEON, TRACKS, LEVELS).
 * A sixth MENU tab, GAME, holds DUNGEON OFF / ON: the dungeon's game, where a fallen adventurer cuts its track. Off at
-  power-on, not saved. (Felucca's tests that count five tabs fail in a RONDO build; they pass with `RONDO_LAYOUT=0`.)
+  power-on, not saved. (Felucca's tests that count five tabs fail in an RE-1 build; they pass with `RONDO_LAYOUT=0`.)
 * INSERT gains FILTR, DUCK and REPT; INSERT 2 is A B C MIX. ARP held is a layer (the track's effect to ride); a
   tap still opens ARP.
 * FX's knobs are four master effects from a pool (FX > MASTER, saved in the project's otherwise unused `G_ENGGO`), and
   they stay put when FX is let go; FX + OCT− resets them (it no longer shifts the octave). Felucca's tests that expect
-  the snap back, the octave shift or ARP's hold fail in a RONDO build; with `RONDO_LAYOUT=0` the three INSERTs, the
+  the snap back, the octave shift or ARP's hold fail in an RE-1 build; with `RONDO_LAYOUT=0` the three INSERTs, the
   pool and the layer are left out and those tests pass.
 * SONG plays the PATTERN BANK A–F instead of the four project slots A–D (a section's byte keeps 0–3 for A–D and 4
   for "-", and takes 5 and 6 for E and F), with SONG's keys on F3..D4. ENV held is the bank's layer. User sample slot 3
   keeps 32 KiB; its top 48 KiB are the bank's. Felucca's tests of songs from project slots, of the header's slot
-  letter and of slot 5 being refused fail in a RONDO build. On SONG, REC records the arrangement (Felucca: "[SEQ] TO
-  RECORD"). A Program Change on channel 16 picks a pattern; on the track channels it loads nothing (as before in RONDO).
+  letter and of slot 5 being refused fail in an RE-1 build. On SONG, REC records the arrangement (Felucca: "[SEQ] TO
+  RECORD"). A Program Change on channel 16 picks a pattern; on the track channels it loads nothing (as before in RE-1).
 * EDIT > MORPH and the MORPH command; a project keeps the morph in 8 of FUN10's spare bytes (`PROJ_MORPH_OFF`) and the
   autosave which pattern is current in the header's reserved byte 65.
-* The splash and version read `RONDO R0.1`.
+* The splash reads `RE-1`, `R0.1`, `Random Encounters`. Inside the code the fork's additions are still marked
+  `RONDO` (its old name: `RONDO_LAYOUT`, `tests/run_rondo.sh`).
 * `RONDO_LAYOUT=0` builds Felucca's shared 8-voice budget and power-on sounds (used to run Felucca's own tests).
 * The voice counts are `TRK_CAP` in `firmware/src/core.h`; change them there if you want another layout.
 
@@ -406,7 +407,7 @@ git submodule update --init                             # firmware/engines (Felu
 ### Tests
 
 ```sh
-sh tests/run_rondo.sh          # RONDO's checks (engines, tracker, commands, vary, dice, dungeon, live effects,
+sh tests/run_rondo.sh          # RE-1's checks (engines, tracker, commands, vary, dice, dungeon, live effects,
                                # the pattern bank and its flash, the arrangement, MIDI
                                # program changes, sound morph), demo WAVs
 ```
@@ -417,7 +418,7 @@ is unchanged outside the new engines.
 ## Flashing (at your own risk)
 
 1. Update the FM-1 to M-VAVE's official **V15** first, and keep that `FM-1.fwsc` (m-vave.com/download).
-2. Have a recovery path *before* you flash anything unofficial: the FM-1 has one firmware slot. While RONDO runs,
+2. Have a recovery path *before* you flash anything unofficial: the FM-1 has one firmware slot. While RE-1 runs,
    **OCT−** + **OCT+** held 5 s enters UPDATE MODE, and two failed boots in a row enter it by themselves (Felucca's
    boot guard). If a build cannot reach either, recovery needs
    [FM-1 Transporter](https://github.com/kurogedelic/FM-1-transporter) (a Seeed XIAO RP2040).
@@ -428,4 +429,4 @@ is unchanged outside the new engines.
 ## Licence
 
 GPL-3.0-only, as Felucca. Felucca-Engines (firmware/engines) is MIT. See LICENSE, LICENSING.md and CREDITS.md.
-RONDO is not affiliated with M-VAVE, Hügelton Instruments or Elektron.
+RE-1 is not affiliated with M-VAVE, Hügelton Instruments or Elektron.

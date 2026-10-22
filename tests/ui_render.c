@@ -1783,7 +1783,7 @@ static void draw(int s)
     }
     if (s == S_SPLASH) {                          /* the power-on splash (main.c, before the UI): its lines, the version
                                                    * shown FELUCCA_VERSION (run_tests.sh: src/felucca.c's) */
-        static const char WANT[] = "Rondo|" FELUCCA_VERSION "|a Felucca fork|H\xFCgelton + community";   /* RONDO */
+        static const char WANT[] = "RE-1|" FELUCCA_VERSION "|Random Encounters|a Felucca fork";   /* RONDO: RE-1 */
         splash_seen[0] = 0;
         in_splash = 1;
         draw_splash();
