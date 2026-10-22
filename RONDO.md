@@ -142,6 +142,12 @@ before.
 HOME's view is a first-person dungeon corridor. While the transport runs, the party walks one square per beat at the
 song's tempo, and the four slots along the bottom show which tracks are in the party and each one's level.
 
+**Crossroads.** Every other phrase (a pass of the longest pattern playing), a crossroads comes up the corridor, placed
+so the party reaches it as that phrase ends. There it goes straight on, turns left or turns right, a third each; a
+turn pans the view into the new hallway over half a beat, and the compass in the corner (N E S W) follows. This
+happens with the game on or off. With the game on, a fight holds the walk, so the crossroads comes when the party gets
+there, and a party facing a monster goes straight on.
+
 **The game is off by default.** With it off, the corridor is just scenery: no monsters, no dice rolls, nothing cut.
 RONDO is a plain four-track FM groovebox.
 

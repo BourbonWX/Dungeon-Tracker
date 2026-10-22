@@ -25,6 +25,11 @@
  *   - stopped: no cuts; stopping is a camp, the fallen are raised.
  * Muting or emptying a fallen track does not raise it: it stays fallen until one of the above.
  * The game runs on every page (ui_input.c calls dg_tick), not only while HOME is drawn.
+ * CROSSROADS (the game on or off): the sequence is counted in phrases (a pass of the longest pattern playing: dg_ref).
+ * Every other phrase, as it starts, a crossroads is placed as many squares ahead as the phrase has beats, so the party
+ * reaches it as the phrase ends; there it goes straight on, left or right, a third each (a party facing a monster goes
+ * straight on). A turn pans the view to the new hallway over half a beat (DG_TURN), walking on, and the compass (N E S
+ * W, by the floor) follows. With the game on a fight holds the walk: the crossroads comes when they get there.
  * Stopped: the party camps (no walking, they heal). Everything is drawn from the palette's colours (the walls RAISE
  * into BG with the distance, the monsters ACCENT, the steel TEXT), so it follows MENU > COLOR. The game is the UI's
  * own: nothing of it is stored, and it starts over at power-on. RONDO_LAYOUT=0 builds (Felucca's behaviour) never cut. */
@@ -68,7 +73,20 @@ static struct {
     const char *msg;                                     /* a message over the view while msg_f > 0 */
     uint32_t rng;
     uint32_t lvl_ms;                                     /* fm1_ms of the last levels count */
+    /* the crossroads */
+    uint32_t phrase;                                     /* phrases played (dg_ref's loops) */
+    uint16_t last_idx;                                   /* dg_ref's step at the last tick */
+    uint8_t ref;                                         /* the track whose loop is the phrase */
+    int8_t turn;                                         /* a turn going: -1 left, +1 right; 0 none */
+    uint8_t heading;                                     /* 0 N, 1 E, 2 S, 3 W */
+    uint32_t junc, jlast;                                /* the crossroads' square (0: none), the one just passed */
+    uint32_t tph;                                        /* the turn's way, 0..65535 */
+    uint32_t seed;                                       /* the hallway: its walls' pattern */
+    uint16_t way[3];                                     /* straight on, left, right: how often (tests/dungeon_test.c) */
 } dg = {0, 0, 0, 0, 1, 1};
+#define DG_TURN 2u                                       /* a turn lasts 1 / DG_TURN beat */
+static const char DG_HEAD[4] = {'N', 'E', 'S', 'W'};
+static void dg_step_on(void);                          /* (a square walked: the crossroads there?) */
 
 static uint32_t dg_rand(void)
 {
@@ -167,6 +185,7 @@ static void dg_walk(void)
     uint32_t k;
     dg.walked++;
     dg.cell++;
+    dg_step_on();
     for (k = 0; k < 4u; k++)                             /* walking heals a little, the cleric more */
         if (dg.in[k] && !dg_fallen(k) && dg.hp[k] < dg_hpmax(k))
             dg.hp[k] = (int16_t)(dg.hp[k] + (dg.in[DG_CLR] && !dg_fallen(DG_CLR) ? 2 : 1) - (dg_rand() & 1u));
@@ -264,15 +283,16 @@ static void dg_retreat(void)                             /* after the fallen par
     dg_say("RETREAT");
 }
 
-/* every drawing of HOME: the time since the last one, in beats of the tempo */
 /* MENU > GAME > DUNGEON: on, a new run from B1 (everyone at full); off, the run over, every cut lifted at once */
 static void dg_game_set(uint32_t on)
 {
-    uint32_t r = dg.rng ? dg.rng : fm1_ms * 2654435761u + 1u, cell = dg.cell;
+    uint32_t r = dg.rng ? dg.rng : fm1_ms * 2654435761u + 1u, cell = dg.cell, seed = dg.seed, head = dg.heading;
     memset(&dg, 0, sizeof dg);
     dg.floor = dg.best = 1;
     dg.rng = r;
-    dg.cell = cell;                                      /* (the corridor goes on where it was) */
+    dg.cell = cell;                                      /* (the corridor goes on where it was, facing the same way) */
+    dg.seed = seed;
+    dg.heading = (uint8_t)head;
     dg.t_ms = fm1_ms;
     dg_game = (uint8_t)(on != 0u);
     dg_cut = 0;
@@ -281,17 +301,90 @@ static void dg_game_set(uint32_t on)
         dg_say("INTO THE DUNGEON");
 }
 
+/* ------------------------------------------------------------------------ the crossroads --- */
+/* the track whose loop is the phrase: the longest pattern (in time) of those with steps; none: T1 */
+static uint32_t dg_ref(uint32_t *len)
+{
+    uint32_t k, r = 0, best = 0;
+    for (k = 0; k < NTRK; k++) {
+        uint32_t l;
+        if (seq_is_empty(&trk[k]))
+            continue;
+        l = (uint32_t)clamp(trk[k].p[P_SLEN], 1, NSTEP) * div_samples((uint32_t)trk[k].p[P_SDIV]);
+        if (l > best) {
+            best = l;
+            r = k;
+        }
+    }
+    *len = best ? best : 16u * div_samples((uint32_t)trk[0].p[P_SDIV]);
+    return r;
+}
+/* the crossroads reached: straight on, left or right, a third each (a monster ahead: straight on, to it) */
+static void dg_cross(void)
+{
+    uint32_t w = dg.mon ? 0u : dg_rand() % 3u;
+    dg.jlast = dg.junc;
+    dg.junc = 0;
+    dg.way[w]++;
+    if (w) {
+        dg.turn = (int8_t)(w == 1u ? -1 : 1);
+        dg.tph = 0;
+    }
+}
+/* a square walked (the game's or the scenery's): the crossroads there? */
+static void dg_step_on(void)
+{
+    if (dg.junc && dg.cell >= dg.junc && !dg.turn)
+        dg_cross();
+}
+/* each tick while playing: a phrase starts when the reference track's step goes back (its loop); every other one
+ * places the crossroads its length in beats ahead */
+static void dg_phrases(void)
+{
+    uint32_t len, r = dg_ref(&len), idx = trk[r].seq_idx;
+    if (r != dg.ref) {
+        dg.ref = (uint8_t)r;
+        dg.last_idx = (uint16_t)idx;
+        return;
+    }
+    if (idx < dg.last_idx) {
+        dg.phrase++;
+        if ((dg.phrase & 1u) && !dg.junc && !dg.turn) {
+            uint32_t beat = beat_samples(), b = (len + beat / 2u) / (beat ? beat : 1u);
+            dg.junc = dg.cell + (b ? b : 1u);
+        }
+    }
+    dg.last_idx = (uint16_t)idx;
+}
+/* a turn under way: half a beat, then facing the new hallway */
+static void dg_turning(uint32_t add)
+{
+    if (!dg.turn)
+        return;
+    dg.tph += add * DG_TURN;
+    if (dg.tph >= 65536u) {
+        dg.heading = (uint8_t)((dg.heading + (dg.turn < 0 ? 3u : 1u)) & 3u);
+        dg.seed++;
+        dg.jlast = 0;
+        dg.turn = 0;
+        dg.tph = 0;
+    }
+}
+
 /* off: the scenery's walk only, a square a beat while playing */
 static void dg_stroll(uint32_t dt)
 {
-    uint32_t bpm = (uint32_t)clamp(song.g[G_BPM], 20, 300);
+    uint32_t bpm = (uint32_t)clamp(song.g[G_BPM], 20, 300), add = dt * bpm * 65536u / 60000u;
     dg_cut = 0;
     if (!song.playing)
         return;
-    dg.phase += dt * bpm * 65536u / 60000u;
+    dg_phrases();
+    dg_turning(add);
+    dg.phase += add;
     while (dg.phase >= 65536u) {
         dg.phase -= 65536u;
         dg.cell++;
+        dg_step_on();
     }
 }
 
@@ -330,6 +423,8 @@ static void dg_tick(void)
     }
     {
         uint32_t bpm = (uint32_t)clamp(song.g[G_BPM], 20, 300), add = dt * bpm * 65536u / 60000u;   /* a beat: 65536 */
+        dg_phrases();
+        dg_turning(add);
         if (!dg.wipe && !dg_up())                        /* (fallen, and nobody else: as a fallen party) */
             dg.wipe = DG_WIPE;
         if (dg.wipe || (dg.mon && dg.mon_dist <= 1u)) {  /* fighting: a round a beat, the view standing still */
@@ -401,8 +496,10 @@ static void dg_wall(int32_t cx, int32_t cy, int32_t wa, int32_t ha, int32_t wb, 
         x = xa + step * i;
         if (x < DG_X0 || x >= DG_X0 + DG_W)
             continue;
-        if (open) {                                      /* a side passage: the dark beyond, its edges */
-            dg_vrect(x, cy - hb, 1, 2 * hb, mortar);
+        if (open) {                                      /* a side passage: the dark beyond (its far wall), its floor */
+            dg_vrect(x, top, 1, 2 * h, ux_mix(mortar, T_BG, 55));
+            dg_vrect(x, cy - hb, 1, 2 * hb, ux_mix(mortar, T_BG, 80));
+            dg_vrect(x, cy + hb, 1, h - hb, ux_mix(c, T_BG, 40));
             continue;
         }
         dg_vrect(x, top, 1, 2 * h, c);
@@ -453,6 +550,37 @@ static void dg_weapons(int32_t mx, int32_t my)
     }
 }
 
+/* the corridor at centre cx: far to near, segment k from depth k to k + 1 (squares), moved on by the walk's phase;
+ * seed its walls' pattern, cross: the crossroads shown (both sides open where it is) */
+static void dg_corridor(int32_t cx, int32_t cy, uint32_t ph, uint32_t seed, int cross, uint16_t ceil, uint16_t flo,
+                        uint16_t far)
+{
+    int32_t k;
+    for (k = DG_NSEG; k >= 0; k--) {
+        int32_t za = (k << 8) - (int32_t)(ph >> 8) + 160, zb;   /* depth in 1/256 square (+0.6: the eye) */
+        zb = za + 256;
+        za = za < 96 ? 96 : za;                          /* (the nearest segment, passing the eye: held at the frame) */
+        int32_t wa = 70 * 256 / za, ha = 46 * 256 / za, wb = 70 * 256 / zb, hb = 46 * 256 / zb;
+        uint32_t cell = dg.cell + (uint32_t)k, h = cell * 2654435761u ^ dg.floor * 40503u ^ seed * 2246822519u;
+        int32_t shade = clamp(k * 14 + (int32_t)(ph >> 12), 0, 90);
+        int x = cross && cell && (cell == dg.junc || cell == dg.jlast);
+        uint16_t wc = ux_mix(T_RAISE, far, shade), mo = ux_mix(wc, far, 45);
+        if (k == DG_NSEG) {                              /* the dark at the end of the corridor */
+            dg_vrect(cx - wb, cy - hb, 2 * wb, 2 * hb, far);
+            continue;
+        }
+        dg_wall(cx, cy, wa, ha, wb, hb, -1, wc, mo, x || (h >> 7) % 7u == 0u);
+        dg_wall(cx, cy, wa, ha, wb, hb, 1, wc, mo, x || (h >> 11) % 7u == 1u);
+        dg_vrect(cx - wa, cy + ha, 2 * wa, 1, ux_mix(flo, far, 30));   /* the floor's line, the ceiling's */
+        dg_vrect(cx - wa, cy - ha, 2 * wa, 1, ux_mix(ceil, far, 30));
+        if (!x && (h >> 15) % 5u == 0u && !((h >> 7) % 7u == 0u)) {   /* a torch on the left wall */
+            int32_t tx = cx - (wa + wb) / 2, ty = cy - (ha + hb) / 3, fl = (int32_t)((fm1_ms >> 6) & 1u);
+            dg_vrect(tx - 1, ty, 3, 6 * 256 / za + 2, T_MID);
+            dg_vrect(tx - 2, ty - 4 - fl, 5, 4 + fl, T_ACCENT);
+        }
+    }
+}
+
 static void graph_dungeon(void)
 {
     int32_t cx = dg_cx(), cy, k, bob = 0;
@@ -465,31 +593,20 @@ static void graph_dungeon(void)
     cy = DG_Y0 + DG_H / 2 - 4 + bob;
     dg_vrect(DG_X0, DG_Y0, DG_W, cy - DG_Y0, ceil);
     dg_vrect(DG_X0, cy, DG_W, DG_Y0 + DG_H - cy, flo);
-    /* the corridor, far to near: segment k from depth k to k + 1 (squares), moved on by the walk's phase */
-    for (k = DG_NSEG; k >= 0; k--) {
-        int32_t za = (k << 8) - (int32_t)(ph >> 8) + 160, zb;   /* depth in 1/256 square (+0.6: the eye) */
-        zb = za + 256;
-        za = za < 96 ? 96 : za;                          /* (the nearest segment, passing the eye: held at the frame) */
-        int32_t wa = 70 * 256 / za, ha = 46 * 256 / za, wb = 70 * 256 / zb, hb = 46 * 256 / zb;
-        uint32_t cell = dg.cell + (uint32_t)k, h = cell * 2654435761u ^ dg.floor * 40503u;
-        int32_t shade = clamp(k * 14 + (int32_t)(ph >> 12), 0, 90);
-        uint16_t wc = ux_mix(T_RAISE, far, shade), mo = ux_mix(wc, far, 45);
-        if (k == DG_NSEG) {                              /* the dark at the end of the corridor */
-            dg_vrect(cx - wb, cy - hb, 2 * wb, 2 * hb, far);
-            continue;
-        }
-        dg_wall(cx, cy, wa, ha, wb, hb, -1, wc, mo, (h >> 7) % 7u == 0u);
-        dg_wall(cx, cy, wa, ha, wb, hb, 1, wc, mo, (h >> 11) % 7u == 1u);
-        dg_vrect(cx - wa, cy + ha, 2 * wa, 1, ux_mix(flo, far, 30));   /* the floor's line, the ceiling's */
-        dg_vrect(cx - wa, cy - ha, 2 * wa, 1, ux_mix(ceil, far, 30));
-        if ((h >> 15) % 5u == 0u && !((h >> 7) % 7u == 0u)) {   /* a torch on the left wall */
-            int32_t tx = cx - (wa + wb) / 2, ty = cy - (ha + hb) / 3, fl = (int32_t)((fm1_ms >> 6) & 1u);
-            dg_vrect(tx - 1, ty, 3, 6 * 256 / za + 2, T_MID);
-            dg_vrect(tx - 2, ty - 4 - fl, 5, 4 + fl, T_ACCENT);
-        }
+    if (dg.turn) {                                       /* turning: the hallway left slides out, the new one in */
+        int32_t dx = (int32_t)(((uint64_t)dg.tph * DG_W) >> 16), s = dg.turn < 0 ? 1 : -1;
+        dg_corridor(cx + s * dx, cy, ph, dg.seed, 1, ceil, flo, far);
+        dg_corridor(cx + s * dx - s * DG_W, cy, ph, dg.seed + 1u, 0, ceil, flo, far);
+        dg_vrect(cx + s * dx - s * DG_W / 2, DG_Y0, 2, DG_H, ux_mix(T_RAISE, far, 30));   /* the corner */
+    } else {
+        dg_corridor(cx, cy, ph, dg.seed, 1, ceil, flo, far);
     }
-    if (!dg_game)                                        /* off: the scenery and the party, nothing else */
+    b[0] = DG_HEAD[dg.heading & 3u];                     /* the compass */
+    b[1] = 0;
+    if (!dg_game) {                                      /* off: the scenery, the compass and the party, nothing else */
+        cv_text_on(DG_X0 + 4, DG_Y0, &AF_S, b, T_MID, ceil);
         goto party;
+    }
     /* the monster */
     if (dg.mon && dg.mon_dist) {
         int32_t z = ((int32_t)dg.mon_dist << 8) - (int32_t)(ph >> 8) + 60;
@@ -514,10 +631,13 @@ static void graph_dungeon(void)
     }
     if (dg.mon_atk)                                      /* the monster strikes: the view's frame */
         cv_frame(DG_X0, DG_Y0, DG_W, DG_H, T_ACCENT);
-    /* the depth, the kills, a message */
+    /* the depth and the compass, the kills, a message */
     b[0] = 'B';
     fmt_int(b + 1, dg.floor);
-    cv_text_on(DG_X0 + 4, DG_Y0, &AF_S, b, T_TEXT, ceil);
+    k = cv_text_on(DG_X0 + 4, DG_Y0, &AF_S, b, T_TEXT, ceil);
+    b[0] = DG_HEAD[dg.heading & 3u];
+    b[1] = 0;
+    cv_text_on(k + 6, DG_Y0, &AF_S, b, T_MID, ceil);
     fmt_int(b, dg.kills);
     str_cpy(b + str_len(b), " KO", 8);
     cv_text_r(DG_X0 + DG_W - 4, DG_Y0, &AF_S, b, T_MID, ceil);

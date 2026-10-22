@@ -15,7 +15,10 @@
  * 7. ten minutes x 20 seeds: the simple loop is cut now and then, the busy song (almost) never.
  * 8. the game off (power-on): the corridor walks a square a beat, the party and levels shown, but no monster in ten
  *    minutes, no floor, nothing cut; MENU > GAME > DUNGEON (a tab of its own, OFF at power-on) switches it: ON a run
- *    from B1, OFF the run over and a cut lifted at once. */
+ *    from B1, OFF the run over and a cut lifted at once.
+ * 9. the crossroads: ten minutes at 120 BPM of a 16-step loop (4 beats a phrase), the game off: a crossroads every other
+ *    phrase, reached as that phrase ends (within a beat of the next one starting), straight on / left / right about a
+ *    third each, the turns half a beat and the compass following; the game on, a monster ahead: straight on. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
@@ -374,6 +377,91 @@ int main(void)
         ok4("  left: OFF", dg_game == 0u);
         hold(B_HOME);
         frames(100);
+    }
+
+    /* 9. the crossroads */
+    {
+        uint32_t ms, el = 0, prev = 0, wraps = 0, dec = 0, near = 1, n0, i, lefts, rights;
+        uint32_t wrap_t[400], dec_t[400];
+        simple_song();
+        reset_game(21);
+        dg_game = 0;
+        dg.heading = 0;
+        song.playing = 1;
+        song.g[G_BPM] = 120;
+        trk[0].seq_idx = 15;
+        n0 = dg.way[0] + dg.way[1] + dg.way[2];
+        for (ms = 0; ms < 600000u; ms += 33u) {
+            uint32_t idx, nd;
+            fm1_ms += 33u;
+            el += 33u;
+            idx = (el / 125u) % 16u;                      /* (the sequencer's step: 1/16 at 120 BPM) */
+            trk[0].seq_idx = (uint16_t)idx;
+            if (idx < prev && wraps < 400u)
+                wrap_t[wraps++] = el;
+            prev = idx;
+            dg_tick();
+            nd = dg.way[0] + dg.way[1] + dg.way[2] - n0;
+            if (nd > dec && dec < 400u)
+                dec_t[dec++] = el;
+        }
+        for (i = 0; i < dec; i++) {                      /* each decision: within a beat of a phrase's start */
+            uint32_t j, best = 0xFFFFFFFFu;
+            for (j = 0; j < wraps; j++) {
+                uint32_t d = dec_t[i] > wrap_t[j] ? dec_t[i] - wrap_t[j] : wrap_t[j] - dec_t[i];
+                best = d < best ? d : best;
+            }
+            near &= best <= 520u;
+        }
+        lefts = dg.way[1];
+        rights = dg.way[2];
+        snprintf(what, sizeof what, "crossroads, game off: %u phrases, %u crossroads (straight %u, left %u, right %u)", wraps, dec,
+                 dg.way[0], lefts, rights);
+        ok4(what, wraps >= 295u && wraps <= 302u && dec + 2u >= wraps / 2u && dec <= wraps / 2u + 1u &&
+            dg.way[0] * 5u > dec && lefts * 5u > dec && rights * 5u > dec &&
+            dg.way[0] * 2u < dec && lefts * 2u < dec && rights * 2u < dec);
+        ok4("  each reached as its phrase ends (within a beat of the next one)", near && dec > 0u);
+        {   /* (a turn still under way at the end is not in the heading yet) */
+            uint32_t want = (rights + 4u * 400u - lefts - (dg.turn > 0 ? 1u : 0u) + (dg.turn < 0 ? 1u : 0u)) & 3u;
+            snprintf(what, sizeof what, "  the compass follows the turns: %u right - %u left = facing %c", rights, lefts,
+                     DG_HEAD[dg.heading]);
+            ok4(what, dg.heading == want);
+        }
+        {   /* a turn: half a beat at 120 BPM */
+            uint32_t h0 = dg.heading, t;
+            dg.turn = 1;
+            dg.tph = 0;
+            for (t = 0; t < 30u && dg.turn; t++) {
+                fm1_ms += 33u;
+                dg_tick();
+            }
+            snprintf(what, sizeof what, "  a turn right: %u ms, then facing %c", t * 33u, DG_HEAD[dg.heading]);
+            ok4(what, !dg.turn && t * 33u >= 200u && t * 33u <= 300u && dg.heading == ((h0 + 1u) & 3u));
+        }
+        {   /* drawn mid-turn, a crossroads ahead, every palette */
+            uint32_t p2;
+            go_home();
+            for (p2 = 0; p2 < NPALETTES; p2++) {
+                palette_set(p2);
+                dg.turn = (int8_t)(p2 & 1u ? 1 : -1);
+                dg.tph = 9000u * (p2 + 1u);
+                dg.junc = dg.cell + 2u;
+                ui.force = 1;
+                frame();
+            }
+            dg.turn = 0;
+            dg.junc = 0;
+            ok4("  HOME drawn mid-turn and with a crossroads ahead, every palette", 1);
+        }
+        reset_game(22);                                   /* the game on, a goblin coming: straight on */
+        dg.mon = DM_GOBLIN;
+        dg.mon_dist = 3;
+        dg.junc = dg.cell + 1u;
+        n0 = dg.way[0];
+        dg_walk();
+        ok4("  the game on, a monster ahead: straight on to it", dg.way[0] == n0 + 1u && !dg.turn && !dg.junc);
+        dg.mon = DM_NONE;
+        song.playing = 0;
     }
 
     /* 4. */

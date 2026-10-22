@@ -741,7 +741,7 @@ static void sg_fresh(void)
  * OP LEVEL pages and the algorithm charts, exist only there: fm4_screen) */
 #define E_FM (FELUCCA_FM4 ? ENGI_DIGITAL : ENGI_FM6)
 
-enum { S_HOME, S_HOME_IDLE, S_HOME_FALLEN, S_MESSAGE, S_MESSAGE_KEY, S_MESSAGE_NOFILE, S_PRESETS, S_PRESETS_NOFAV, S_USER, S_PHRASES, S_PROJECT, S_TOOLS,
+enum { S_HOME, S_HOME_IDLE, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TURN, S_MESSAGE, S_MESSAGE_KEY, S_MESSAGE_NOFILE, S_PRESETS, S_PRESETS_NOFAV, S_USER, S_PHRASES, S_PROJECT, S_TOOLS,
        S_SONG_EMPTY, S_SONG, S_STEP, S_AUTO_STEPS, S_AUTO_ADD_CHANCE, S_MOTION, S_DRUM, S_DRUM_HAND, S_DRUM_CYM, S_MIXER,
        S_MIXER_HOME, S_MIXER_PAN,
        S_ENV, S_ENVDEST, S_LFO, S_MOD, S_FX, S_SLICER, S_DLY, S_SCL, S_CHORD, S_CHORD_WIDE, S_CHORD_OFF, S_CHORD_KIT, S_ARP, S_VOICE, S_CLOCK, S_MENU_MIDI,
@@ -774,7 +774,7 @@ enum { S_HOME, S_HOME_IDLE, S_HOME_FALLEN, S_MESSAGE, S_MESSAGE_KEY, S_MESSAGE_N
        S_DETAIL_COND, S_DETAIL_FILL, S_AUTO_COND, S_GLO_FILL, S_SEQ_EUCLID, S_SEQ_EUCLID_DRUM, S_SEQ_EUCLID_64,
        S_MENU_SELECT, S_PROJECT_ERASE, S_CONFIRM_ERASE_PROJ, S_TOOLS_CLEAN, S_CONFIRM_CLEAN,
        S_MENU_MIDI_TRACK, S_MENU_MIDI_TCH_UNUSED, S_MENU_MIDI_AUTO, S_HOME_TRACKS_MIDI, S_MIXER_MIDI, S_EDIT_PHASE_FOLD, S_COUNT };
-static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_fallen", "message", "message_key", "message_nofile", "presets", "presets_nofav", "user",
+static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_fallen", "home_cross", "home_turn", "message", "message_key", "message_nofile", "presets", "presets_nofav", "user",
     "phrases", "project", "tools", "song_empty", "song", "step", "auto_steps", "auto_add_chance", "automation", "drum",
     "drum_hand", "drum_cym", "mixer", "mixer_from_home", "mixer_pan", "env", "env_dest", "lfo", "mod", "fx", "slicer", "dly", "scl", "chord", "chord_wide", "chord_off", "chord_kit", "arp",
     "voice", "clock", "menu_midi", "edit_analog", FELUCCA_FM4 ? "edit_digital" : "edit_fm6", "op_env", "edit_wheel", "edit_sample",
@@ -993,6 +993,11 @@ static void setup(int s)
     song.g[G_ENGGO] = 0;
     switch (s) {
     case S_HOME: song.octave = 2; song.rec = 1; usb.config = 1; break;
+    case S_HOME_CROSS:                              /* RONDO: the game off, a crossroads a square ahead, facing E */
+        song.playing = 1; dg.cell = 40; dg.phase = 20000; dg.junc = 41; dg.heading = 1; break;
+    case S_HOME_TURN:                               /* the game on, turning left at the crossroads, a third of the way */
+        song.playing = 1; dg_game = 1; dg.cell = 40; dg.phase = 30000; dg.jlast = 40; dg.turn = -1; dg.tph = 24000;
+        dg.floor = 3; dg.heading = 2; dg.lvl_ms = 0; break;
     case S_HOME_FALLEN:                             /* RONDO: the dwarf fallen, T3 cut, a skeleton fought */
         song.playing = 1; ui_home_view = HV_SCOPE; dg_game = 1; dg.lvl_ms = 0;
         trk[2].step[0].time = ST_NOTE; trk[2].step[0].n = 1; trk[2].step[0].note[0] = 36; trk[2].step[0].vel = 100; dg_party(); dg.in[2] = 1; dg.lvl[2] = 3;
