@@ -641,10 +641,17 @@ static void graph_dungeon(void)
     fmt_int(b, dg.kills);
     str_cpy(b + str_len(b), " KO", 8);
     cv_text_r(DG_X0 + DG_W - 4, DG_Y0, &AF_S, b, T_MID, ceil);
-    if (!song.playing || !dg_party_n())
-        cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, !dg_party_n() ? "NO PARTY: ADD STEPS" : "CAMP", T_TEXT, ceil);
-    else if (dg.msg_f && dg.msg)
-        cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, dg.msg, T_TEXT, ceil);
+    {   /* the message on a plate of the view's far colour (over a monster too: it reads, whatever is behind) */
+        const char *mm = !song.playing || !dg_party_n() ? (!dg_party_n() ? "NO PARTY: ADD STEPS" : "CAMP") :
+                         dg.msg_f && dg.msg ? dg.msg : 0;
+        if (mm) {
+            int32_t w = text_w(&AF_S, mm) + 12, x = cx - w / 2;
+            uint16_t plate = ux_mix(T_BG, ceil, 40);
+            cv_rrect(x, DG_Y0 + 12, w, AF_S_CAP_H + 8, 3, plate, ceil);
+            GFX_HOOK_ALIGN(DG_X0, 0, DG_X0 + DG_W, 0, AL_H | AL_PASS, "dungeon message centred across the view");
+            cv_text_in(DG_X0, DG_Y0 + 14, DG_W, &AF_S, mm, T_TEXT, plate);
+        }
+    }
 party:
     /* the party: four slots, class, level, health */
     for (k = 0; k < 4; k++) {
