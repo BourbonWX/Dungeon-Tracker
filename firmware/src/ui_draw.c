@@ -1262,6 +1262,21 @@ static void draw_columns(void)
     }
 #endif
 #if RONDO_LAYOUT
+    if (cur_page()->graph == GR_MORPH) {              /* RONDO: MORPH: TARGET AMOUNT, then what differs */
+        uint32_t k = song.sel % NTRK, id, nd = 0;
+        char v[8], nb[8];
+        if (mo.tgt[k]) { v[0] = 'P'; fmt_int(v + 1, (int32_t)mo.tgt[k]); }
+        else str_cpy(v, "OFF", sizeof v);
+        draw_column(0, "TARGET", v, "", mo.tgt[k] ? VAL(0u) : T_DIM, morph_npresets(TSEL) ? (int32_t)(mo.tgt[k] * 1000u / morph_npresets(TSEL)) : -1, ICON_LOAD);
+        fmt_int(v, (int32_t)mo.amt[k]);
+        draw_column(1, "AMOUNT", v, "%", mo.tgt[k] ? VAL(1u) : T_DIM, (int32_t)mo.amt[k] * 10, ICON_MIX);
+        for (id = 0; id < P_COUNT; id++)
+            nd += (uint32_t)morph_differs(TSEL, id);
+        fmt_int(nb, (int32_t)nd);
+        draw_column(2, "PARAMS", mo.tgt[k] ? nb : "--", "", mo.tgt[k] ? T_THEME : T_DIM, -1, ICON_GENERIC);
+        draw_column(3, "", "", "", T_THEME, -1, ICON_NONE);
+        return;
+    }
     if (cur_page()->graph == GR_VARY) {               /* RONDO: VARY: DIE HOLD WILD HIST */
         uint32_t k = song.sel % NTRK, d = vary.cur[k] % VARY_N;
         char w[8], h[8];

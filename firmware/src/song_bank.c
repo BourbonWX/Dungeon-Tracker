@@ -17,6 +17,8 @@
  * The ISR switches (bank_tick, bank_start); the main loop stores, queues and clears with the interrupts off. */
 #if RONDO_LAYOUT
 static uint32_t step_samples(const track_t *t, uint32_t period, uint32_t idx);
+static void ui_message(const char *m);
+static void ui_say(const char *a, const char *b);
 
 /* the tracks' pattern as it is now == pattern p's copy (no store needed) */
 static int bank_same(uint32_t p)
@@ -45,6 +47,31 @@ static void bank_take(uint32_t p)
     c->motion = motion;
     bank.used |= (uint8_t)(1u << (p % NBANK));
 }
+/* RECORD THE ARRANGEMENT (GLO > SONG, REC tapped: armed; PLAY: recording): every pattern played becomes a section of
+ * SONG, all four tracks on it, REPS its whole loops (over 16: more sections), the song recorded over; STOP ends it
+ * (the last pattern at least once). The ISR logs {pattern, loops} at each switch and at STOP; the main loop writes
+ * the sections (bank_poll: chain_config is the main loop's) */
+#define ARR_N 16u
+static struct {
+    volatile uint8_t armed, on, fresh, done, full;
+    volatile uint8_t n_in, n_out;
+    uint8_t pat;
+    uint16_t loops;
+    struct { uint8_t pat; uint16_t loops; } ev[ARR_N];
+} arr;
+static void arr_push(uint32_t p, uint32_t loops)       /* ISR */
+{
+    if ((uint8_t)(arr.n_in - arr.n_out) < ARR_N) {
+        arr.ev[arr.n_in % ARR_N].pat = (uint8_t)p;
+        arr.ev[arr.n_in % ARR_N].loops = (uint16_t)loops;
+        RING_PUBLISH();
+        arr.n_in++;
+    }
+}
+/* MIDI: a Program Change on channel 16 picks the pattern, programs 1..6 (0..5) A..F, as ENV + its key (bank_poll) */
+#define BANK_PC_CH 15u
+static volatile uint8_t bank_pc;                        /* the pattern + 1 a Program Change asked for, 0 none */
+static void bank_midi_pc(uint32_t ch, uint32_t prog) { if (ch == BANK_PC_CH && prog < NBANK) bank_pc = (uint8_t)(prog + 1u); }
 /* the current pattern stored when it changed (interrupts off, or the ISR); 1 = it had */
 static int bank_keep(void)
 {
@@ -111,17 +138,26 @@ static __attribute__((noinline)) void bank_switch(uint32_t p)
 static void bank_tick(uint32_t n)
 {
     const track_t *t = &trk[bank.clk % NTRK];
-    uint32_t length, carry;
+    uint32_t length, carry, old;
     bank.carry = 0;
-    if (bank.queue >= NBANK || chain.running || !song.playing || t->seq_pos >= 0x7FFFFFFFu ||
+    if ((bank.queue >= NBANK && !arr.on) || chain.running || !song.playing || t->seq_pos >= 0x7FFFFFFFu ||
         t->seq_idx + 1u != (uint32_t)t->p[P_SLEN])
         return;
     length = step_samples(t, div_samples((uint32_t)t->p[P_SDIV]), t->seq_idx);
     if (t->seq_pos + n < length)
         return;
+    if (arr.on)                                         /* (recording: a whole loop of this pattern) */
+        arr.loops++;
+    if (bank.queue >= NBANK)
+        return;
     carry = t->seq_pos + n - length;
+    old = bank.cur;
     bank_switch(bank.queue);
     bank.carry = carry;
+    if (arr.on && bank.cur != old) {
+        arr_push(old, arr.loops);
+        arr.loops = 0;
+    }
 }
 /* ISR, PLAY: a pattern queued plays from the start (a song starting: none) */
 static void bank_start(void)
@@ -131,12 +167,69 @@ static void bank_start(void)
         bank.queue = CHAIN_OFF;
     else if (bank.queue < NBANK)
         bank_switch(bank.queue);
+    if (arr.armed && !chain.armed) {                    /* (RECORD THE ARRANGEMENT: from here) */
+        arr.armed = 0;
+        arr.n_in = arr.n_out = 0;
+        arr.loops = 0;
+        arr.fresh = 1;
+        arr.on = 1;
+    }
+}
+/* ISR, STOP: the recording ends with the pattern playing (its loops, at least one) */
+static void bank_stop(void)
+{
+    if (!arr.on)
+        return;
+    arr_push(bank.cur, arr.loops ? arr.loops : 1u);
+    arr.on = 0;
+    arr.done = 1;
+}
+/* main loop: the logged patterns -> SONG's sections (bank_poll) */
+static void chain_defaults(chain_config_t *c);
+static void arr_drain(void)
+{
+    if (arr.fresh) {
+        arr.fresh = 0;
+        chain_defaults(&chain_config);
+        arr.full = 0;
+    }
+    while (arr.n_out != arr.n_in) {
+        uint32_t p = arr.ev[arr.n_out % ARR_N].pat, n = arr.ev[arr.n_out % ARR_N].loops;
+        arr.n_out++;
+        while (n && !arr.full) {
+            uint32_t r = n > 16u ? 16u : n;
+            if (chain_config.count >= CHAIN_ROWS) {
+                arr.full = 1;
+                arr.on = 0;
+                ui_message("SONG FULL: 16 SECTIONS");
+                break;
+            }
+            chain_config.row[chain_config.count] = chain_row_of(chain_val(p), r);
+            chain_config.count++;
+            n -= r;
+        }
+    }
+    if (arr.done) {
+        char b[4];
+        arr.done = 0;
+        fmt_int(b, (int32_t)chain_config.count);
+        if (!arr.full)
+            ui_say(b, chain_config.count == 1u ? " SECTION RECORDED" : " SECTIONS RECORDED");
+    }
+}
+/* GLO > SONG, REC tapped: armed / disarmed (recording: stopped by STOP) */
+static void arr_toggle(void)
+{
+    if (arr.on) {
+        ui_message("STOP ENDS THE RECORDING");
+        return;
+    }
+    arr.armed = (uint8_t)!arr.armed;
+    ui_message(arr.armed ? "ARRANGE REC: PLAY, ENV KEYS" : "ARRANGE REC OFF");
 }
 
 /* ---- the main loop: ENV held's keys (ui_layer.c) ---- */
 static int chain_busy(void);
-static void ui_message(const char *m);
-static void ui_say(const char *a, const char *b);
 static int bank_has(uint32_t p) { return p < NBANK && ((bank.used >> p) & 1u); }
 static void bank_name(char *b, uint32_t p) { b[0] = (char)('A' + p % NBANK); b[1] = 0; }
 /* a white key A..F: go there (stopped), next (playing), back to staying (the queued one, the current one); an empty

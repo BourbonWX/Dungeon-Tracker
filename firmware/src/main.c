@@ -312,6 +312,7 @@ static void fm1_main(void)
         autosave_poll();                              /* (1.2) the music, stopped and idle: project.c */
 #if RONDO_LAYOUT
         bank_poll();                                  /* RONDO: the PATTERN BANK: a switch, the flash */
+        morph_poll();                                 /* RONDO: SOUND MORPH: the knobs, loads, edits */
 #endif
         felucca_dbg.stage = 2;
         ui_leds();

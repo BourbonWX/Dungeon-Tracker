@@ -315,6 +315,16 @@ F3..D4 set the selected cell, as with ENV. KNOB 3 turns A..F then "-". PLAY SONG
 refuses a section on an empty key ("PATTERN F EMPTY"). A section lasts its longest track's loop times REPS. While
 a song plays, the ENV keys say SONG PLAYING.
 
+**Record the arrangement.** On GLO > SONG, tap **REC**: the line says REC: PRESS PLAY. Press PLAY and jam: switch
+patterns with ENV + the keys as you like, then STOP. Every pattern you played becomes a section (all four tracks on
+it, REPS its whole loops, more sections past 16), replacing the song that was there. The last pattern counts at least
+once. Tap REC again before PLAY to disarm. PLAY on SONG then plays what you recorded, and you can edit it as any song.
+
+**MIDI.** A Program Change on **channel 16** picks a pattern: program 1–6 is A–F (0–5 counting from 0). Stopped, it
+switches at once; playing, it queues, exactly as ENV + the key. Empty keys are ignored, as are program changes on
+other channels. So the QY-70 (or any sequencer) can call the sections: send it program changes on channel 16 where
+each part starts.
+
 **Saving.** The six patterns have their own flash, written while stopped and idle for 3 s (an erase silences the
 audio for ~40 ms, so never while anything sounds). The pattern you're on is also in the autosave, with which key it
 is, so a power cycle puts you back where you were. Its key's own copy is refreshed at most once a minute.
@@ -322,6 +332,27 @@ is, so a power cycle puts you back where you were. Its key's own copy is refresh
 **Where the flash came from.** Every sector of the FM-1 was already taken, so the bank uses the top 48 KiB of the
 third user sample slot. **USR3 now holds samples up to 32 KiB** (USR1 and USR2 stay at 80 KiB). A larger upload to
 USR3 is refused, and a USR3 sample over 32 KiB from before shows as empty (re-upload a shorter one).
+
+## SOUND MORPH (EDIT > MORPH)
+
+Each track can blend its sound toward a **target**: another preset of the same engine. KNOB 1 picks the target
+(OFF, then the engine's presets as P1, P2…), KNOB 2 the **AMOUNT** 0–100 %. At 0 % you hear the sound as it is; at
+100 % the target's values; in between, everything that glides is part way: envelopes, filter, the engine's eight
+EDIT values, the sends, a kit's pitches and decays. What doesn't glide stays the sound's own: the engine, its lists
+and switches (waveforms, modes, the voice mode), an FM6 patch's operators, the mix (LEVEL, PAN, MUTE).
+
+The page shows the target's name and a line per parameter that differs, from your sound to the target's, with a
+marker where it is now.
+
+* **Edits stay yours.** Turn a knob while the morph is part way and that value becomes the sound's own; back at 0 %
+  you hear your edit.
+* **Automation wins.** A parameter the pattern's automation or locks are moving is left to them.
+* **Per pattern: the MORPH command.** In the TRACKER's FX column, after SPEED LOOP PITCH, MORPH sets the amount from
+  that step on (shown M0 … M100). Put M100 on step 1 of the chorus pattern and M0 on the verse's, and switching
+  patterns switches the lead from soft to bright, with the same four sounds.
+* **Saved** with the project and the autosave: the amount, the target, and your sound as it is without the morph.
+
+Switching a track to another engine lets go of the morph (the target named a preset of the old engine).
 
 ## Differences from Felucca, in short
 
@@ -343,7 +374,10 @@ USR3 is refused, and a USR3 sample over 32 KiB from before shows as empty (re-up
 * SONG plays the PATTERN BANK A–F instead of the four project slots A–D (a section's byte keeps 0–3 for A–D and 4
   for "-", and takes 5 and 6 for E and F), with SONG's keys on F3..D4. ENV held is the bank's layer. User sample slot 3
   keeps 32 KiB; its top 48 KiB are the bank's. Felucca's tests of songs from project slots, of the header's slot
-  letter and of slot 5 being refused fail in a RONDO build.
+  letter and of slot 5 being refused fail in a RONDO build. On SONG, REC records the arrangement (Felucca: "[SEQ] TO
+  RECORD"). A Program Change on channel 16 picks a pattern; on the track channels it loads nothing (as before in RONDO).
+* EDIT > MORPH and the MORPH command; a project keeps the morph in 8 of FUN10's spare bytes (`PROJ_MORPH_OFF`) and the
+  autosave which pattern is current in the header's reserved byte 65.
 * The splash and version read `RONDO R0.1`.
 * `RONDO_LAYOUT=0` builds Felucca's shared 8-voice budget and power-on sounds (used to run Felucca's own tests).
 * The voice counts are `TRK_CAP` in `firmware/src/core.h`; change them there if you want another layout.
@@ -373,7 +407,8 @@ git submodule update --init                             # firmware/engines (Felu
 
 ```sh
 sh tests/run_rondo.sh          # RONDO's checks (engines, tracker, commands, vary, dice, dungeon, live effects,
-                               # the pattern bank and its flash), demo WAVs
+                               # the pattern bank and its flash, the arrangement, MIDI
+                               # program changes, sound morph), demo WAVs
 ```
 
 `tests/run_tests.sh` is Felucca's full suite; build it with `CC="cc -DRONDO_LAYOUT=0"` to check Felucca's behaviour

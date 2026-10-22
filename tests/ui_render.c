@@ -785,6 +785,7 @@ enum { S_HOME, S_HOME_IDLE, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TURN, S_MESSAGE,
        S_INSERT_CRUSH, S_INSERT_FOLD, S_INSERT_PHASER, S_INSERT_OFF, S_INSERT_MIX, S_INSERT_FILTR, S_INSERT_DUCK, S_INSERT_REPT,
        S_LAYER_ARP, S_LAYER_ARP_OFF, S_MFX, S_FX_MASTER, S_TRACKER_CMD, S_AUTO_CMD, S_VARY, S_VARY_KIT,
        S_LAYER_ENV, S_LAYER_ENV_PLAY, S_LAYER_ENV_SONG, S_SONG_BANK, S_SONG_BANK_PLAY, S_HEAD_BANK,
+       S_MORPH, S_MORPH_OFF, S_SONG_ARR, S_SONG_ARR_REC,
        S_ENV_SYNC, S_ENV_DEST_SYNC, S_FILTER,
        S_LEARN_WAIT, S_LEARN_PICK, S_LEARN_SET, S_LEARN_LONG, S_GLO_LEARN, S_MENU_LCLEAR, S_MENU_LCLEAR_NONE,
        S_DLY_DOT, S_DLY_DOT16, S_FX_THROW,
@@ -817,6 +818,7 @@ static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_fallen", 
     "insert_crush", "insert_fold", "insert_phaser", "insert_off", "insert_mix", "insert_filtr", "insert_duck", "insert_rept",
     "layer_arp", "layer_arp_off", "master", "fx_master", "tracker_cmd", "auto_cmd", "vary", "vary_kit",
     "layer_env", "layer_env_play", "layer_env_song", "song_bank", "song_bank_play", "head_bank",
+    "morph", "morph_off", "song_arrange", "song_arrange_rec",
     "env_sync", "env_dest_sync", "filter",
     "learn_wait", "learn_pick", "learn_set", "learn_long", "layer_glo_learn", "menu_learn_clear", "menu_learn_clear_none",
     "dly_dotted", "dly_dotted_16", "perform_throw",
@@ -1011,6 +1013,8 @@ static void setup(int s)
     mk_reset();                                      /* (RONDO: the master knobs at rest, the first four) */
     memset(&vary, 0, sizeof vary);                   /* (RONDO: VARY from scratch, the rolls the same each run) */
     bank_reset();                                    /* (RONDO: the PATTERN BANK empty, A current) */
+    morph_reset();                                   /* (RONDO: no SOUND MORPH) */
+    memset((void *)&arr, 0, sizeof arr);             /* (RONDO: no arrangement recording) */
     vary.rng = 12345u;
     song.g[G_ENGGO] = 0;
     switch (s) {
@@ -1240,6 +1244,32 @@ static void setup(int s)
         bank_fill(); seq_start(); song.playing = 1; events_block(32); bank.queue = 2; fm1_ms = 250u * 3u;
         go_home(); ui.layer = s == S_LAYER_ENV_PLAY ? LAYER_ENV : 0; ui.msg_t = 0;
         break;
+    /* RONDO: EDIT > MORPH on T4 (its best-differing preset, 60 %; none picked); SONG with the arrangement armed, and
+     * recording */
+    case S_MORPH: case S_MORPH_OFF: {
+        uint32_t p, id, best = 1, most = 0;
+        track_select(3);
+        for (p = 1; s == S_MORPH && p <= morph_npresets(TSEL); p++) {
+            uint32_t n = 0;
+            morph_set(3, p, 0); morph_poll();
+            for (id = 0; id < P_COUNT; id++) n += (uint32_t)morph_differs(TSEL, id);
+            if (n > most) { most = n; best = p; }
+        }
+        morph_set(3, s == S_MORPH ? best : 0, s == S_MORPH ? 60 : 0); morph_poll();
+        go_page(GR_MORPH); ui.msg_t = 0;
+        break;
+    }
+    case S_SONG_ARR: case S_SONG_ARR_REC: {
+        song.playing = 0; bank_fill();
+        chain_config.count = 2;
+        chain_config.row[0] = chain_row_of(0, 2); chain_config.row[1] = chain_row_of(1, 1);
+        ui.song_row = 0; ui.song_trk = 0;
+        go_page(GR_SONG); sg_fresh();
+        arr.armed = s == S_SONG_ARR; arr.on = s == S_SONG_ARR_REC;
+        if (arr.on) { seq_start(); song.playing = 1; events_block(32); arr.on = 1; arr.armed = 0; }
+        ui.msg_t = 0;
+        break;
+    }
     case S_LAYER_ENV_SONG:
     case S_SONG_BANK: case S_SONG_BANK_PLAY: {
         static const uint8_t R[4][5] = {{0, 0, 0, 0, 1}, {1, 1, 0, 1, 2}, {5, 5, 4, 0, 1}, {0, 6, 4, 4, 1}};

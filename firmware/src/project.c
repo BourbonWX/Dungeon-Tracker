@@ -130,6 +130,7 @@ typedef struct {
     motion_store_t motion;
     uint8_t fm6[NTRK][FM6_PACKED];             /* each track's FM6 patch, packed (eng_fm6.c) */
     uint8_t mch[NTRK];                         /* 1.5.5: MIDI IN TRACK's channels, as song.mch (PROJ_MIDI_OFF) */
+    uint8_t mo_amt[NTRK], mo_tgt[NTRK];        /* RONDO: SOUND MORPH's AMOUNT and TARGET (PROJ_MORPH_OFF; 0 0 none) */
     char name[PROJ_NAME_LEN];                  /* the project's name: upper-case ASCII 32..126, 0-padded; "" = none */
     uint32_t sum;
 } project_t;
@@ -167,6 +168,9 @@ _Static_assert(sizeof(project_v5_t) == 3352u && sizeof(project_v6_t) == 3388u, "
  * channels make, else CH1-4), which is all a firmware before 1.5.5 reads (these bytes it never did): a TRACK project plays
  * there as that block. Every project before has them 0: channels 1..4, MIDI IN as its G_ROUTE says */
 #define PROJ_MIDI_OFF (PROJ_FM6_OFF - 3u)
+/* RONDO: SOUND MORPH (morph.c), 8 bytes of the spare ones before MIDI IN TRACK's: each track's AMOUNT (0..100), then
+ * its TARGET (its engine's preset + 1, 0 none). Every project before, and a Felucca's, has them 0: no morph */
+#define PROJ_MORPH_OFF (PROJ_MIDI_OFF - 2u * NTRK)
 typedef union { uint32_t align; uint8_t raw[PROJ_STORE_SIZE]; } project_store_t;
 _Static_assert(G_COUNT == 27u, "FUN7 globals retain original IDs");
 _Static_assert(sizeof(project_store_t) == 3840u && PROJ_STORE_V7 == sizeof(project_v6_t), "FUN10 / FUN7 sizes");
@@ -650,10 +654,16 @@ static int proj_pack(project_store_t *out, const project_t *q)
             b[pos++] = (uint8_t)(s->probability | (r >> 1) << 7);
         }
     }
-    if (pos + sizeof q->chain + sizeof q->motion > PROJ_MIDI_OFF) return 0;
+    if (pos + sizeof q->chain + sizeof q->motion > (RONDO_LAYOUT ? PROJ_MORPH_OFF : PROJ_MIDI_OFF)) return 0;
     memcpy(b + pos, &q->chain, sizeof q->chain); pos += sizeof q->chain;
     memcpy(b + pos, &q->motion, sizeof q->motion);
     proj_midi_pack(b, q);
+#if RONDO_LAYOUT
+    for (t = 0; t < NTRK; t++) {
+        b[PROJ_MORPH_OFF + t] = q->mo_amt[t] <= 100u ? q->mo_amt[t] : 0u;
+        b[PROJ_MORPH_OFF + NTRK + t] = q->mo_tgt[t];
+    }
+#endif
     memcpy(b + PROJ_FM6_OFF, q->fm6, sizeof q->fm6);
     {   /* the name (0-padded; stops at the first 0) */
         char n[PROJ_NAME_LEN + 1u];
@@ -758,6 +768,13 @@ static int proj_unpack(project_t *q, const uint8_t *b, uint32_t st)
     if (!proj_motion_ids(&q->motion, np) || !chain_valid(&q->chain) || !motion_valid(&q->motion)) return 0;
     if (v10)
         proj_midi_unpack(q, b);                         /* (1.5.5: 0 in every FUN10 before, FUN9..FUN7 have none) */
+#if RONDO_LAYOUT
+    if (v10 && pos + sizeof q->motion <= PROJ_MORPH_OFF)   /* (RONDO: SOUND MORPH; 0 in every project before) */
+        for (t = 0; t < NTRK; t++) {
+            q->mo_amt[t] = b[PROJ_MORPH_OFF + t] <= 100u ? b[PROJ_MORPH_OFF + t] : 0u;
+            q->mo_tgt[t] = b[PROJ_MORPH_OFF + NTRK + t];
+        }
+#endif
     for (t = 0; t < NTRK; t++) {
         if (v7)
             memcpy(q->fm6[t], FM6_INIT, FM6_PACKED);
@@ -875,7 +892,11 @@ static void project_capture(project_t *p)
     p->phys = PROJ_PHYS;
     p->chain = chain_config;
     for (i = 0; i < NTRK; i++) {
+#if RONDO_LAYOUT
+        for (uint32_t j = 0; j < P_COUNT; j++) p->t[i].p[j] = morph_base(&trk[i], j);   /* (a morph: the sound A) */
+#else
         for (uint32_t j = 0; j < P_COUNT; j++) p->t[i].p[j] = motion_base_value(&trk[i], j);
+#endif
         p->t[i].engine = trk[i].eng_req;
         p->t[i].preset = trk[i].preset;
         memcpy(p->t[i].step, trk[i].step, sizeof trk[i].step);
@@ -883,6 +904,10 @@ static void project_capture(project_t *p)
     }
     p->motion = motion;
     memcpy(p->mch, song.mch, sizeof p->mch);
+#if RONDO_LAYOUT
+    memcpy(p->mo_amt, mo.amt, sizeof p->mo_amt);
+    memcpy(p->mo_tgt, mo.tgt, sizeof p->mo_tgt);
+#endif
     motion_unguard(f);
     memcpy(p->name, proj_name, str_len(proj_name));
     p->sum = proj_sum(p);
@@ -1106,6 +1131,9 @@ static int project_restore_runtime(const project_t *input)
         }
     }
     song.sel = (uint8_t)(p->sel < NTRK ? p->sel : 0u);
+#if RONDO_LAYOUT
+    morph_load(p->mo_amt, p->mo_tgt);                   /* (RONDO: SOUND MORPH from the sounds just set: morph_poll) */
+#endif
     fm1_irq_on();
     proj_name_get(proj_name, (const uint8_t *)p->name);
     proj_cur = PROJ_NO_SLOT;                            /* (project_load: its slot) */
@@ -1344,7 +1372,11 @@ static uint32_t autosave_sig(void)
     for (i = 0; i < NTRK; i++) {
         const track_t *t = &trk[i];
         for (j = 0; j < P_COUNT; j++) {
+#if RONDO_LAYOUT
+            int16_t v = morph_base(t, j);
+#else
             int16_t v = motion_base_value(t, j);
+#endif
             h = as_mix(h, &v, sizeof v);
         }
         h = as_mix(h, &t->eng_req, 1);
@@ -1360,6 +1392,8 @@ static uint32_t autosave_sig(void)
     h = as_mix(h, &chain_config, sizeof chain_config);
 #if RONDO_LAYOUT
     h = as_mix(h, (const void *)&bank.cur, 1);
+    h = as_mix(h, mo.amt, sizeof mo.amt);
+    h = as_mix(h, mo.tgt, sizeof mo.tgt);
 #endif
     return as_mix(h, proj_name, sizeof proj_name);
 }
@@ -1520,6 +1554,15 @@ static void bank_poll(void)
     if (bk.seen != bank.gen) {
         bk.seen = bank.gen;
         bank_dropped();
+    }
+    arr_drain();                                        /* (the arrangement recorded: SONG's sections) */
+    if (arr.on)
+        bank.clk = (uint8_t)bank_clock();
+    if (bank_pc) {                                      /* (MIDI: a Program Change on channel 16, as ENV + its key) */
+        uint32_t p = bank_pc - 1u;
+        bank_pc = 0;
+        if (bank_has(p) && !chain_busy())
+            bank_key(p);
     }
     if (bank.queue < NBANK) {
         if (!song.playing && !transport_busy()) {

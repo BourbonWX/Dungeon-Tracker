@@ -587,8 +587,14 @@ static int rec_tap(void)                                /* 1: the arming changed
         return 0;
     }
     if (!ui.home && cur_page()->graph == GR_SONG && !(song.rec & bit)) {
+#if RONDO_LAYOUT
+        arr_toggle();                                   /* RONDO: RECORD THE ARRANGEMENT (song_bank.c) */
+        ui.force = 1;
+        return 1;
+#else
         ui_message("[SEQ] TO RECORD");
         return 0;
+#endif
     }
     song.rec ^= bit;
     ui.force = 1;                                     /* also refresh the status on MENU / ABOUT */
@@ -963,6 +969,15 @@ static void edit_param(uint32_t slot, int32_t steps)
     }
 #endif
 #if RONDO_LAYOUT
+    if (pg->graph == GR_MORPH) {                          /* RONDO: MORPH: KNOB 1 TARGET (OFF, the presets), 2 AMOUNT */
+        uint32_t k = song.sel % NTRK, n = morph_npresets(TSEL);
+        if (slot == 0u)
+            morph_set(k, (uint32_t)clamp((int32_t)mo.tgt[k] + steps, 0, (int32_t)n), mo.amt[k]);
+        else if (slot == 1u)
+            morph_set(k, mo.tgt[k], (uint32_t)clamp((int32_t)mo.amt[k] + accel(EN_K2, steps, 100), 0, 100));
+        ui.force = 1;
+        return;
+    }
     if (pg->graph == GR_MFX) {                            /* RONDO: FX > MASTER: KNOB k picks slot k's effect, past */
         uint32_t e = mk_eff(slot), j, k;                  /* the ones the other knobs have; the one it leaves goes */
         for (j = 0; j < MK_N; j++) {                      /* back to rest (no knob would turn it off) */

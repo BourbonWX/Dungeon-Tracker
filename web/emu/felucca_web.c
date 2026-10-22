@@ -301,6 +301,7 @@ static void web_frame(void)
     autosave_poll();
 #if RONDO_LAYOUT
     bank_poll();
+    morph_poll();
 #endif
     ui_leds();
     ui_draw();

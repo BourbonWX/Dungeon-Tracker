@@ -434,6 +434,10 @@ static int page_visible(uint32_t i)
     uint32_t ckit = TSEL->eng_req % NENGINES == ENGI_CKIT;   /* RONDO: FMKIT's pages */
     if (PAGES[i].graph == GR_DICE)                    /* RONDO: DICE, the FM engines' */
         return ckit || TSEL->eng_req % NENGINES == ENGI_CTONE;
+#if RONDO_LAYOUT
+    if (PAGES[i].graph == GR_MORPH)                   /* RONDO: MORPH, an engine with presets to morph to */
+        return morph_npresets(TSEL) != 0u;
+#endif
     if (PAGES[i].scope == SC_TRACK && PAGES[i].graph == GR_NONE && PAGES[i].fam == FAM_EDIT &&
         PAGES[i].id[0] >= P_FM1_ATK && PAGES[i].id[0] <= P_FM4_LEVEL && PAGES[i].title[0] != 'O')
         return ckit;                                  /* KICK SNARE HAT PERC SHAPE (not DIGITAL's OP pages) */
@@ -494,7 +498,14 @@ static int transport_busy(void)
 }
 static void chain_play_ui(void)
 {
-    uint32_t rc = chain_prepare();
+    uint32_t rc;
+#if RONDO_LAYOUT
+    if (arr.armed) {                                    /* RONDO: ARRANGE REC armed: PLAY plays the patterns, recorded */
+        transport_req = 1;
+        return;
+    }
+#endif
+    rc = chain_prepare();
     if (!rc) {
         ui.force = 1;
     } else if (rc >= 3u) {

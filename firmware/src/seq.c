@@ -830,6 +830,8 @@ static void keyboard_block(void)
 
 /* -------------------------------------------------------- sequencer --- */
 #if RONDO_LAYOUT
+static void morph_step(track_t *t, uint32_t step);
+static void bank_stop(void);
 static void bank_tick(uint32_t n);
 static void bank_start(void);
 #endif
@@ -890,6 +892,9 @@ static void seq_stop(void)
         trk[i].nd_fired = 0;
     }
     chain_stop();
+#if RONDO_LAYOUT
+    bank_stop();                                   /* (RONDO: an arrangement being recorded ends) */
+#endif
     motion_end();
 }
 
@@ -1301,6 +1306,7 @@ static void seq_tick(track_t *t, uint32_t n)
         t->seq_idx = (uint16_t)((t->seq_idx + 1u) % len);
         seq_enter(t, top, len);
 #if RONDO_LAYOUT
+        morph_step(t, t->seq_idx);                      /* RONDO: a MORPH command on the step (morph.c) */
         if (ph_any(t)) {                                /* RONDO: the TRACKER's commands play the rows */
             ph_step(t, len, period, step_samples(t, period, t->seq_idx));
             continue;

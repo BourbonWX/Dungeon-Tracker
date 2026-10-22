@@ -177,6 +177,7 @@ static void ui_power_on(void)
     chain_defaults(&chain_config);
 #if RONDO_LAYOUT
     bank_reset();                                 /* (RONDO: the PATTERN BANK empty, A current) */
+    morph_reset();                                /* (RONDO: no SOUND MORPH) */
 #endif
     memset(&ui, 0, sizeof ui);
     page_over = 0;                                /* (no layer's knobs; roll_settle's test page gone) */
@@ -260,6 +261,7 @@ static void frame(void)
     ui_input();
 #if RONDO_LAYOUT
     bank_poll();                                  /* (main.c's loop: RONDO's PATTERN BANK) */
+    morph_poll();                                 /* (.. and SOUND MORPH) */
 #endif
     ui_draw();
 }

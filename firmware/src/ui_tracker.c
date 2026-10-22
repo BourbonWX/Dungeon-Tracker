@@ -52,6 +52,7 @@ static uint32_t tk_fx_list(const track_t *t, uint8_t *ids)
     ids[n++] = (uint8_t)CMD_SPD;                          /* the commands first */
     ids[n++] = (uint8_t)CMD_LOOP;
     ids[n++] = (uint8_t)CMD_LPIT;
+    ids[n++] = (uint8_t)CMD_MORPH;
 #endif
     for (i = 0; i < 8u; i++)
         if (ev_id_ok(t, P_E0 + i))
@@ -115,6 +116,9 @@ static void tk_cmd_text(uint32_t id, int32_t v, char *b)
     } else if (id == CMD_LOOP) {
         b[0] = 'L';
         str_cpy(b + 1, N_CLOOP[clamp(v, 0, 31)], 7);
+    } else if (id == CMD_MORPH) {
+        b[0] = 'M';
+        fmt_int(b + 1, clamp(v, 0, 100));
     } else {
         b[0] = 'P';
         b[1] = v < 0 ? '-' : '+';

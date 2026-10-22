@@ -1332,7 +1332,8 @@ static uint32_t graph_signature(void)
         h = fnv(h, chain_config.row, sizeof chain_config.row);
         h ^= chain.running ? (chain.row + 1u) * 104729u + chain.remaining * 1299709u : 0u;
 #if RONDO_LAYOUT
-        h ^= (uint32_t)bank.used << 24 ^ (uint32_t)bank.cur << 21 ^ (uint32_t)bank.gen * 2654435761u;
+        h ^= (uint32_t)bank.used << 24 ^ (uint32_t)bank.cur << 21 ^ (uint32_t)bank.gen * 2654435761u ^
+             (uint32_t)(arr.armed | arr.on << 1) * 0x9E3779B1u;
         for (i = 0; i < NTRK; i++)                   /* (the current pattern's pictures: the tracks' own) */
             h = fnv(fnv(h, trk[i].step, sizeof trk[i].step), &trk[i].p[P_SLEN], 2u * sizeof trk[i].p[0]);
 #else
@@ -2349,6 +2350,11 @@ static void graph_song(void)
         x0 = hi - text_w(fl, b);
         cv_text_on(x0, ly, fl, b, T_MID, T_SURF);
     }
+#if RONDO_LAYOUT
+    if (arr.armed || arr.on) {                         /* RONDO: RECORD THE ARRANGEMENT: what it does now */
+        cv_free_text(SG_X0, ly, fl, arr.on ? "REC: ENV + KEYS" : "REC: PRESS PLAY", T_ACCENT, T_SURF, x0 - 10 - SG_X0);
+    } else
+#endif
     if (c < L.n) {
         uint32_t s = chain_pat(chain_config.row[c].slot[lane]);
         if (s == CHAIN_OFF)
@@ -2420,6 +2426,53 @@ static void graph_dice(const track_t *t, uint16_t c)
  * the pattern shown: how many steps; held: THEME, the cursor's framed; tumbling a moment after a roll), under them
  * the pattern's first 32 steps as a strip: a step that plays THEME, one the dice changed from the original ACCENT,
  * empty RAISE */
+/* RONDO: EDIT > MORPH (morph.c). A band from A (the sound) to B (the TARGET), the AMOUNT filled in; under it the
+ * parameters that differ, each a line from A's value to B's with the value now on it (the first eight, in id order;
+ * a parameter the automation moves: DIM); none: what to do */
+static void graph_morph(const track_t *t, uint16_t c)
+{
+    uint32_t k = trk_index(t), id, n = 0, amt = mo.amt[k];
+    int32_t w = 228 * (int32_t)amt / MO_MAX;
+    (void)c;
+    cv_text_on(6, 0, &AF_S, "A", T_MID, T_SURF);
+    cv_text_r(234, 0, &AF_S, mo.tgt[k] ? morph_tname(t) : "NO TARGET", mo.tgt[k] ? T_TEXT : T_DIM, T_SURF);
+    cv_rrect(6, 14, 228, 10, 3, T_RAISE, T_SURF);
+    if (w > 0)
+        cv_rrect(6, 14, w, 10, 3, T_THEME, T_SURF);
+    if (!mo.tgt[k]) {
+        cv_text_in(6, 50, 228, &AF_S, "[K1] PICK A PRESET TO MORPH TO", T_MID, T_SURF);
+        return;
+    }
+    for (id = 0; id < P_COUNT && n < 8u; id++) {
+        const param_desc_t *d;
+        int32_t y, a, b, v, span, xa, xb, xv;
+        int moving;
+        if (!morph_differs(t, id))
+            continue;
+        d = track_desc(t, id);
+        y = 30 + (int32_t)(n % 4u) * 17;
+        span = d->max - d->min;
+        a = mo.on[k] ? mo.a[k][id] : t->p[id];
+        b = mo.b[k][id];
+        v = t->p[id];
+        moving = (motion_active[k][id / 32u] >> (id % 32u)) & 1u;
+        {
+            int32_t x0 = n < 4u ? 6 : 122, lw = 58, bx = x0 + 52;
+            char lab[8];
+            str_cpy(lab, d->label, sizeof lab);
+            cv_text_on(x0, y, &AF_S, lab, moving ? T_DIM : T_MID, T_SURF);
+            xa = bx + (a - d->min) * lw / span;
+            xb = bx + (b - d->min) * lw / span;
+            xv = bx + (clamp(v, d->min, d->max) - d->min) * lw / span;
+            cv_rect(bx, y + 6, lw + 1, 1, T_LINE);
+            cv_rect(xa < xb ? xa : xb, y + 5, (xa < xb ? xb - xa : xa - xb) + 1, 3, moving ? T_DIM : T_MID);
+            cv_rect(xv - 1, y + 2, 3, 9, moving ? T_DIM : T_ACCENT);
+        }
+        n++;
+    }
+    if (!n)
+        cv_text_in(6, 50, 228, &AF_S, "THE TARGET SOUNDS THE SAME", T_MID, T_SURF);
+}
 static void graph_vary(const track_t *t, uint16_t c)
 {
     uint32_t k = song.sel % NTRK, d, i, len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP), shown = vary_shown(k);
@@ -2572,6 +2625,10 @@ static void draw_graph(void)
 #if RONDO_LAYOUT
         case GR_MFX:
             graph_mfx(c);
+            break;
+        case GR_MORPH:
+            cv_oy = 0;
+            graph_morph(t, c);
             break;
 #endif
         case GR_ROLL:

@@ -255,11 +255,13 @@ static void step_set_nudge(step_t *s, int32_t v)
  * they are saved and undone as the FX column's locks are; never a parameter (motion.c skips them as it plays):
  *   CMD_SPD   SPEED x1 / 1/2 / x2 from this row on (until another, or the pattern's loop comes round)
  *   CMD_LOOP  after this row, back N rows (1 2 4 8), M times (1..8): N rows played M + 1 times (value N index x 8 + M - 1)
- *   CMD_LPIT  the LOOP's pitch step a pass, -12..+12 semitones (notes only: a kit's hits stay) */
+ *   CMD_LPIT  the LOOP's pitch step a pass, -12..+12 semitones (notes only: a kit's hits stay)
+ *   CMD_MORPH the track's SOUND MORPH amount from this step on, 0..100 % (morph.c) */
 #define CMD_SPD (P_COUNT + 0u)
 #define CMD_LOOP (P_COUNT + 1u)
 #define CMD_LPIT (P_COUNT + 2u)
-#define NCMD 3u
+#define CMD_MORPH (P_COUNT + 3u)
+#define NCMD 4u
 static inline int cmd_id(uint32_t id) { return RONDO_LAYOUT && id >= P_COUNT && id < P_COUNT + NCMD; }
 typedef struct { uint8_t place, param; int8_t value; } motion_event_t;
 typedef struct { uint8_t count, on, rsv[2]; motion_event_t event[MOTION_MAX]; } motion_store_t;

@@ -12,7 +12,10 @@
  * 6. OCT+ held + a key: a copy (the current one stays); OCT- held + a key: cleared (not the current one's).
  * 7. SONG on the bank: KNOB 3 turns A .. F then "-"; sections of A, B, E play those patterns; an empty one refused
  *    ("PATTERN F EMPTY"); a song stores the current one first; the ENV keys say SONG PLAYING meanwhile.
- * 8. the map, the cards, the LEDs drawn, every palette. */
+ * 8. the map, the cards, the LEDs drawn, every palette.
+ * 9. RECORD THE ARRANGEMENT: on SONG, REC armed; PLAY plays the patterns; A twice, B once, A to STOP: three sections
+ *    (A x2, B x1, A x1), the song before replaced.
+ * 10. MIDI: a Program Change on channel 16 (program 2: B) goes to B stopped, queues it playing; on channel 1 nothing. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 
@@ -285,6 +288,72 @@ int main(void)
         seq_stop();
         ok8("the PATTERNS map drawn, every palette", 1);
     }
+
+    /* 9. the arrangement */
+    fresh();
+    env_key(1);
+    line(t, 16, 72);
+    env_key(0);
+    chain_config.count = 2;                             /* (a song before: replaced) */
+    chain_config.row[0] = chain_row_of(2, 3);
+    go_page(GR_SONG);
+    frames(400);
+    press(B_REC);
+    frames(50);
+    ok8("SONG, REC tapped: the arrangement armed (no track armed)", arr.armed && !song.rec && !arr.on);
+    press(B_PLAY);
+    frames(20);
+    events_block(CTL);
+    ok8("  PLAY: the patterns play (no song), recording", song.playing && !chain.running && arr.on);
+    {
+        uint32_t wraps = 0, prev = 0, b;
+        for (b = 0; b < 200000u && wraps < 2u; b++) {   /* A: two whole loops, B queued in the second */
+            events_block(CTL);
+            if (t->seq_idx == 0u && prev == 15u) wraps++;
+            prev = t->seq_idx;
+            if (wraps == 1u && t->seq_idx == 4u && bank.queue == CHAIN_OFF && bank.cur == 0u) env_key(1);
+        }
+        for (b = 0; b < 200000u && bank.cur == 1u; b++) {   /* B: once, then back to A */
+            events_block(CTL);
+            if (t->seq_idx == 4u && bank.queue == CHAIN_OFF) env_key(0);
+        }
+        for (b = 0; b < 3000u; b++)
+            events_block(CTL);                          /* (A: part of a loop) */
+        press(B_PLAY);
+        frames(50);
+        events_block(CTL);
+        frames(50);
+    }
+    snprintf(what, sizeof what, "  STOP: %u sections: %c x%u, %c x%u, %c x%u", chain_config.count,
+             'A' + chain_pat(chain_config.row[0].slot[0]), chain_config.row[0].repeat,
+             'A' + chain_pat(chain_config.row[1].slot[0]), chain_config.row[1].repeat,
+             'A' + chain_pat(chain_config.row[2].slot[0]), chain_config.row[2].repeat);
+    ok8(what, !arr.on && chain_config.count == 3u && chain_pat(chain_config.row[0].slot[0]) == 0u &&
+        chain_config.row[0].repeat == 2u && chain_pat(chain_config.row[1].slot[3]) == 1u && chain_config.row[1].repeat == 1u &&
+        chain_pat(chain_config.row[2].slot[2]) == 0u && chain_config.row[2].repeat == 1u && msg_is("3 SECTIONS RECORDED"));
+    ok8("  it plays as a song (PLAY on SONG)", chain_prepare() == 0u);
+    transport_req = 0;
+    chain.armed = 0;
+
+    /* 10. MIDI Program Change */
+    fresh();
+    env_key(1);
+    env_key(0);
+    midi_event(0xC0u, 15u, 1u, 0u);
+    frames(50);
+    ok8("MIDI channel 16, program 2, stopped: B", bank.cur == 1u);
+    seq_start();
+    song.playing = 1;
+    midi_event(0xC0u, 15u, 0u, 0u);
+    frames(50);
+    ok8("  playing, program 1: A queued", bank.queue == 0u && bank.cur == 1u);
+    bank.queue = CHAIN_OFF;
+    midi_event(0xC0u, 0u, 0u, 0u);
+    midi_event(0xC0u, 15u, 4u, 0u);                     /* (E: empty) */
+    frames(50);
+    ok8("  channel 1 (a track's): no pattern; program 5 (E, empty): nothing", bank.queue == CHAIN_OFF && bank.cur == 1u);
+    song.playing = 0;
+    seq_stop();
 
     printf("bank: %s\n", fails8 ? "FAILED" : "all checks ok");
     return fails8 != 0;

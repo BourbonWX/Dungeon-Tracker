@@ -87,6 +87,7 @@
 #include "song_chain.c"
 #include "seq.c"
 #include "song_bank.c"             /* RONDO: the PATTERN BANK A..F (ENV held; SONG plays it) */
+#include "morph.c"                 /* RONDO: SOUND MORPH (EDIT > MORPH, the MORPH command) */
 #include "audio.c"
 
 /* -------------------------------------------------------------- UI --- */
