@@ -289,12 +289,21 @@ static void head_msg(int32_t x, int32_t maxw)
 static int head_slot(char *b)
 {
     uint32_t k = song.sel % NTRK, s;
-    b[1] = b[2] = 0;
+    b[1] = b[2] = b[3] = 0;
     if (chain.running) {
         s = chain.lane[k];
-        b[0] = s < 4u ? (char)('A' + s) : '-';
+        b[0] = s < CHAIN_PATS ? (char)('A' + s) : '-';
         return 1;
     }
+#if RONDO_LAYOUT
+    b[0] = (char)('A' + bank.cur % NBANK);              /* RONDO: the PATTERN BANK's current pattern, "A>C" one queued */
+    if (bank.queue < NBANK) {
+        b[1] = '>';
+        b[2] = (char)('A' + bank.queue);
+    }
+    (void)pat_from_sig;
+    return 1;
+#endif
     if (!pat_from[k] || pat_from[k] > 4u)
         return 0;
     b[0] = (char)('A' + pat_from[k] - 1u);
@@ -329,7 +338,7 @@ static void draw_head(void)
     head_geo_t g;
     int32_t beat = -1;                                 /* the metronome stands still (its swing removed in 1.1.5) */
     uint32_t rec = (song.rec >> song.sel) & 1u ? 2u : song.rec != 0u;   /* 2 the selected track armed, 1 another */
-    char sl[3];
+    char sl[4];
     int slot = head_slot(sl);
     uint32_t sig = (uint32_t)song.playing * 3u + rec * 5u + (uint32_t)(song.octave + 8) * 11u + song.sel * 13131u +
                    (ui.msg_t ? str_hash(7u, ui.msg) : ui.layer * 7919u + (uint32_t)layer_locked() * 3u) + (uint32_t)song.g[G_BPM] * 101u + (ui.bpm_t != 0) * 31u +
@@ -376,7 +385,9 @@ static void draw_head(void)
         char l[2] = {sl[0], 0};
         GFX_HOOK_ALIGN(0, 0, 0, H_HEAD, AL_V, "header text on its middle");
         rx = cv_text(HEAD_SLOT_X, HEAD_MY, &AF_M, l, sl[0] == '-' ? T_MID : T_THEME);
-        if (sl[1])                                     /* edited since: the mark, up by the letter's top */
+        if (sl[1] == '>')                              /* RONDO: the next pattern, small after it */
+            rx = cv_text(rx + 2, HEAD_SY, &AF_S, sl + 1, T_ACCENT);
+        else if (sl[1])                                /* edited since: the mark, up by the letter's top */
             rx = cv_text(rx, HEAD_MY, &AF_M, "*", T_MID);
         rx += 1;                                       /* (the REC mark's cell after it, its ink 3 px on) */
     }
@@ -983,7 +994,7 @@ static void draw_columns(void)
         val[2] = 0;
         draw_column(1, "TRACK", val, "", VAL(1u), -1, trk_icon(k, 1));
         sl = used ? chain_config.row[row].slot[k] : CHAIN_SILENT;
-        if (used) { val[0] = sl < 4u ? (char)('A' + sl) : '-'; val[1] = 0; }
+        if (used) { val[0] = chain_pat(sl) != CHAIN_OFF ? (char)('A' + chain_pat(sl)) : '-'; val[1] = 0; }
         else str_cpy(val, "--", sizeof val);
         draw_column(2, "PAT", val, "", used ? VAL(2u) : T_DIM, -1, ICON_X_PATTERN);
         if (used) fmt_int(val, chain_config.row[row].repeat);

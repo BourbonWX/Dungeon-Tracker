@@ -101,11 +101,19 @@ static __attribute__((noinline)) uint8_t grid_key_note(uint32_t k)
 /* GLO > SONG (song.grid 3): key k's slot, the white keys A3 B3 C4 D4 (white places 2..5: keys 4 6 7 9 from F) A..D; -1 = a
  * key that plays. A table, not key_place (a loop); the audio ISR's key loop reads SONG_KEYS, the same keys */
 #define SONG_KEYS (1u << 4 | 1u << 6 | 1u << 7 | 1u << 9)
+#if RONDO_LAYOUT
+/* RONDO: SONG's keys are ENV's: the white keys F3..D4 the bank's A..F (the section byte: chain_val) */
+static int32_t song_key(uint32_t k)
+{
+    return !key_black(k) && key_place(k) < CHAIN_PATS ? (int32_t)chain_val(key_place(k)) : -1;
+}
+#else
 static int32_t song_key(uint32_t k)
 {
     static const int8_t S[10] = {-1, -1, -1, -1, 0, -1, 1, 2, -1, 3};
     return k < 10u ? S[k] : -1;
 }
+#endif
 
 static uint32_t scale_mask(const track_t *t)
 {
@@ -821,9 +829,16 @@ static void keyboard_block(void)
 }
 
 /* -------------------------------------------------------- sequencer --- */
+#if RONDO_LAYOUT
+static void bank_tick(uint32_t n);
+static void bank_start(void);
+#endif
 static void seq_start(void)
 {
     uint32_t i;
+#if RONDO_LAYOUT
+    bank_start();                                  /* (a pattern queued while stopped: it now) */
+#endif
     motion_begin();
     chain_start();
     for (i = 0; i < NTRK; i++) {                   /* every track from its step 0, together */
@@ -1062,8 +1077,8 @@ static __attribute__((noinline)) uint32_t seq_time(track_t *t, uint32_t idx, uin
 /* the automation a track plays: its slot's while a song plays (song_chain.c lanes; 0: a silent lane, none) */
 static const motion_store_t *chain_motion(const track_t *t)
 {
-    uint32_t s = chain.lane[trk_index(t)];
-    return !chain.running ? &motion : s < 4u ? &chain.source[s].motion : 0;
+    const chain_pattern_t *c = chain_src(chain.lane[trk_index(t)]);
+    return !chain.running ? &motion : c ? &c->motion : 0;
 }
 
 /* step idx plays: its chance (the one roll, as seq_step made it: a step that does not play applies no lock), the
@@ -1278,7 +1293,11 @@ static void seq_tick(track_t *t, uint32_t n)
         if (t->seq_pos < cur_len && t->seq_pos != 0x7FFFFFFFu + n)
             break;
         top = t->seq_pos >= 0x7FFFFFFFu;            /* (PLAY, a SONG section: its first step) */
+#if RONDO_LAYOUT
+        t->seq_pos = top ? (chain.running ? chain.carry : bank.carry) : t->seq_pos - cur_len;   /* (RONDO: a pattern switch) */
+#else
         t->seq_pos = top ? (chain.running ? chain.carry : 0u) : t->seq_pos - cur_len;
+#endif
         t->seq_idx = (uint16_t)((t->seq_idx + 1u) % len);
         seq_enter(t, top, len);
 #if RONDO_LAYOUT
@@ -1509,6 +1528,9 @@ static void events_block(uint32_t n)
     if (aud_req)
         seq_audition();                               /* (STEP PREVIEW: a step sounds, stopped) */
     chain_tick(seq_n);
+#if RONDO_LAYOUT
+    bank_tick(seq_n);                                 /* RONDO: the next pattern of the bank at this one's end */
+#endif
     for (i = 0; i < NTRK; i++)
         seq_tick(&trk[i], seq_n);
     if (cin_flush)

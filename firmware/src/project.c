@@ -108,6 +108,7 @@
 #define PROJ_NG_V2 27u                         /* G_COUNT of formats 1 and 2 */
 #define PROJ_NP_V3 57u                         /* P_COUNT of format 3 (P_E0 was 49) */
 #define PROJ_NP_V4 69u                         /* P_COUNT of format 4 (P_E0 61) */
+#define NBANK_V 6u                             /* RONDO: byte 65's largest (song_bank.c NBANK) */
 #define PROJ_PHYS 2u                           /* project_t.phys: PHYS without DUST and DRUM (see the top) */
 #define PROJ_NAME_LEN 12u                      /* the name: FUN7 bytes PROJ_NAME_OFF.. (the reserved tail's end) */
 typedef struct {                               /* one track */
@@ -122,7 +123,8 @@ typedef struct {
     uint8_t parts;                             /* NPART; 0: track 4 is the old GM drum part (see the top) */
     uint8_t phys;                              /* PROJ_PHYS: PHYS MODEL values as today; 1: MODEL 4 was DRUM;
                                                 * 0 (a reserved byte before 1.0): MODEL 2 was DUST */
-    uint8_t rsv;
+    uint8_t rsv;                               /* RONDO: the PATTERN BANK's current pattern + 1 (byte 65, FUN10; 0 none:
+                                                * every project before, a Felucca's), what the autosave puts back */
     proj_trk_t t[NTRK];
     chain_config_t chain;
     motion_store_t motion;
@@ -626,7 +628,7 @@ static int proj_pack(project_store_t *out, const project_t *q)
             if (q->fm6[t][i] > 127u) return 0;
     if (!chain_valid(&q->chain) || !motion_valid(&q->motion) || P_COUNT > 127u) return 0;
     memset(out, 0, sizeof *out); memcpy(b, &magic, 4); memcpy(b + 4, &size, 4);
-    memcpy(b + 8, q->g, sizeof q->g); b[62] = q->sel; b[63] = q->parts; b[64] = q->phys; b[66] = P_COUNT;
+    memcpy(b + 8, q->g, sizeof q->g); b[62] = q->sel; b[63] = q->parts; b[64] = q->phys; b[65] = q->rsv <= NBANK_V ? q->rsv : 0u; b[66] = P_COUNT;
     for (t = 0; t < NTRK; t++) {
         for (i = 0; i < P_COUNT; i++) {
             if (q->t[t].p[i] < -64 || q->t[t].p[i] > 127) return 0;
@@ -713,6 +715,7 @@ static int proj_unpack(project_t *q, const uint8_t *b, uint32_t st)
         return 0;
     memset(q, 0, sizeof *q); q->magic = PROJ_MAGIC; q->size = sizeof *q;
     memcpy(q->g, b + 8, sizeof q->g); q->sel = b[62]; q->parts = b[63]; q->phys = b[64];
+    q->rsv = v10 && b[65] <= NBANK_V ? b[65] : 0u;
     if (v7 && (q->g[G_RTYPE] < 0 || q->g[G_RTYPE] > 1))   /* a FUN7 may still hold the old drum channel there */
         proj_rtype_room(q->g);
     for (t = 0; t < NTRK; t++) {
@@ -939,13 +942,13 @@ static uint32_t len48_of(int32_t len, int32_t div)
 /* SONG's picture of a pattern (ui_graph.c graph_song): its LEN steps in n = min(LEN, 16) cells (a cell: steps
  * c * LEN / n .. (c + 1) * LEN / n - 1), 2 bits a cell, cell c at bits 2c: a step weighs 0 (rest, empty, CHANCE 0),
  * 1 (a tie), 2 (a note or hit), 3 (accented); a cell's level is its steps' mean, rounded up (0..3) */
-static uint32_t proj_density(const proj_trk_t *t, uint8_t *n)
+static uint32_t pat_density(const step_t *st, int32_t slen, uint8_t *n)
 {
-    uint32_t len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP), nc = len < 16u ? len : 16u, c, i, d = 0;
+    uint32_t len = (uint32_t)clamp(slen, 1, NSTEP), nc = len < 16u ? len : 16u, c, i, d = 0;
     for (c = 0; c < nc; c++) {
         uint32_t i0 = c * len / nc, i1 = (c + 1u) * len / nc, w = 0;
         for (i = i0; i < i1; i++) {
-            const step_t *s = &t->step[i];
+            const step_t *s = &st[i];
             if (s->time == ST_TIE)
                 w += 1u;
             else if (s->time == ST_NOTE && (s->n || s->hit) && step_chance(s))
@@ -957,6 +960,7 @@ static uint32_t proj_density(const proj_trk_t *t, uint8_t *n)
     *n = (uint8_t)nc;
     return d;
 }
+static uint32_t proj_density(const proj_trk_t *t, uint8_t *n) { return pat_density(t->step, t->p[P_SLEN], n); }
 /* .. and, den not 0, each track's picture (proj_density: den[k], its cells n[k]; 0 for an empty slot) */
 static int project_info(uint32_t slot, char *b, uint16_t *len48, uint32_t *den, uint8_t *n)
 {
@@ -1201,6 +1205,25 @@ static uint32_t chain_prepare(void)
         return 2;
     if (!chain_valid(&chain_config) || !chain_config.count)
         return 1;
+#if RONDO_LAYOUT
+    (void)j;
+    for (i = 0; i < chain_config.count; i++)            /* RONDO: the bank's patterns the lanes play */
+        for (k = 0; k < NTRK; k++) {
+            uint32_t s = chain_pat(chain_config.row[i].slot[k]);
+            if (s < NBANK && !bank_has(s))
+                return 3u + s;
+        }
+    (void)used;
+    fm1_irq_off();
+    bank_keep();                                        /* (the current one as it is now) */
+    bank.queue = CHAIN_OFF;
+    fm1_irq_on();
+    chain.config = chain_config;
+    RING_PUBLISH();
+    chain.armed = 1;
+    transport_req = 1;
+    return 0;
+#else
     for (i = 0; i < chain_config.count; i++)            /* the slots the lanes play (not the silent ones) */
         for (k = 0; k < NTRK; k++) {
             uint32_t s = chain_config.row[i].slot[k];
@@ -1240,6 +1263,7 @@ static uint32_t chain_prepare(void)
     chain.armed = 1;
     transport_req = 1;
     return 0;
+#endif
 }
 
 static void settings_poll(void)
@@ -1291,6 +1315,7 @@ static void settings_save(void)
  * give over 200,000 writes, a write a minute for 8 hours a day for over a year, far more with real pauses.
  * RESTORE LAST OFF writes none (and restores none). Never after a crash, a hang or a failed boot (main.c): the music
  * that was playing then could be what crashed. Checked every AS_POLL_MS; the main loop only (never the audio ISR) */
+static uint8_t bank_boot_cur;                  /* RONDO: the autosave's PATTERN BANK pattern + 1 (autosave_boot; 0 none) */
 #define AS_POLL_MS 250u
 #define AS_IDLE_MS 10000u
 #define AS_GAP_MS 60000u
@@ -1333,6 +1358,9 @@ static uint32_t autosave_sig(void)
     h = as_mix(h, song.mch, sizeof song.mch);           /* (1.5.5: MIDI IN TRACK's channels, the project's) */
     h = as_mix(h, &motion, sizeof motion);
     h = as_mix(h, &chain_config, sizeof chain_config);
+#if RONDO_LAYOUT
+    h = as_mix(h, (const void *)&bank.cur, 1);
+#endif
     return as_mix(h, proj_name, sizeof proj_name);
 }
 
@@ -1371,6 +1399,10 @@ static void autosave_poll(void)
     as.last = fm1_ms;
     as.wrote = 1;
     project_capture(&proj_scratch);
+#if RONDO_LAYOUT
+    proj_scratch.rsv = (uint8_t)(bank.cur + 1u);         /* (RONDO: which pattern of the bank the music is) */
+    proj_scratch.sum = proj_sum(&proj_scratch);
+#endif
     proj_wire_gen++;
     as.err = !proj_pack(&proj_wire, &proj_scratch) || st_save(OBJ_AUTOSAVE, &proj_wire, sizeof proj_wire) != 0;
     if (!as.err) {
@@ -1393,6 +1425,9 @@ static int autosave_boot(int allowed)
         n = st_load(OBJ_AUTOSAVE, &proj_wire, sizeof proj_wire);
         if (n > 0 && proj_import(&proj_scratch, &proj_wire, n)) {
             proj_bound(&proj_scratch);
+#if RONDO_LAYOUT
+            bank_boot_cur = proj_scratch.rsv;           /* (RONDO: the bank's current pattern then) */
+#endif
             if (!project_restore_runtime(&proj_scratch)) {
                 ui_message("RESTORED");
                 rc = 1;
@@ -1406,6 +1441,135 @@ static int autosave_boot(int allowed)
     as.t = fm1_ms;
     return rc;
 }
+
+#if RONDO_LAYOUT
+/* RONDO: the PATTERN BANK in the flash (song_bank.c; storage.c OBJ_BANK0 + p): a pattern as {magic, its letter, 1,
+ * the pattern}; cleared: the 8 bytes with 0 for 1. Written by bank_poll, one a pass, only when an erase would not be
+ * heard (autosave_quiet: stopped, no key, no voice) for BANK_IDLE_MS; the current pattern's own changes stored into
+ * its copy then too, at most once every AS_GAP_MS (its latest is in the autosave meanwhile, with which one it is) */
+#define BANK_MAGIC 0x4B4E4252u                 /* "RBNK" */
+#define BANK_IDLE_MS 3000u
+typedef struct { uint32_t magic; uint8_t pat, ver, rsv[2]; chain_pattern_t c; } bank_store_t;
+#if FELUCCA_FLASH
+_Static_assert(sizeof(bank_store_t) <= sizeof(project_store_t) && sizeof(bank_store_t) <= ST_PAYLOAD_MAX,
+               "a bank pattern fits one storage object");
+#endif
+static struct { uint32_t poll, t, cap, retry; uint8_t err, seen; uint32_t writes; } bk __attribute__((section(".pool")));
+/* a pattern read back: inside its fields and ranges (as a project's steps are, proj_bound) */
+static void bank_bound(chain_pattern_t *c)
+{
+    uint32_t k, i, j;
+    for (k = 0; k < NTRK; k++) {
+        proj_steps(c->step[k]);
+        for (i = 0; i < NSTEP; i++) {
+            step_t *s = &c->step[k][i];
+            s->flags &= 3u | SF_RATCH | SF_NUDGE;
+            s->vel &= 127u;
+            if (s->probability >= COND_FIRST + NCOND) s->probability = 0;
+        }
+        for (j = 0; j < 4u; j++)
+            c->timing[k][j] = (int16_t)clamp(c->timing[k][j], TP[P_SLEN + j].min, TP[P_SLEN + j].max);
+        c->qnt[k] = c->qnt[k] != 0;
+    }
+    if (!motion_valid(&c->motion))
+        memset(&c->motion, 0, sizeof c->motion);
+}
+/* power-on, after autosave_boot: the six from the flash; the current one the autosave's (its music is that one's
+ * latest), else the first stored one put on the tracks, else A (the music as it is) */
+static void bank_boot(void)
+{
+    uint32_t p;
+    bank_reset();
+    bank.used = 0;
+#if FELUCCA_FLASH
+    for (p = 0; flash_ok && p < NBANK; p++) {
+        const bank_store_t *b = (const bank_store_t *)(const void *)&proj_wire;
+        int n;
+        proj_wire_gen++;
+        n = st_load(OBJ_BANK0 + p, &proj_wire, sizeof proj_wire);
+        if (n != (int)sizeof *b || b->magic != BANK_MAGIC || b->pat != p || b->ver != 1u)
+            continue;
+        bank_pat[p] = b->c;
+        bank_bound(&bank_pat[p]);
+        bank.used |= (uint8_t)(1u << p);
+    }
+#endif
+    if (bank_boot_cur >= 1u && bank_boot_cur <= NBANK) {
+        bank.cur = (uint8_t)(bank_boot_cur - 1u);
+    } else {
+        for (p = 0; p < NBANK && !bank_has(p); p++)
+            ;
+        bank.cur = (uint8_t)(p < NBANK ? p : 0u);
+        if (p < NBANK) {
+            fm1_irq_off();
+            bank_give(p);
+            fm1_irq_on();
+        }
+    }
+    bank.used |= (uint8_t)(1u << bank.cur);
+    bank.dirty = 0;
+    bk.seen = bank.gen;
+    bk.t = fm1_ms;
+}
+static void bank_dropped(void);                /* ui.c: a switch: the undo copy of the steps it took over goes */
+/* main loop, every pass: a switch seen (the UI told), a pattern queued when the transport stopped (at once), the
+ * flash written when nothing would hear it */
+static void bank_poll(void)
+{
+    uint32_t p;
+    if (bk.seen != bank.gen) {
+        bk.seen = bank.gen;
+        bank_dropped();
+    }
+    if (bank.queue < NBANK) {
+        if (!song.playing && !transport_busy()) {
+            fm1_irq_off();
+            bank_switch(bank.queue);
+            fm1_irq_on();
+        } else
+            bank.clk = (uint8_t)bank_clock();
+    }
+#if FELUCCA_FLASH
+    if (!flash_ok || fm1_ms - bk.poll < AS_POLL_MS)
+        return;
+    bk.poll = fm1_ms;
+    if (!autosave_quiet() || fm1_ms - bk.t < BANK_IDLE_MS || (bk.err && fm1_ms - bk.retry < AS_RETRY_MS)) {
+        if (!autosave_quiet())
+            bk.t = fm1_ms;
+        return;
+    }
+    if (!bank_same(bank.cur) && (!bk.cap || fm1_ms - bk.cap >= AS_GAP_MS)) {
+        bk.cap = fm1_ms ? fm1_ms : 1u;
+        fm1_irq_off();
+        bank_keep();
+        fm1_irq_on();
+    }
+    for (p = 0; p < NBANK && !((bank.dirty >> p) & 1u); p++)
+        ;
+    if (p == NBANK)
+        return;
+    {
+        bank_store_t *b = (bank_store_t *)(void *)&proj_wire;
+        uint32_t len = bank_has(p) ? sizeof *b : 8u;
+        proj_wire_gen++;
+        memset(b, 0, sizeof *b);
+        b->magic = BANK_MAGIC;
+        b->pat = (uint8_t)p;
+        b->ver = (uint8_t)bank_has(p);
+        if (bank_has(p))
+            b->c = bank_pat[p];
+        if (st_save(OBJ_BANK0 + p, b, len) == 0) {
+            bank.dirty &= (uint8_t)~(1u << p);
+            bk.writes++;
+            bk.err = 0;
+        } else {
+            bk.err = 1;                                   /* (a failed write: again AS_RETRY_MS later) */
+            bk.retry = fm1_ms;
+        }
+    }
+#endif
+}
+#endif
 
 #if FELUCCA_FLASH
 _Static_assert(sizeof(project_store_t) <= ST_PAYLOAD_MAX, "project does not fit one flash sector");

@@ -70,11 +70,12 @@ static const layer_t LAYERS[LAYER_N] = {
     {B_REC, LK_SET, FAM_HOME, "[REC] SET", {{KC_KEYS, "RECORDING"}, {KC_OCTDN, "UNDO"}, {KC_REC, "DONE"}}},
 #if RONDO_LAYOUT
     {B_ARP, LK_HOLD, FAM_FX, "[ARP] TRACK FX", {{KC_K14, "RIDE"}, {KC_KEYS, "TRACK"}, {0, 0}}},
+    {B_ENV, LK_HOLD, FAM_HOME, "[ENV] PATTERNS", {{KC_KEYS, "A-F"}, {KC_OCTUP, "COPY"}, {KC_OCTDN, "CLEAR"}}},
 #endif
 };
 static const uint8_t LY_KC[LAYER_N] = {0, KC_FX, KC_GLO, KC_SCL, KC_EDIT, KC_SEQ, KC_REC,
 #if RONDO_LAYOUT
-                                       KC_ARP,
+                                       KC_ARP, KC_ENV,
 #endif
                                        };
 /* SCL's knobs: the key and its chord (cur_page() while the layer edits or draws them: page_over) */
@@ -96,6 +97,8 @@ static const page_t *ly_page(uint32_t l) { return l == LAYER_SCL ? &LY_SCL : l =
 #define LY_CLEAN (LY_INIT + 1u)         /* .. and CLEAN INIT's, the next (1.5.5, #190: F5) */
 typedef char ly_init_fits[LY_CLEAN < 16u ? 1 : -1];   /* (a white key: F3 .. G5) */
 #define layer_seen (favorites.factory[15][31])   /* bit l: layer l opened once (a byte no engine uses) */
+/* .. its bit (RONDO's ENV, the ninth: LAYER_NONE's bit 0, which no layer has) */
+static uint32_t ly_seen(uint32_t l) { return l < 8u ? 1u << l : 1u; }
 static const khint_t FX_LATCH_FOOT[3] = {{KC_KEYS, "ON / OFF"}, {KC_K14, "MACROS"}, {KC_OCTDN, "ALL OFF"}};
 static const khint_t FX_KEY_FOOT[3] = {{KC_PRESETS, "ASSIGN"}, {KC_EDIT, "DEFAULT"}, {KC_K14, "MACROS"}};   /* (a key held) */
 static const khint_t GLO_LOCK_FOOT[3] = {{KC_OCTDN, "UNDO"}, {KC_GLO, "DONE"}, {0, 0}};   /* (locked: PLAY plays, #183) */
@@ -142,9 +145,17 @@ static uint32_t layer_bits(void)
 static uint32_t layer_btn(void) { return LAYERS[ui.layer % LAYER_N].btn; }
 static const char *layer_head(void) { return ui.layer == LAYER_FX && perf_latch_on ? "[FX] LATCH" : LAYERS[ui.layer % LAYER_N].head; }
 static uint32_t layer_open(void) { return ui.ly && (ui.ly_t0 & LY_OPEN) && ly_down(ui.ly) && layer_allowed() ? ui.ly : 0u; }
+/* RONDO: ENV (the PATTERN BANK) takes OCT+ / OCT- as a SET layer does: held with a key, COPY / CLEAR; OCT- alone,
+ * the next pattern forgotten (no octave either way) */
+#if RONDO_LAYOUT
+static int ly_env(uint32_t l) { return l == LAYER_ENV; }
+#else
+static int ly_env(uint32_t l) { (void)l; return 0; }
+#endif
 static int layer_set_open(void)                 /* (FX LATCH: FX is one too, OCT- turns all off) */
 {
-    return layer_open() && (LAYERS[layer_open()].kind == LK_SET || (layer_open() == LAYER_FX && (perf_latch_on || RONDO_LAYOUT)));
+    return layer_open() && (LAYERS[layer_open()].kind == LK_SET || (layer_open() == LAYER_FX && (perf_latch_on || RONDO_LAYOUT)) ||
+                            ly_env(layer_open()));
 }
 static uint32_t layer_held(void) { return ui.ly && ly_down(ui.ly) && layer_allowed(); }
 
@@ -266,8 +277,8 @@ static void layer_lock(uint32_t l, uint32_t now)
 static void layer_opened(uint32_t l)
 {
     uint32_t k;
-    if (!((layer_seen >> l) & 1u)) {
-        layer_seen |= (uint8_t)(1u << l);
+    if (!(layer_seen & ly_seen(l))) {
+        layer_seen |= (uint8_t)ly_seen(l);
         settings_save();                                /* (deferred while playing) */
     }
     lys.l = (uint8_t)l;
@@ -362,7 +373,7 @@ static void layer_tap(uint32_t l)
         acted = page_tap(LAYERS[l].btn);
     }
     lys.dt_hint = 0;
-    if (!((layer_seen >> l) & 1u) && ui.msg_t == m && !name_on() && !ui.confirm && !ui.menu) {
+    if (!(layer_seen & ly_seen(l)) && ui.msg_t == m && !name_on() && !ui.confirm && !ui.menu) {
         ui_say("HOLD [", KC[LY_KC[l]].label);
         str_cpy(ui.msg + str_len(ui.msg), "] QUICK", sizeof ui.msg - str_len(ui.msg));
         ui.msg_t = 90;                                  /* ~1.5 s */
@@ -717,6 +728,17 @@ static void layer_key(uint32_t l, uint32_t k)
         if (!key_black(k) && p < 4u)
             rec_key(p);
 #if RONDO_LAYOUT
+    } else if (l == LAYER_ENV) {                        /* RONDO: F3..D4 the patterns A..F (OCT+ held COPY, OCT- CLEAR) */
+        if (!key_black(k) && p < NBANK) {
+            if ((fm1_in.buttons >> panel.btn[B_OCTUP]) & 1u)
+                bank_copy(p);
+            else if ((fm1_in.buttons >> panel.btn[B_OCTDN]) & 1u) {
+                bank_clear(p);
+                lys.loaded = 1;                         /* (OCT- let go then: no forgetting) */
+            } else
+                bank_key(p);
+            ui.force = 1;
+        }
     } else if (l == LAYER_ARP) {                        /* RONDO: black keys 1..4, the track whose effect KNOB 1..4 ride */
         if (key_black(k) && p < NTRK && p != song.sel) {
             track_select(p);
@@ -787,6 +809,7 @@ static void layer_knob(uint32_t k, int32_t s)
             rec_set(k, (uint32_t)clamp((int32_t)rp_get(RL_F[k]) + s, 0, 2));
     } else if (l == LAYER_SEQ && eu.on) {               /* EUCLID: HITS STEPS ROT (KNOB 4: none) */
         eu_knob(TSEL, k, s);
+    } else if (ly_env(l)) {                             /* RONDO: ENV's cards only show (no knob) */
     } else if (l) {                                     /* the page's knobs, wherever the page is */
         uint8_t h = ui.home, pg = ui.page;
         ui.home = 0;
@@ -819,7 +842,7 @@ static void layer_oct_open(uint32_t pressed)
 {
     uint32_t l = ui.ly, oct = 1u << panel.btn[B_OCTDN] | 1u << panel.btn[B_OCTUP];
     if ((pressed & oct) && l && !(ui.ly_t0 & (LY_OPEN | LY_DEAD)) && layer_held() &&
-        (LAYERS[l].kind == LK_SET || (l == LAYER_FX && (perf_latch_on || RONDO_LAYOUT)))) {
+        (LAYERS[l].kind == LK_SET || (l == LAYER_FX && (perf_latch_on || RONDO_LAYOUT)) || ly_env(l))) {
         ui.ly_t0 |= LY_OPEN | LY_COMBO;
         layer_opened(l);
     }
@@ -839,7 +862,11 @@ static uint32_t layer_oct(uint32_t pressed, uint32_t oct)
         mine = 0;
     }
     if (mine & 1u) {                                    /* OCT-: back to when it opened */
-        if (lys.l == LAYER_FX) {                        /* (FX LATCH) every effect and macro off */
+        if (ly_env(lys.l)) {                            /* RONDO: ENV, OCT- tapped (no key cleared): the next one goes */
+            if (!lys.loaded && !bank_unqueue())
+                ui_message("NOTHING QUEUED");
+            lys.loaded = 0;
+        } else if (lys.l == LAYER_FX) {                        /* (FX LATCH) every effect and macro off */
             perf_latched = 0;
             perf_k[0] = perf_k[1] = perf_k[2] = perf_k[3] = 0;
 #if RONDO_LAYOUT
@@ -930,6 +957,11 @@ static uint32_t layer_leds(uint32_t *br)
         } else if (l == LAYER_SEQ) {                    /* the tools breathe (not while a song plays); DRUM: the lane */
             on = (b && p < NLANE && drum_track(TSEL) && p == ui.lane) || (!b && p == TL_EUCLID && eu.on);   /* lit, the */
             can = b ? p < NLANE && drum_track(TSEL) : tl_cell(TSEL, p) && !chain_busy();
+#if RONDO_LAYOUT
+        } else if (l == LAYER_ENV && !b && p < NBANK) { /* RONDO: the current pattern lit, the next one flashing, */
+            on = p == bank.cur || (p == bank.queue && (fm1_ms / 125u) % 2u);   /* the stored ones breathe */
+            can = bank_has(p) && !chain_busy();
+#endif
         } else if (l == LAYER_REC && !b && p < 4u) {    /* a setting on (LEVEL: the click on) lit, the rest breathe; */
             on = p == 1u ? rp_get(RP_CLICK) != 0u : p == 2u ? rp_get(RP_COUNTIN) != 0u :   /* CLEAR: something to */
                  p == 3u && rp_get(RP_CLICK) != 0u;    /* clear, not while a song plays */
@@ -1248,6 +1280,19 @@ static void layer_cards(uint32_t l)
     if (l == LAYER_FX) {                                /* RONDO: the four of the pool (FX > MASTER) */
         for (c = 0; c < 4u; c++)
             mk_card(c, mk_eff(c));
+    } else if (l == LAYER_ENV) {                        /* RONDO: NOW, NEXT, the stored ones, the flash (no knob) */
+        uint32_t n = 0;
+        for (c = 0; c < NBANK; c++)
+            n += bank_has(c);
+        val[0] = (char)('A' + bank.cur % NBANK);
+        val[1] = 0;
+        draw_column(0, "NOW", val, "", T_THEME, -1, ICON_X_PLAY);
+        if (bank.queue < NBANK) val[0] = (char)('A' + bank.queue);
+        else str_cpy(val, "--", sizeof val);
+        draw_column(1, "NEXT", val, "", bank.queue < NBANK ? T_THEME : T_DIM, -1, ICON_X_PATTERN);
+        fmt_int(val, (int32_t)n);
+        draw_column(2, "STORED", val, "/6", T_THEME, (int32_t)(n * 1000u / NBANK), ICON_X_SONG);
+        draw_column(3, "FLASH", bank.dirty ? "LATER" : "SAVED", "", bank.dirty ? T_DIM : T_THEME, -1, ICON_SAVE);
     } else
 #endif
     if (l == LAYER_FX) {                                /* FILTER CRUSH THROW DEPTH */
@@ -1333,6 +1378,63 @@ static void layer_arp(void)
 }
 #endif
 
+#if RONDO_LAYOUT
+/* RONDO: ENV held. F3..D4 as six cells, A..F, three a row: the key's note, the pattern's letter, its four tracks'
+ * pictures (as SONG draws them); the current one selected, the next one flashing, an empty key EMPTY; under them
+ * a line of what happens */
+#define LE_X(c) (6 + 77 * (int32_t)(c))                  /* three cells a row, 74 px wide, 3 px apart: x 6 .. 234 */
+#define LE_W 74
+static void layer_env(void)
+{
+    static const char *const NOTE[NBANK] = {"F3", "G3", "A3", "B3", "C4", "D4"};
+    uint32_t p, k;
+    char b[32], a[2] = {0, 0}, c[2] = {0, 0};
+    for (p = 0; p < NBANK; p++) {
+        int32_t x = LE_X(p % 3u), y = 4 + 46 * (int32_t)(p / 3u), lx = x + 6, lw = LE_W - 12;
+        uint32_t st = p == bank.cur ? LS_SEL : p == bank.queue ? ((fm1_ms / 250u) % 2u ? LS_WAIT : LS_OFF) :
+                      bank_has(p) && !chain_busy() ? LS_OFF : LS_DIM;
+        uint16_t ink, fill = lc_box(x, y, LE_W, LC_H, lc_fill(st, &ink));
+        uint16_t idle = fill == T_RAISE || fill == T_SURF;
+        a[0] = (char)('A' + p);
+        cv_text_on(x + 5, y + 3, &AF_S, NOTE[p], idle ? T_MID : ink, fill);
+        cv_text_r(x + LE_W - 5, y + 2, &AF_M, a, ink, fill);
+        if (!bank_has(p)) {
+            GFX_HOOK_ALIGN(x, 0, x + LE_W, 0, AL_H | AL_PASS, "pattern cell EMPTY centred across");
+            cv_text_in(x, y + 26 - AF_S_CAP_Y, LE_W, &AF_S, "EMPTY", T_DIM, fill);
+            continue;
+        }
+        for (k = 0; k < NTRK; k++) {                     /* the four tracks: a bar per cell of the pattern */
+            uint32_t den, i;
+            uint8_t n;
+            int32_t ty = y + 21 + 5 * (int32_t)k;
+            bank_info(p, k, &den, &n);
+            for (i = 0; i < n; i++) {
+                int32_t x0 = lx + (int32_t)(i * (uint32_t)lw / n), x1 = lx + (int32_t)((i + 1u) * (uint32_t)lw / n) - 1;
+                uint32_t h = (den >> (2u * i)) & 3u;
+                cv_rect(x0, ty, x1 > x0 ? x1 - x0 : 1, 3, h ? ux_mix(fill, ink, 30 + 23 * (int32_t)h) : ux_mix(fill, ink, 12));
+            }
+        }
+    }
+    a[0] = (char)('A' + bank.cur % NBANK);
+    if (chain_busy())
+        str_cpy(b, "SONG PLAYING: STOP TO SWITCH", sizeof b);
+    else if (bank.queue < NBANK) {
+        c[0] = (char)('A' + bank.queue);
+        str_cpy(b, a, sizeof b);
+        str_cpy(b + str_len(b), " NOW, ", sizeof b - str_len(b));
+        str_cpy(b + str_len(b), c, sizeof b - str_len(b));
+        str_cpy(b + str_len(b), " AT ITS END", sizeof b - str_len(b));
+    } else {
+        str_cpy(b, a, sizeof b);
+        str_cpy(b + str_len(b), song.playing ? " NOW. A KEY: NEXT" : " NOW. A KEY: GO", sizeof b - str_len(b));
+    }
+    GFX_HOOK_ALIGN(3, 96, 237, 118, AL_HV, "pattern bank status centred");
+    cv_text_in(3, 96 + CAP_IN(S, 22), 234, &AF_S, b, T_MID, T_SURF);
+}
+#undef LE_X
+#undef LE_W
+#endif
+
 /* RONDO: SEQ held, SELECT turned: the four tracks, the one picked raised; SEQ let go opens its tracker */
 static void layer_pick(void)
 {
@@ -1387,6 +1489,16 @@ static void draw_layer(void)
         for (k = 0; k < 4u; k++)
             sig = sig * 131u + (uint32_t)TSEL->p[P_IA + k];
         sig += (uint32_t)TSEL->p[P_IMIX] * 65537u;
+    } else if (l == LAYER_ENV) {
+        uint32_t p, k, den;
+        uint8_t n;
+        sig += bank.cur * 977u + bank.queue * 7919u + bank.used * 131u + bank.dirty * 65599u + bank.gen * 31u +
+               (uint32_t)chain_busy() * 3u + (uint32_t)song.playing * 5u;
+        if (bank.queue < NBANK)
+            sig += (fm1_ms / 250u) % 2u * 1000003u;      /* (the next one flashing) */
+        for (p = 0; p < NBANK; p++)
+            for (k = 0; k < NTRK; k++)
+                sig = sig * 33u + bank_info(p, k, &den, &n) + den * 7u + n;
     }
 #endif
     else if (l == LAYER_SEQ)
@@ -1415,6 +1527,8 @@ static void draw_layer(void)
 #if RONDO_LAYOUT
         else if (l == LAYER_ARP)
             layer_arp();
+        else if (l == LAYER_ENV)
+            layer_env();
 #endif
         else
             layer_edit();

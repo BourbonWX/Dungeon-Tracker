@@ -4,7 +4,7 @@
 # build/rondo_demo; the TRACKER and the SEQ + SELECT track picker (tests/tracker_test.c);
 # EDIT > DICE (tests/dice_test.c, with demos of eight rolls per role); the HOME dungeon (tests/dungeon_test.c);
 # the live effects: FILTR DUCK REPT, ARP held, the master knobs (tests/livefx_test.c);
-# the TRACKER's commands SPEED LOOP PITCH (tests/cmd_test.c); SEQ > VARY (tests/vary_test.c). Run from the repo root after the generate step (build/gen):
+# the TRACKER's commands SPEED LOOP PITCH (tests/cmd_test.c); SEQ > VARY (tests/vary_test.c); the PATTERN BANK and SONG on it (tests/bank_test.c). Run from the repo root after the generate step (build/gen):
 #   sh tests/run_rondo.sh            (NOCOST=1 skips the timing comparison)
 set -e
 cd "$(dirname "$0")/.."
@@ -24,3 +24,8 @@ ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/cmd_test tests
 build/host/cmd_test
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/vary_test tests/vary_test.c -lm
 build/host/vary_test
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/bank_test tests/bank_test.c -lm
+build/host/bank_test
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/persistence_test tests/persistence_test.c -lm
+build/host/persistence_test > build/host/persistence.txt || { grep FAIL build/host/persistence.txt; exit 1; }
+tail -1 build/host/persistence.txt                    # (the flash: the PATTERN BANK's pairs too)

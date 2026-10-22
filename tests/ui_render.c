@@ -723,6 +723,23 @@ static void song_steps(uint32_t k)
         }
 }
 /* SONG's sources: project slot k saved with track 1's LEN steps of DIV (N_DIV's order), the patterns song_steps(k) */
+/* RONDO: the PATTERN BANK with A B C E stored (pictures of song_steps 0..3, A 16 steps, B 32, C 16, E 8), D F empty;
+ * A on the tracks */
+static void bank_fill(void)
+{
+    static const uint8_t P[4] = {0, 1, 2, 4};
+    static const int16_t L[4] = {16, 32, 16, 8};
+    uint32_t i;
+    for (i = 0; i < 4u; i++) {
+        song_steps(i);
+        trk[0].p[P_SLEN] = L[i];
+        trk[1].p[P_SLEN] = L[i];
+        bank_take(P[i]);
+    }
+    bank_give(0);
+    bank.cur = 0;
+    bank.used = 1u | 2u | 4u | 16u;
+}
 static void song_src(uint32_t k, int16_t len, int16_t div, const char *name)
 {
     song_steps(k);
@@ -767,6 +784,7 @@ enum { S_HOME, S_HOME_IDLE, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TURN, S_MESSAGE,
        S_MENU_TUNE, S_MENU_INFO, S_HOME_TRACKS, S_HOME_TRACKS_STOPPED, S_HOME_TRACKS_HOT, S_MENU_HOME, S_HOME_LEVELS, S_HELP_HOME, S_HELP_USER, S_HELP_GRID, S_HELP_LFO, S_HELP_GLO, S_HELP_SEQ, S_MENU_HELP,
        S_INSERT_CRUSH, S_INSERT_FOLD, S_INSERT_PHASER, S_INSERT_OFF, S_INSERT_MIX, S_INSERT_FILTR, S_INSERT_DUCK, S_INSERT_REPT,
        S_LAYER_ARP, S_LAYER_ARP_OFF, S_MFX, S_FX_MASTER, S_TRACKER_CMD, S_AUTO_CMD, S_VARY, S_VARY_KIT,
+       S_LAYER_ENV, S_LAYER_ENV_PLAY, S_LAYER_ENV_SONG, S_SONG_BANK, S_SONG_BANK_PLAY, S_HEAD_BANK,
        S_ENV_SYNC, S_ENV_DEST_SYNC, S_FILTER,
        S_LEARN_WAIT, S_LEARN_PICK, S_LEARN_SET, S_LEARN_LONG, S_GLO_LEARN, S_MENU_LCLEAR, S_MENU_LCLEAR_NONE,
        S_DLY_DOT, S_DLY_DOT16, S_FX_THROW,
@@ -798,6 +816,7 @@ static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_fallen", 
     "menu_tune", "menu_info", "home_tracks", "home_tracks_stopped", "home_tracks_hot", "menu_home", "home_levels", "help_home", "help_user", "help_grid", "help_lfo", "layer_glo_help", "layer_seq_help", "menu_help",
     "insert_crush", "insert_fold", "insert_phaser", "insert_off", "insert_mix", "insert_filtr", "insert_duck", "insert_rept",
     "layer_arp", "layer_arp_off", "master", "fx_master", "tracker_cmd", "auto_cmd", "vary", "vary_kit",
+    "layer_env", "layer_env_play", "layer_env_song", "song_bank", "song_bank_play", "head_bank",
     "env_sync", "env_dest_sync", "filter",
     "learn_wait", "learn_pick", "learn_set", "learn_long", "layer_glo_learn", "menu_learn_clear", "menu_learn_clear_none",
     "dly_dotted", "dly_dotted_16", "perform_throw",
@@ -991,6 +1010,7 @@ static void setup(int s)
     dg_game = 0;                                     /* (the game off, as at power-on: HOME's corridor alone) */
     mk_reset();                                      /* (RONDO: the master knobs at rest, the first four) */
     memset(&vary, 0, sizeof vary);                   /* (RONDO: VARY from scratch, the rolls the same each run) */
+    bank_reset();                                    /* (RONDO: the PATTERN BANK empty, A current) */
     vary.rng = 12345u;
     song.g[G_ENGGO] = 0;
     switch (s) {
@@ -1210,6 +1230,36 @@ static void setup(int s)
         track_select(0); go_page(GR_VARY); vary.wild[0] = 91; vary_roll(); vary_roll(); vary_hist(1); vary.anim = 0;
         break;
     case S_LAYER_ARP_OFF: go_home(); track_select(3); trk[3].p[P_ITYPE] = 0; ui.layer = LAYER_ARP; break;
+    /* RONDO: ENV held, the PATTERN BANK: stopped (A current, B C E stored, D F empty; one not in the flash yet); playing
+     * with C queued (flashing, "A>C" in the header); a song playing (the keys say so); SONG on the bank: sections of A
+     * B E and F (empty: EMPTY KEY), stopped and playing; HOME with C queued */
+    case S_LAYER_ENV:
+        song.playing = 0; bank_fill(); bank.dirty = 4u; go_home(); ui.layer = LAYER_ENV; ui.msg_t = 0;
+        break;
+    case S_LAYER_ENV_PLAY: case S_HEAD_BANK:
+        bank_fill(); seq_start(); song.playing = 1; events_block(32); bank.queue = 2; fm1_ms = 250u * 3u;
+        go_home(); ui.layer = s == S_LAYER_ENV_PLAY ? LAYER_ENV : 0; ui.msg_t = 0;
+        break;
+    case S_LAYER_ENV_SONG:
+    case S_SONG_BANK: case S_SONG_BANK_PLAY: {
+        static const uint8_t R[4][5] = {{0, 0, 0, 0, 1}, {1, 1, 0, 1, 2}, {5, 5, 4, 0, 1}, {0, 6, 4, 4, 1}};
+        uint32_t k;
+        song.playing = 0; bank_fill();
+        chain_config.count = 4;
+        for (k = 0; k < 4u; k++) chain_config.row[k] = (chain_row_t){{R[k][0], R[k][1], R[k][2], R[k][3]}, R[k][4]};
+        ui.song_row = 3; ui.song_trk = 1;
+        go_page(GR_SONG); ui.msg_t = 0; sg_fresh();
+        if (s != S_SONG_BANK) {
+            chain_config.row[3].slot[1] = 0;            /* (F empty: no song) */
+            chain_prepare(); events_block(32);
+            for (k = 0; k < 4000u && chain.running && chain.row < 1u; k++) events_block(div_samples(2));
+            for (k = 0; k < 6u; k++) events_block(div_samples(2));
+            chain_config.row[3].slot[1] = 6;
+        }
+        if (s == S_LAYER_ENV_SONG) { go_home(); ui.layer = LAYER_ENV; }
+        ui.msg_t = 0;
+        break;
+    }
     case S_MFX:
         song.g[G_ENGGO] = 0; mk_assign(0, MK_ISO); mk_assign(1, MK_WASH); mk_assign(2, MK_PUMP); mk_assign(3, MK_RIDE);
         mk_x[0] = -60; mk_x[2] = 45; go_page(GR_MFX);

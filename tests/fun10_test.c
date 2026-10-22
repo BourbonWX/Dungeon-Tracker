@@ -545,7 +545,7 @@ static int formats(void)
         ok = proj_pack(&st, &c) && proj_import(&d, &st, sizeof st) && !memcmp(&c, &d, sizeof c) && st.raw[at] == CHAIN_ROWS &&
              st.raw[at + 4u] == 0 && st.raw[at + 5u] == 1 && st.raw[at + 6u] == 2 && st.raw[at + 7u] == 0 && st.raw[at + 8u] == 1 &&
              st.raw[at + 4u + 5u * 15u + 4u] == 16;
-        c.chain.row[3].slot[2] = 5;                   /* past "-": refused (pack and load) */
+        c.chain.row[3].slot[2] = CHAIN_MAXV + 1u;     /* past "-" (RONDO: past F): refused (pack and load) */
         c.sum = proj_sum(&c);
         ok &= !proj_pack(&st, &c);
         bad += check("FUN10 round trip: 16 sections, a slot per track (A..D, -), the bytes in place", ok);

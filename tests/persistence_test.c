@@ -27,6 +27,9 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #include "../firmware/src/ui.c"
 #include "../firmware/src/menu_items.c"
 static void panel_setup(void) {}
+#if RONDO_LAYOUT
+static void dg_game_set(uint32_t on) { (void)on; }   /* (RONDO: the dungeon is ui_graph.c's, not linked here) */
+#endif
 
 static uint8_t nor[0x100000], flash_ok = 1;
 static int erase_error, fail_after = -1;
@@ -422,6 +425,83 @@ static int autosave_test(void)
     return bad;
 }
 
+#if RONDO_LAYOUT
+/* ---- RONDO: the PATTERN BANK in the flash (project.c bank_poll / bank_boot; storage.c OBJ_BANK0): six A/B pairs in the
+ * top 48 KiB of user sample slot 3, written stopped and idle, read back at power-on; slot 3 keeps 32 KiB ---- */
+static void bk_run(uint32_t ms)
+{
+    uint32_t end = fm1_ms + ms;
+    while ((int32_t)(end - fm1_ms) > 0) {
+        fm1_ms += 50u;
+        bank_poll();
+    }
+}
+static int bank_flash_test(void)
+{
+    int bad = 0, ok;
+    uint32_t w, k;
+    as_power_on();
+    bank_reset();
+    memset(&bk, 0, sizeof bk);
+    bad += check("bank: the six pairs in 0xD0000..0xDBFFF, above USR3's 32 KiB, under the user presets",
+                 st_sector(OBJ_BANK0, 0) == 0xD0000u && st_sector(OBJ_BANK0 + 5u, 1) + ST_SECTOR == 0xDC000u &&
+                 0xA0000u + 2u * SMP_USER_SIZE + smp_user_size(2) == 0xD0000u && smp_user_size(0) == SMP_USER_SIZE &&
+                 st_sector(OBJ_UPRESET0, 0) == 0xDC000u);
+    trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
+    trk[0].p[P_SLEN] = 16;
+    bank_take(0);
+    trk[0].step[0].note[0] = 67;
+    trk[1].p[P_SLEN] = 12;
+    bank_take(2);                                        /* C */
+    bank.dirty = 1u | 4u;
+    bank.cur = 2;
+    song.playing = 1;
+    w = erases;
+    bk_run(10000);
+    bad += check("bank: nothing written while playing", erases == w && bank.dirty == 5u);
+    song.playing = 0;
+    bk_run(1000);
+    bad += check("bank: not at once after STOP (idle first)", erases == w);
+    bk_run(4000);
+    bad += check("bank: idle: A and C written, one erase each", !bank.dirty && bk.writes == 2u && erases == w + 2u);
+    trk[0].step[0].note[0] = 70;                         /* C edited, as the current one */
+    bk_run(5000);
+    bad += check("bank: the current one's own edits stored after the idle wait, once", !bank.dirty && bk.writes == 3u &&
+                 bank_pat[2].step[0][0].note[0] == 70);
+    trk[0].step[0].note[0] = 71;
+    bk_run(5000);
+    bad += check("  .. and not again within a minute (the autosave has it)", bk.writes == 3u);
+    /* power-on: from the flash */
+    memset(bank_pat, 0x5A, sizeof bank_pat);
+    bank_boot_cur = 0;
+    trk[0].step[0].note[0] = 1;
+    bank_boot();
+    ok = bank.used == 5u && bank.cur == 0u && bank_pat[2].step[0][0].note[0] == 70 && bank_pat[2].timing[1][0] == 12 &&
+         trk[0].step[0].note[0] == 60;
+    bad += check("bank: power-on, no autosave's: A and C back, A (the first) on the tracks", ok);
+    bank_boot_cur = 3;                                   /* the autosave: C */
+    trk[0].step[0].note[0] = 99;
+    bank_boot();
+    bad += check("  the autosave's C: C current, the tracks as restored", bank.cur == 2u && trk[0].step[0].note[0] == 99 &&
+                 bank.used == 5u);
+    bank.used &= (uint8_t)~1u;                           /* A cleared */
+    bank.dirty = 1u;
+    bk_run(4000);
+    bank_boot_cur = 3;
+    bank_boot();
+    bad += check("bank: a cleared pattern stays cleared after power-on", bank.used == 4u && bank.cur == 2u);
+    for (k = 0; k < NBANK; k++)
+        nor[st_sector(OBJ_BANK0 + k, 0) + ST_PAYLOAD_OFF + 40u] ^= 0x22u;
+    for (k = 0; k < NBANK; k++)
+        nor[st_sector(OBJ_BANK0 + k, 1) + ST_PAYLOAD_OFF + 40u] ^= 0x22u;
+    bank_boot_cur = 0;
+    bank_boot();
+    bad += check("bank: damaged copies ignored (an empty bank, A current)", bank.used == 1u && bank.cur == 0u);
+    bank_boot_cur = 0;
+    return bad;
+}
+#endif
+
 int main(void)
 {
     int bad = 0, ok;
@@ -663,10 +743,12 @@ int main(void)
                 }
         }
     }
+#if !RONDO_LAYOUT                                        /* (RONDO: a song plays the PATTERN BANK, bank_flash_test) */
     chain_config.count = 1;
     chain_config.row[0] = chain_row_of(3, 1);
     bad += check("SONG sources use the same step bounds", chain_prepare() == 0 &&
-                  !memcmp(&chain.source[3].step[0][0], &trk[0].step[0], sizeof(step_t)));
+                  !memcmp(&chain_src(3)->step[0][0], &trk[0].step[0], sizeof(step_t)));
+#endif
     seq_stop();
     transport_req = 0;
     memset(&r, 0, sizeof r);
@@ -725,6 +807,9 @@ int main(void)
                   irq_races == 3u && song.playing && !transport_req && persist_pending && erases == before);
     bad += mig_test();
     bad += autosave_test();
+#if RONDO_LAYOUT
+    bad += bank_flash_test();
+#endif
     printf("%s\n", bad ? "PERSISTENCE TEST FAILED" : "persistence test passed");
     return bad != 0;
 }

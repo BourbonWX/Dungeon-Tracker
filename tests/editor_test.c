@@ -45,6 +45,9 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #include "../firmware/src/ui.c"
 #include "../firmware/src/menu_items.c"
 static void panel_setup(void) {}
+#if RONDO_LAYOUT
+static void dg_game_set(uint32_t on) { (void)on; }   /* (RONDO: the dungeon is ui_graph.c's, not linked here) */
+#endif
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
 

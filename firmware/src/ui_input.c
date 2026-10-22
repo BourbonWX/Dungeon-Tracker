@@ -567,7 +567,7 @@ static void song_keys(uint32_t notes)
 static uint32_t song_leds(void)
 {
     uint32_t k, s;
-    if (ui.song_row >= chain_config.count || (s = chain_config.row[ui.song_row].slot[ui.song_trk % NTRK]) >= 4u)
+    if (ui.song_row >= chain_config.count || chain_pat(s = chain_config.row[ui.song_row].slot[ui.song_trk % NTRK]) == CHAIN_OFF)
         return 0;
     for (k = 0; k < 27u; k++)
         if (song_key(k) == (int32_t)s)
@@ -997,7 +997,8 @@ static void edit_param(uint32_t slot, int32_t steps)
         }
         r = &chain_config.row[ui.song_row];
         if (slot == 2u)
-            r->slot[ui.song_trk % NTRK] = (uint8_t)clamp((int32_t)r->slot[ui.song_trk % NTRK] + steps, 0, CHAIN_SILENT);
+            r->slot[ui.song_trk % NTRK] = (uint8_t)chain_val((uint32_t)clamp((int32_t)chain_ord(r->slot[ui.song_trk % NTRK]) + steps,
+                                                                            0, CHAIN_PATS));   /* (A .. D / F, then -) */
         else
             r->repeat = (uint8_t)clamp((int32_t)r->repeat + steps, 1, 16);
         return;

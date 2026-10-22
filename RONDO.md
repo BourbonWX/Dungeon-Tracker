@@ -282,6 +282,47 @@ under the dice shows the first 32 steps, the ones the dice changed in the accent
 HITS and SHIFT, a kit's kick never changes drum, and the steps' locks and commands stay where they are. Not while a
 SONG plays.
 
+## Songs: the PATTERN BANK (ENV held)
+
+Six patterns live in the white keys **F3 G3 A3 B3 C4 D4**, as **A B C D E F**: an intro, a verse, a chorus, a
+bridge, a fill and an outro, or whatever you like. A pattern is all four tracks' steps, their LEN DIV SWING GATE and
+QUANTIZE, and their automation, locks and tracker commands. The sounds are shared: every pattern plays the tracks'
+current instruments (as Felucca's songs always did).
+
+Hold **ENV** for the PATTERNS map (a tap still opens the ENV page):
+
+| With ENV held | What it does |
+|---|---|
+| a key with a pattern | Stopped: there at once. Playing: it's **next**, and starts when this pattern ends, every track from its step 1 together. |
+| the next one's key again, or the current one's | Back to staying where you are. |
+| an empty key | The current pattern is copied into it, and you carry on in the new key (finish the verse in A, press B, and B starts as a copy of A). |
+| OCT+ held + a key | Copy the current pattern into that key (you stay where you are). |
+| OCT− held + a key | Clear that key (not the one playing). |
+| OCT− tapped alone | Forget the next pattern. |
+
+**Edits stay in their key.** Whatever you change while a pattern is current (steps, LEN, automation, VARY rolls,
+loading a project) belongs to that pattern. Switching away keeps it there, and switching back brings it back.
+
+**The end of a pattern** is the end of its longest track's loop: a 2-bar bass under a 1-bar beat switches after
+the 2 bars. The switch is on time to the sample, and nothing is skipped.
+
+The map shows each key's four tracks in miniature. The current pattern is selected and the next one flashes, and
+the cards show NOW, NEXT, how many are stored, and whether they're all in the flash yet. The header shows the letter
+too: `A`, or `A>C` with C next. The LEDs: the current key lit, the next one flashing, the stored ones breathing.
+
+**SONG (GLO > SONG)** now arranges the bank: a section's tracks each name a pattern A–F (or "-" for silent), and
+F3..D4 set the selected cell, as with ENV. KNOB 3 turns A..F then "-". PLAY SONG stores the current pattern first and
+refuses a section on an empty key ("PATTERN F EMPTY"). A section lasts its longest track's loop times REPS. While
+a song plays, the ENV keys say SONG PLAYING.
+
+**Saving.** The six patterns have their own flash, written while stopped and idle for 3 s (an erase silences the
+audio for ~40 ms, so never while anything sounds). The pattern you're on is also in the autosave, with which key it
+is, so a power cycle puts you back where you were. Its key's own copy is refreshed at most once a minute.
+
+**Where the flash came from.** Every sector of the FM-1 was already taken, so the bank uses the top 48 KiB of the
+third user sample slot. **USR3 now holds samples up to 32 KiB** (USR1 and USR2 stay at 80 KiB). A larger upload to
+USR3 is refused, and a USR3 sample over 32 KiB from before shows as empty (re-upload a shorter one).
+
 ## Differences from Felucca, in short
 
 * SEQ's STEP and DETAIL pages (piano roll, drum grid, per-step detail lanes) are replaced by the TRACKER; AUTOMATION
@@ -299,6 +340,10 @@ SONG plays.
   they stay put when FX is let go; FX + OCT− resets them (it no longer shifts the octave). Felucca's tests that expect
   the snap back, the octave shift or ARP's hold fail in a RONDO build; with `RONDO_LAYOUT=0` the three INSERTs, the
   pool and the layer are left out and those tests pass.
+* SONG plays the PATTERN BANK A–F instead of the four project slots A–D (a section's byte keeps 0–3 for A–D and 4
+  for "-", and takes 5 and 6 for E and F), with SONG's keys on F3..D4. ENV held is the bank's layer. User sample slot 3
+  keeps 32 KiB; its top 48 KiB are the bank's. Felucca's tests of songs from project slots, of the header's slot
+  letter and of slot 5 being refused fail in a RONDO build.
 * The splash and version read `RONDO R0.1`.
 * `RONDO_LAYOUT=0` builds Felucca's shared 8-voice budget and power-on sounds (used to run Felucca's own tests).
 * The voice counts are `TRK_CAP` in `firmware/src/core.h`; change them there if you want another layout.
@@ -327,7 +372,8 @@ git submodule update --init                             # firmware/engines (Felu
 ### Tests
 
 ```sh
-sh tests/run_rondo.sh          # RONDO's checks (engines, tracker, commands, vary, dice, dungeon, live effects), demo WAVs
+sh tests/run_rondo.sh          # RONDO's checks (engines, tracker, commands, vary, dice, dungeon, live effects,
+                               # the pattern bank and its flash), demo WAVs
 ```
 
 `tests/run_tests.sh` is Felucca's full suite; build it with `CC="cc -DRONDO_LAYOUT=0"` to check Felucca's behaviour

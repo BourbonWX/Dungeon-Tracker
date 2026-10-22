@@ -170,7 +170,7 @@ static int fun7_89(void)
     chain_config.count = 1; chain_config.row[0] = chain_row_of(2, 1);
     ok = chain_prepare() == 0;
     bad += check("  SONG: an 89-parameter slot's motion plays at today's ids (E0 at P_E0)", ok &&
-        chain.source[2].motion.count == 3u && chain.source[2].motion.event[1].param == P_E0);
+        chain_src(2)->motion.count == 3u && chain_src(2)->motion.event[1].param == P_E0);
     seq_stop(); chain_config.count = 0; chain.armed = 0;
     m.event[1].param = 82;                                          /* (any id P_E0 .. P_E7 of then moves up) */
     pack_fun7_89(&old, &before, &m);
@@ -196,7 +196,7 @@ static int loads_and_song(void)
     undo_swap(); bad += check("sound redo restores the loaded motion state", motion_count(t) == 1u && t->eng_req == e1);
     undo_swap(); project_save(0);
     t->p[P_REV] = 43; t->step[0].note[0] = 72; chain_config.count = 1; chain_config.row[0] = chain_row_of(0, 1);
-    bad += check("song preparation imports saved motion alongside steps", chain_prepare() == 0 && chain.source[0].motion.count == 2u);
+    bad += check("song preparation imports saved motion alongside steps", chain_prepare() == 0 && chain_src(0)->motion.count == 2u);
     seq_start(); seq_tick(t, CTL);
     bad += check("song plays saved automation with current instruments", chain.running && t->p[P_REV] == 100 && t->step[0].note[0] == 72);
     seq_stop(); bad += check("song stop restores current base and editable pattern", t->p[P_REV] == 43 && t->step[0].note[0] == 72);
@@ -589,7 +589,7 @@ static int lock_project(void)
     }
     chain_config.count = 1; chain_config.row[0] = chain_row_of(2, 1);
     motion_clear(t); t->p[P_REV] = 20;
-    bad += check("SONG: a slot's locks come with its motion", chain_prepare() == 0 && chain.source[2].motion.count == 3u);
+    bad += check("SONG: a slot's locks come with its motion", chain_prepare() == 0 && chain_src(2)->motion.count == 3u);
     seq_start(); seq_tick(t, CTL);
     lock_next(t); lock_next(t);
     ok = chain.running && t->seq_idx == 2u && t->p[P_REV] == 101;

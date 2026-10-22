@@ -269,6 +269,15 @@ _Static_assert(sizeof(motion_store_t) == 388u, "motion disk layout (FUN10)");
  * nothing there) and its repeats (1..16). Up to 1.1 a row was {slot, repeat}, all four tracks on that slot
  * (chain_v9_t, FUN6..FUN9): it loads as a section with the four on it (song_chain.c chain_from_v9) */
 #define CHAIN_SILENT 4u
+/* RONDO: a section plays the PATTERN BANK's A..F (song_bank.c), not the four project slots. Its byte keeps FUN10's
+ * meaning for A..D and "-" (0..3, 4) and takes 5, 6 for E, F (a Felucca build reads those as not valid: no song) */
+#define CHAIN_PATS (RONDO_LAYOUT ? 6u : 4u)       /* the patterns a section can name */
+#define CHAIN_OFF 0xFFu
+#define CHAIN_MAXV (RONDO_LAYOUT ? 6u : CHAIN_SILENT)   /* the largest byte a section's track holds */
+static inline uint32_t chain_pat(uint32_t v) { return v < 4u ? v : RONDO_LAYOUT && v >= 5u && v <= 6u ? v - 1u : CHAIN_OFF; }
+static inline uint32_t chain_val(uint32_t p) { return p < 4u ? p : p < CHAIN_PATS ? p + 1u : CHAIN_SILENT; }
+/* the order SONG's KNOB 3 turns through: A .. (D / F), then "-" */
+static inline uint32_t chain_ord(uint32_t v) { return chain_pat(v) != CHAIN_OFF ? chain_pat(v) : CHAIN_PATS; }
 typedef struct { uint8_t slot[NTRK], repeat; } chain_row_t;
 typedef struct {
     uint8_t count, rsv[3];

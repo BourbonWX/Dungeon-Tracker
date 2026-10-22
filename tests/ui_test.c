@@ -175,6 +175,9 @@ static void ui_power_on(void)
     memset(midi_lit_ms, 0, sizeof midi_lit_ms); midi_seen = 0;   /* (1.5.5: no MIDI IN light) */
     memset(&chain, 0, sizeof chain);
     chain_defaults(&chain_config);
+#if RONDO_LAYOUT
+    bank_reset();                                 /* (RONDO: the PATTERN BANK empty, A current) */
+#endif
     memset(&ui, 0, sizeof ui);
     page_over = 0;                                /* (no layer's knobs; roll_settle's test page gone) */
     cin_left = cin_total = 0;                     /* (no count-in) */
@@ -255,6 +258,9 @@ static void frame(void)
     host_ticks += 16000u;
     fm1_ms += 16u;
     ui_input();
+#if RONDO_LAYOUT
+    bank_poll();                                  /* (main.c's loop: RONDO's PATTERN BANK) */
+#endif
     ui_draw();
 }
 static void press(uint32_t label)                 /* a tap: down, a frame, up, a frame */

@@ -211,6 +211,9 @@ static void fm1_main(void)
         settings_save();
     }
     autosave_boot(boot_clean);                /* (1.2) the last session's music, under the splash */
+#if RONDO_LAYOUT
+    bank_boot();                              /* RONDO: the PATTERN BANK A..F (project.c) */
+#endif
     for (ms = 0; ms < 400u; ms += 10u) {      /* the splash; the pot followed (MIDI IN plays under it) */
         fm1_delay_ms(10);
         master_poll();
@@ -307,6 +310,9 @@ static void fm1_main(void)
         ui_input();
         settings_poll();                              /* queued settings save: only while stopped */
         autosave_poll();                              /* (1.2) the music, stopped and idle: project.c */
+#if RONDO_LAYOUT
+        bank_poll();                                  /* RONDO: the PATTERN BANK: a switch, the flash */
+#endif
         felucca_dbg.stage = 2;
         ui_leds();
         ui_draw();

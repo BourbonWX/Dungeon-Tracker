@@ -417,6 +417,7 @@ static int32_t ink_w(const aafont_t *f, const char *s)
 enum { LAYER_NONE, LAYER_FX, LAYER_GLO, LAYER_SCL, LAYER_EDIT, LAYER_SEQ, LAYER_REC,
 #if RONDO_LAYOUT
        LAYER_ARP,                       /* RONDO: ARP held, the track's effect to ride (ui_layer.c) */
+       LAYER_ENV,                       /* RONDO: ENV held, the PATTERN BANK A..F (song_bank.c) */
 #endif
        LAYER_N };
 static void draw_layer(void);
@@ -931,6 +932,16 @@ static uint32_t pat_from_sig(const track_t *t)
     uint32_t h = fnv(fnv(steps_sig(t), &t->p[P_SLEN], 4u * sizeof t->p[0]), &q, sizeof q);
     return h ^ motion_sig(t);
 }
+#if RONDO_LAYOUT
+/* RONDO: the PATTERN BANK switched (project.c bank_poll): an undo copy of the steps or automation was the pattern
+ * before's, so it goes (a sound's stays) */
+static void bank_dropped(void)
+{
+    if (undo.what & (UNDO_PAT | UNDO_MOT))
+        undo.trk = 0;
+    ui.force = 1;
+}
+#endif
 static void pat_from_set(uint32_t slot)             /* every track's pattern is slot's now (1..4), 0 none */
 {
     for (uint32_t k = 0; k < NTRK; k++) {

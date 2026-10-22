@@ -1117,10 +1117,33 @@ static uint32_t sg_muldiv(uint32_t a, uint32_t b, uint32_t c)
     while (b && a > 0xFFFFFFFFu / b) { a >>= 1; c >>= 1; }
     return c ? a * b / c : 0u;
 }
+/* the pattern a section's track names (chain_pat: RONDO the bank's A..F, else the project slots A..D): stored; one
+ * loop of its track k (1/48 quarters, 0 none) and k's picture (project.c proj_density / pat_density) */
+static int sg_used(uint32_t p)
+{
+#if RONDO_LAYOUT
+    return bank_has(p);
+#else
+    return p < 4u && graph_project_used(p);
+#endif
+}
+static uint32_t sg_pic(uint32_t p, uint32_t k, uint32_t *den, uint8_t *n)
+{
+#if RONDO_LAYOUT
+    return bank_info(p, k, den, n);
+#else
+    *den = graph_pden[p & 3u][k];
+    *n = graph_pcell[p & 3u][k];
+    return sg_used(p) ? graph_plen[p & 3u][k] : 0u;
+#endif
+}
 static uint32_t song_unit(const chain_row_t *r)        /* one pass of a section: its clock track's (1/48 quarters) */
 {
-    uint32_t k = chain_clock(r), s = r->slot[k];
-    return s < 4u && graph_project_used(s) && graph_plen[s][k] ? graph_plen[s][k] : SG_BARU;
+    uint32_t k = chain_clock(r), p = chain_pat(r->slot[k]), den, l = 0;
+    uint8_t n;
+    if (p != CHAIN_OFF && sg_used(p))
+        l = sg_pic(p, k, &den, &n);
+    return l ? l : SG_BARU;
 }
 static void song_layout(song_lay_t *L)
 {
@@ -1308,8 +1331,14 @@ static uint32_t graph_signature(void)
         h ^= ui.song_row * 40503u + chain_config.count * 7919u + ui.song_trk * 3571u;
         h = fnv(h, chain_config.row, sizeof chain_config.row);
         h ^= chain.running ? (chain.row + 1u) * 104729u + chain.remaining * 1299709u : 0u;
+#if RONDO_LAYOUT
+        h ^= (uint32_t)bank.used << 24 ^ (uint32_t)bank.cur << 21 ^ (uint32_t)bank.gen * 2654435761u;
+        for (i = 0; i < NTRK; i++)                   /* (the current pattern's pictures: the tracks' own) */
+            h = fnv(fnv(h, trk[i].step, sizeof trk[i].step), &trk[i].p[P_SLEN], 2u * sizeof trk[i].p[0]);
+#else
         for (i = 0; i < 4u; i++) h ^= (uint32_t)graph_project_used(i) << (24u + i);
         h += graph_pname_sig;
+#endif
         {                                            /* the timeline: its view (following, ui_graph.c song_follow), the playhead */
             song_lay_t L;
             song_layout(&L);
@@ -2114,7 +2143,10 @@ static void sg_picture(const song_lay_t *L, int32_t off, uint32_t k, uint32_t i,
                        int32_t x1, const sg_fill_t *F, const int32_t *skip)
 {
     int32_t y = SG_LY(k), yb = y + SG_PAD + SG_PH, x;
-    uint32_t q, plen = graph_plen[s & 3u][k], n = graph_pcell[s & 3u][k], den = graph_pden[s & 3u][k];
+    uint32_t q, plen, n, den;
+    uint8_t nc;
+    plen = sg_pic(s, k, &den, &nc);
+    n = nc;
     if (!plen || !n)
         return;
     for (q = i; q < j; q++) {
@@ -2161,7 +2193,7 @@ static void sg_block(const song_lay_t *L, int32_t off, uint32_t k, uint32_t i, u
 {
     int32_t hi = SG_X0 + SG_W, y = SG_LY(k), bx = SG_X0 + L->x[i] - off, bw = L->x[j] - L->x[i] - SG_GAP, lx, w;
     int32_t x0 = bx > SG_X0 ? bx : SG_X0, x1 = bx + bw < hi ? bx + bw : hi, skip[4] = {0, 0, 0, 0};
-    int saved = graph_project_used(s), cur = c >= i && c < j;
+    int saved = sg_used(s), cur = c >= i && c < j;
     sg_fill_t F = {0, 0, 0, 0, 0};
     uint32_t p = chain.running && chain.row >= i && chain.row < j ? chain.row : 0xFFu;
     if (x1 <= x0)
@@ -2236,8 +2268,8 @@ static void graph_song(void)
             uint32_t s = chain_config.row[i].slot[k];
             for (j = i + 1u; j < L.n && chain_config.row[j].slot[k] == s; j++)
                 ;
-            if (s < 4u) {
-                sg_block(&L, off, k, i, j, s, k == lane ? c : CHAIN_ROWS, sp);
+            if (chain_pat(s) != CHAIN_OFF) {
+                sg_block(&L, off, k, i, j, chain_pat(s), k == lane ? c : CHAIN_ROWS, sp);
             } else {
                 int32_t sx = SG_X0 + L.x[i] - off, ex = SG_X0 + L.x[j] - off - SG_GAP;
                 sx = sx > SG_X0 ? sx : SG_X0;
@@ -2271,7 +2303,7 @@ static void graph_song(void)
         if (sp >= SG_X0 && sp < hi - 1) {              /* the playhead, across the lanes (INK on the cell selected) */
             for (k = 0; k < NTRK; k++) {
                 uint32_t s = c < L.n ? chain_config.row[c].slot[k] : CHAIN_SILENT;
-                int on = k == lane && s < 4u && graph_project_used(s) && sp >= SG_X0 + L.x[c] - off &&
+                int on = k == lane && chain_pat(s) != CHAIN_OFF && sg_used(chain_pat(s)) && sp >= SG_X0 + L.x[c] - off &&
                          sp + 2 <= SG_X0 + L.x[c + 1u] - off - SG_GAP;
                 cv_rect(sp, SG_LY(k), 2, SG_LH + (k + 1u < NTRK ? SG_LG : 0), on ? T_INK : T_ACCENT);
             }
@@ -2318,18 +2350,28 @@ static void graph_song(void)
         cv_text_on(x0, ly, fl, b, T_MID, T_SURF);
     }
     if (c < L.n) {
-        uint32_t s = chain_config.row[c].slot[lane];
-        if (s >= 4u)
+        uint32_t s = chain_pat(chain_config.row[c].slot[lane]);
+        if (s == CHAIN_OFF)
             cv_free_text(SG_X0, ly, fl, "SILENT", T_DIM, T_SURF, x0 - 10 - SG_X0);
+#if RONDO_LAYOUT
+        else if (!sg_used(s))
+            cv_free_text(SG_X0, ly, fl, "EMPTY KEY", T_DIM, T_SURF, x0 - 10 - SG_X0);
+        else {                                         /* RONDO: the bank's pattern ("PATTERN C") */
+            char pn[12] = "PATTERN A";
+            pn[8] = (char)('A' + s);
+            cv_free_text(SG_X0, ly, fl, pn, T_MID, T_SURF, x0 - 10 - SG_X0);
+        }
+#else
         else if (!graph_project_used(s))
             cv_free_text(SG_X0, ly, fl, "NOT SAVED", T_DIM, T_SURF, x0 - 10 - SG_X0);
         else if (graph_project_name(s)[0])
             cv_free_text(SG_X0, ly, fl, graph_project_name(s), T_MID, T_SURF, x0 - 10 - SG_X0);
+#endif
     } else {                                           /* + ADD: how */
-        for (i = 0; i < 4u && !graph_project_used(i); i++)
+        for (i = 0; i < CHAIN_PATS && !sg_used(i); i++)
             ;
         cv_free_hint(SG_X0, ly + AF_M_CAP_Y + AF_M_CAP_H - AF_S_CAP_Y - AF_S_CAP_H,   /* (a key hint: S) */
-                     i < 4u ? "[K3] ADD SECTION" : "[SAVE] PROJECT A-D", T_MID, T_SURF, x0 - 10 - SG_X0);
+                     i < CHAIN_PATS ? "[K3] ADD SECTION" : "[SAVE] PROJECT A-D", T_MID, T_SURF, x0 - 10 - SG_X0);
     }
 }
 #include "ui_dungeon.c"                          /* RONDO: HOME's dungeon crawl */

@@ -86,6 +86,7 @@
 #endif
 #include "song_chain.c"
 #include "seq.c"
+#include "song_bank.c"             /* RONDO: the PATTERN BANK A..F (ENV held; SONG plays it) */
 #include "audio.c"
 
 /* -------------------------------------------------------------- UI --- */
