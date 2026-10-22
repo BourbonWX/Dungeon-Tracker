@@ -34,3 +34,11 @@ tail -1 build/host/persistence.txt                    # (the flash: the PATTERN 
 # the audio tools build (tests/chip_demo.c, tests/chip_tour.c: CHIP's demos, run by hand)
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/chip_demo tests/chip_demo.c -lm
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/chip_tour tests/chip_tour.c -lm
+# the editor: the firmware's side of the protocol (tests/editor_test.c, both layouts) and the web editor against the
+# firmware's tables (tests/descdump.c -> build/host/desc.json; web/test_web.mjs, when node is there)
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/editor_test tests/editor_test.c -lm
+build/host/editor_test > build/host/editor.txt || { grep FAIL build/host/editor.txt; exit 1; }
+tail -1 build/host/editor.txt
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -o build/host/descdump tests/descdump.c -lm
+build/host/descdump > build/host/desc.json
+if command -v node >/dev/null 2>&1; then node web/test_web.mjs > build/host/web.txt || { grep FAIL build/host/web.txt; exit 1; }; tail -1 build/host/web.txt; fi

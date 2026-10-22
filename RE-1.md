@@ -380,6 +380,15 @@ marker where it is now.
 
 Switching a track to another engine lets go of the morph (the target named a preset of the old engine).
 
+## The web editor (web/editor.html)
+
+Felucca's desktop editor, brought up to RE-1. Open `web/editor.html` in Chrome or Edge (it talks to the FM-1 over
+USB MIDI; add `?mock=1` to try it without hardware). It knows FMKIT and FMTONE (their presets, an FMKIT track's
+KICK / SNARE / HAT / PERC / SHAPE / LANES pages, its steps as drum hits), CHIP's chip presets, the three new track
+effects (FILTR DUCK REPT), and lists the engines in RE-1's order. Its Song panel arranges RE-1's sections: a
+pattern A–F or – (silent) per track, and the repeats. It groups every parameter by page on current firmware
+(Felucca's editor fell back to one long list there). The four master effects (FX held) are set on the device.
+
 ## Differences from Felucca, in short
 
 * SEQ's STEP and DETAIL pages (piano roll, drum grid, per-step detail lanes) are replaced by the TRACKER; AUTOMATION

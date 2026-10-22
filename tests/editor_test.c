@@ -460,7 +460,7 @@ static int song_protocol(void)
     bad += check("SONG PLAY refuses extra argument bytes", !request(ED_SONG, a, 2) && !transport_req);
     {   /* 1.2 (`57 01 04`): sections with a slot per track, ops 4..7; the v6 ops see each section's clock lane */
         static const uint8_t set[] = {5, 2, 0, 1, CHAIN_SILENT, 0, 3, CHAIN_SILENT, CHAIN_SILENT, CHAIN_SILENT, CHAIN_SILENT, 1};
-        static const uint8_t q4[] = {4}, q0[] = {0}, bad5[] = {5, 1, 0, 0, 5, 0, 1}, old4[] = {1, 1, CHAIN_SILENT, 1};
+        static const uint8_t q4[] = {4}, q0[] = {0}, bad5[] = {5, 1, 0, 0, 7, 0, 1}, old4[] = {1, 1, CHAIN_SILENT, 1};
         static const uint8_t info[] = {0};
         uint32_t n, i, tag = 0;
         reset();
@@ -475,7 +475,7 @@ static int song_protocol(void)
         n = request(ED_SONG, q0, 1);
         bad += check("SONG op 0 (v6 editors): a row per section, its clock lane's slot (T1 A; all - : A)",
                      n == 16u && host_wire[11] == 0 && host_wire[12] == 3 && host_wire[13] == 0 && host_wire[14] == 1);
-        bad += check("SONG op 5: a slot past - (5) refused, the sections kept",
+        bad += check("SONG op 5: a slot past the last (7: past - in Felucca, past F in RE-1) refused, the sections kept",
                      request(ED_SONG, bad5, sizeof bad5) == 22u && host_wire[6] == 1 && chain_config.count == 2);
         bad += check("SONG op 1 (v6): no - in a row of one slot", request(ED_SONG, old4, sizeof old4) == 16u &&
                      host_wire[6] == 1 && chain_config.count == 2);
@@ -909,7 +909,7 @@ static int menu_protocol(void)
         {"SCREEN OFF", "NEVER,5 MIN,15 MIN,30 MIN,60 MIN"},
         {"SCOPE", "OUT,MIX"}, {"STEP PREVIEW", "OFF,ON"}, {"CHORD ENTRY", "HOLD,ADD"},                  /* (1.2) */
         {"MIDI IN", "CH1-4,SEL,CH5-8,CH9-12,CH13-16,TRACK"}, {"TUNE", 0},   /* (1.2: the project's ROUT and TUNE; TUNE a number) */
-        {"HOME", "SCOPE,TRACKS,LEVELS"},                                                       /* (1.3; 1.5: LEVELS) */
+        {"HOME", "DUNGEON,TRACKS,LEVELS"},                                   /* (1.3; 1.5: LEVELS; RE-1: SCOPE is the dungeon) */
         {"HELP", "OFF,ON"},                                                                          /* (1.5) */
         {"SELECT", "BPM,PAGE,MODW,VEL"},                                                             /* (1.5.5; 1.5.6 MODW VEL) */
         {"T1 CHANNEL", TCH_NAMES}, {"T2 CHANNEL", TCH_NAMES}, {"T3 CHANNEL", TCH_NAMES}, {"T4 CHANNEL", TCH_NAMES},   /* (1.5.5) */
