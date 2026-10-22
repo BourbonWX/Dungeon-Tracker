@@ -260,7 +260,7 @@ static void ck_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
         }
     }
     if (lane != CK_HAT)
-        ph2 = ph2 + n < 0x10000u ? ph2 + n : 0x10000u;
+        ph2 = ph2 + n < 65536u ? ph2 + n : 65536u;   /* (the click counter, held at its end) */
     v->s[1] = a1;
     v->s[2] = pe1;
     v->s[3] = me1;
