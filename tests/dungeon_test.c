@@ -145,7 +145,7 @@ int main(void)
     reset_game(1);
     fm1_ms += 2000u;
     dg_party();
-    ok4("the party: T1 with steps is the FIGHTER, the empty tracks nobody", dg.in[0] && !dg.in[1] && !dg.in[2] && !dg.in[3]);
+    ok4("the party: T1 with steps is the ROGUE, the empty tracks nobody", dg.in[0] && !dg.in[1] && !dg.in[2] && !dg.in[3]);
     {
         uint32_t lo = dg.lvl[0], hi;
         trk[0].p[P_MUTE] = 1;
@@ -236,8 +236,8 @@ int main(void)
     ticks(100);
     fell(2);
     ticks(66);
-    ok4("T3's dwarf falls: T3 cut while the game plays, the others not", dg_fallen(2) && dg_cut == 4u && dg.msg &&
-        str_eq(dg.msg, "DWARF FALLS: T3 CUT"));
+    ok4("T3's fighter falls: T3 cut while the game plays, the others not", dg_fallen(2) && dg_cut == 4u && dg.msg &&
+        str_eq(dg.msg, "FIGHTER FALLS: T3 CUT"));
     ui_home_view = HV_TRACKS;
     ticks(66);
     ok4("  HOME showing TRACKS: still cut (the game runs whatever is shown)", dg_cut == 4u);
@@ -254,7 +254,7 @@ int main(void)
         dg.walked = 0;
         for (i = 0; i < DG_FLOOR - 1u && dg_fallen(2); i++)
             dg_walk();
-        snprintf(what, sizeof what, "the cleric raises the dwarf (%u beats walked), at half health; T3 back", i);
+        snprintf(what, sizeof what, "the cleric raises the fighter (%u beats walked), at half health; T3 back", i);
         ok4(what, !dg_fallen(2) && dg.hp[2] == dg_hpmax(2) / 2 && dg.walked < DG_FLOOR);
         ticks(66);
         ok4("  its cut lifted", dg_cut == 0u);
@@ -268,12 +268,12 @@ int main(void)
         dg.walked = 0;
         for (i = 0; i < DG_FLOOR - 1u; i++)
             dg_walk();
-        ok4("no cleric: the fighter stays down the whole floor", dg_fallen(0));
+        ok4("no cleric: the rogue stays down the whole floor", dg_fallen(0));
         dg_walk();
         ok4("  the stairs: up again on the next floor", !dg_fallen(0) && dg.floor == f + 1u);
     }
     trk[1].p[P_MUTE] = 0;
-    simple_song();                                       /* the whole party: the fighter alone */
+    simple_song();                                       /* the whole party: the rogue alone */
     reset_game(11);
     ui_home_view = HV_SCOPE;
     song.playing = 1;

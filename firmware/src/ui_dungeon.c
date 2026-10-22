@@ -7,14 +7,14 @@
  * the game below plays on every page until it is switched off, which ends the run and lifts every cut at once.
  * The game: the party walks one square a beat (the tempo's), monsters come up the corridor and are fought a
  * round a beat. The song is the party:
- *   - every track that has steps and is not muted is one adventurer: T1 the FIGHTER (a sword), T2 the CLERIC (heals
- *     the party), T3 the DWARF (an axe, more hit points), T4 the MAGE (a bolt, every other beat, hard);
+ *   - every track that has steps and is not muted is one adventurer: T1 the ROGUE (a sword), T2 the CLERIC (heals
+ *     the party), T3 the FIGHTER (an axe, more hit points), T4 the MAGE (a bolt, every other beat, hard);
  *   - each adventurer's LEVEL (1..9) is how much its track does: notes on, distinct pitches (a kit: distinct drums),
  *     chords, parameter locks, chances, conditions, ratchets and nudges (dg_level);
  *   - a floor is cleared after a walk of DG_FLOOR squares: the stairs, one floor down. Monsters get stronger with the
  *     depth (every fifth floor a boss); a party that falls retreats one floor up, healed. A full, busy song goes deep,
  *     a lone simple loop stays near the top.
- * Each adventurer's health is hidden (no bar: a wounded one's name blinks): its most is 6 + 4 per level (the dwarf 4
+ * Each adventurer's health is hidden (no bar: a wounded one's name blinks): its most is 6 + 4 per level (the fighter 4
  * more), so a busier track takes more blows; a track made busier mid-fight gains the difference at once.
  * A FALL CUTS THE TRACK (whatever HOME shows, whatever page is up): an adventurer at 0 health
  * falls and its track is muted as by a PERFORM black key (dg_cut: perform.c ramps it out and back, the sequencer runs
@@ -44,10 +44,10 @@
 #define DG_WIPE 4                                        /* beats of silence when the whole party falls */
 #define DG_RAISE 5                                       /* the cleric raises: 1 in DG_RAISE beats walked */
 
-enum { DG_FTR, DG_CLR, DG_DWF, DG_MAG };
-static const char *const DG_CLASS[4] = {"FTR", "CLR", "DWF", "MAG"};
-static const char *const DG_FALL[2][4] = {{"FIGHTER FALLS", "CLERIC FALLS", "DWARF FALLS", "MAGE FALLS"},
-                                          {"FIGHTER FALLS: T1 CUT", "CLERIC FALLS: T2 CUT", "DWARF FALLS: T3 CUT",
+enum { DG_RGE, DG_CLR, DG_FTR, DG_MAG };   /* RE-1: T1 the rogue, T3 the fighter (once fighter and dwarf) */
+static const char *const DG_CLASS[4] = {"RGE", "CLR", "FTR", "MAG"};
+static const char *const DG_FALL[2][4] = {{"ROGUE FALLS", "CLERIC FALLS", "FIGHTER FALLS", "MAGE FALLS"},
+                                          {"ROGUE FALLS: T1 CUT", "CLERIC FALLS: T2 CUT", "FIGHTER FALLS: T3 CUT",
                                            "MAGE FALLS: T4 CUT"}};
 static const char *const DG_RAISED[4] = {"T1 BACK", "T2 BACK", "T3 BACK", "T4 BACK"};
 enum { DM_NONE, DM_GOBLIN, DM_SKEL, DM_SLIME, DM_OGRE };
@@ -131,7 +131,7 @@ static uint32_t dg_level(const track_t *t)
     score = on / 2u + 2u * (dp < 12u ? dp : 12u) + chords + motion_lock_count(t) + 2u * extras;
     return (uint32_t)clamp(1 + (int32_t)score / 5, 1, 9);
 }
-static int16_t dg_hpmax(uint32_t k) { return (int16_t)(6 + 4 * dg.lvl[k] + (k == DG_DWF ? 4 : 0)); }
+static int16_t dg_hpmax(uint32_t k) { return (int16_t)(6 + 4 * dg.lvl[k] + (k == DG_FTR ? 4 : 0)); }
 static int dg_fallen(uint32_t k) { return (dg.dead >> k) & 1u; }
 static int dg_deadly(void)                               /* a fall cuts its track: the game on, playing */
 {
@@ -240,7 +240,7 @@ static void dg_fight(void)
         dg.swing[k] = 10;
         if (!dg_roll((uint32_t)(50 + 5 * lv)))
             continue;
-        d = lv + (int32_t)(dg_rand() % (uint32_t)(lv + 1)) + (k == DG_FTR ? 2 : k == DG_DWF ? 1 : k == DG_MAG ? lv : 0);
+        d = lv + (int32_t)(dg_rand() % (uint32_t)(lv + 1)) + (k == DG_RGE ? 2 : k == DG_FTR ? 1 : k == DG_MAG ? lv : 0);
         dg.mon_hp = (int16_t)(dg.mon_hp - d);
         dg.dmg = (int16_t)d;
         dg.mon_hit = 6;
@@ -528,14 +528,14 @@ static void dg_sprite(uint32_t m, int32_t cx, int32_t foot, int32_t px, uint16_t
 static void dg_weapons(int32_t mx, int32_t my)
 {
     int32_t f;
-    if ((f = dg.swing[DG_FTR]) != 0) {                   /* the sword: from the right, across */
+    if ((f = dg.swing[DG_RGE]) != 0) {                   /* the sword: from the right, across */
         static const int8_t TIP[10][2] = {{-70, -40}, {-62, -48}, {-50, -54}, {-36, -56}, {-20, -54},
                                           {-6, -48}, {6, -38}, {14, -26}, {18, -14}, {20, -4}};
         int32_t hx = 196, hy = DG_Y0 + DG_H - 4, tx = hx + TIP[10 - f][0], ty = hy + TIP[10 - f][1];
         cv_line_t(hx, hy, tx, ty, T_TEXT, 3);
         cv_line_t(hx - 6, hy + 4, hx + 6, hy - 4, T_ACCENT, 3);   /* the crossguard */
     }
-    if ((f = dg.swing[DG_DWF]) != 0) {                   /* the axe: from the left, down */
+    if ((f = dg.swing[DG_FTR]) != 0) {                   /* the axe: from the left, down */
         int32_t hx = 36, hy = DG_Y0 + DG_H - 2, a = 10 - f, tx = hx + 20 + a * 3, ty = hy - 52 + a * 4;
         cv_line_t(hx, hy, tx, ty, T_MID, 3);
         dg_vrect(tx - 6, ty - 4, 12, 9, T_TEXT);

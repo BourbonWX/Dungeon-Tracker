@@ -159,9 +159,9 @@ every power-on; it is not saved.
 
 | Track | Adventurer | Fights with |
 |---|---|---|
-| T1 | FTR fighter | a sword |
+| T1 | RGE rogue | a sword |
 | T2 | CLR cleric | heals the party when it is hurt, otherwise a strike; raises the fallen |
-| T3 | DWF dwarf | an axe, more health |
+| T3 | FTR fighter | an axe, more health |
 | T4 | MAG mage | a bolt every other beat, hits hard |
 
 * Every track that has steps and is not muted joins the party. With no steps anywhere the view reads NO PARTY.
@@ -169,7 +169,7 @@ every power-on; it is not saved.
   * notes on, and distinct pitches (on a kit, distinct drums);
   * chords and parameter locks;
   * chances, conditions, ratchets and nudges.
-* **Health is hidden.** It is 6 + 4 per level (the dwarf gets 4 more), so a simple kick loop has 10 and a busy track
+* **Health is hidden.** It is 6 + 4 per level (the fighter gets 4 more), so a simple kick loop has 10 and a busy track
   42. A wounded adventurer's name blinks (under a third of its health). Make a track busier mid-fight and it gains the
   extra health at once.
 * After 24 squares the party takes the stairs one floor down (B1, B2, …). Monsters grow with depth.
@@ -177,7 +177,7 @@ every power-on; it is not saved.
 ### Falling cuts the track
 
 When an adventurer's health reaches 0 it falls, and **its track is cut from the mix** until it is back on its feet.
-The slot reads CUT and the view says e.g. DWARF FALLS: T3 CUT. The cut works like PERFORM's black-key mutes: a
+The slot reads CUT and the view says e.g. FIGHTER FALLS: T3 CUT. The cut works like PERFORM's black-key mutes: a
 click-free fade, with the sequencer still running underneath, so the track comes back in time. The reverb and delay
 tails ring out. Nothing is saved, and the track's MUTE is not touched.
 

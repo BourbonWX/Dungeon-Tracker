@@ -1024,11 +1024,11 @@ static void setup(int s)
     case S_HOME_TURN:                               /* the game on, turning left at the crossroads, a third of the way */
         song.playing = 1; dg_game = 1; dg.cell = 40; dg.phase = 30000; dg.jlast = 40; dg.turn = -1; dg.tph = 24000;
         dg.floor = 3; dg.heading = 2; dg.lvl_ms = 0; break;
-    case S_HOME_FALLEN:                             /* RONDO: the dwarf fallen, T3 cut, a skeleton fought */
+    case S_HOME_FALLEN:                             /* RONDO: the fighter (T3) fallen, T3 cut, a skeleton fought */
         song.playing = 1; ui_home_view = HV_SCOPE; dg_game = 1; dg.lvl_ms = 0;
         trk[2].step[0].time = ST_NOTE; trk[2].step[0].n = 1; trk[2].step[0].note[0] = 36; trk[2].step[0].vel = 100; dg_party(); dg.in[2] = 1; dg.lvl[2] = 3;
         dg.dead = 4; dg.hp[2] = 0; dg.hp[0] = 2; dg.mon = DM_SKEL; dg.mon_dist = 1; dg.mon_max = 30; dg.mon_hp = 17;
-        dg.floor = 7; dg.kills = 12; dg_say("DWARF FALLS: T3 CUT"); dg.msg_f = 250; dg.swing[0] = 6; break;
+        dg.floor = 7; dg.kills = 12; dg_say("FIGHTER FALLS: T3 CUT"); dg.msg_f = 250; dg.swing[0] = 6; break;
     case S_HOME_IDLE: song.playing = 0; song.batt_raw = 570; ui.hot_col = 1; ui.hot_t = 30; break;
     case S_MESSAGE: ui_say("LOADED ", "07 A VERY LONG PATTERN NAME"); break;
     case S_MESSAGE_KEY: ui_message("[SAVE] HOLD TO UNDO"); break;            /* a message with a keycap */
