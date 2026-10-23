@@ -29,6 +29,14 @@ int main(void)
     ui_prefs2 = 0;
     frames(20);
     okn("power-on: MENU > SELECT reads PAGE (a blank setting)", sel_mode() == SEL_PAGE);
+    {   /* Dungeon Tracker 1.0: blank settings come up in NIGHT */
+        uint32_t keep = settings.palette;
+        settings.magic = 0;
+        settings_init();
+        okn("  blank settings: the palette NIGHT", settings.palette == UI_NIGHT_INDEX && !strcmp(UI_PALETTES[settings.palette].name, "NIGHT"));
+        settings.palette = keep;
+        palette_apply();
+    }
 
     /* 2. HOME's round */
     go_home();

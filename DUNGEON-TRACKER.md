@@ -28,13 +28,14 @@ installer's package format) and adds:
 Any track can still load any engine (ANALOG, FM6, DRUM, …); it just keeps its track's voice count. The budget is
 12 voices at once (Felucca's is 8 shared), all of them light FM voices.
 
-> **Status: untested on hardware.** Dungeon Tracker builds (`dungeon-tracker-0.1.fwsc`) and passes its tests in the
+> **Status: untested on hardware.** Dungeon Tracker builds (`dungeon-tracker-1.0.fwsc`) and passes its tests in the
 > browser emulator and on the host (the firmware's own C code), but it has not been flashed to an FM-1 yet. Read
 > *Flashing* below before you try.
 
 ## Powering on
 
-The splash: DUNGEON over TRACKER in the firmware's own block lettering, in the palette's colours (MENU > COLOR).
+The splash: DUNGEON over TRACKER in the firmware's own block lettering, in the palette's colours (MENU > COLOR;
+NIGHT, black and green, until you pick another).
 Then, unless there is music of yours to bring back (MENU > SYSTEM > RESTORE LAST, or a pattern stored in the PATTERN
 BANK), Dungeon Tracker writes a **song of its own** (`firmware/src/boot_song.c`): a tempo, a key and mode, a four-bar
 chord progression, an FMKIT beat on T1, chords on T2, a bass line on T3 and a lead on T4 (FMTONE or CHIP sounds),
@@ -481,7 +482,7 @@ Exactly as Felucca (see `BUILDING.md`): Linux x86-64 natively, or macOS with Doc
 tools/get_toolchain.sh                                  # JieLi pi32v2 toolchain
 git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
 git submodule update --init                             # firmware/engines (Felucca-Engines)
-./build.sh --release 0.1                                # build/dungeon-tracker-0.1.fwsc
+./build.sh --release 1.0                                # build/dungeon-tracker-1.0.fwsc
 ```
 
 ### Tests
@@ -505,7 +506,7 @@ Dungeon Tracker layout. A change should leave those lists exactly as they are.
    **OCT−** + **OCT+** held 5 s enters UPDATE MODE, and two failed boots in a row enter it by themselves (Felucca's
    boot guard). If a build cannot reach either, recovery needs
    [FM-1 Transporter](https://github.com/kurogedelic/FM-1-transporter) (a Seeed XIAO RP2040).
-3. Install `dungeon-tracker-0.1.fwsc` with `python3 tools/fm1_install.py build/dungeon-tracker-0.1.fwsc` over USB, or a local copy of
+3. Install `dungeon-tracker-1.0.fwsc` with `python3 tools/fm1_install.py build/dungeon-tracker-1.0.fwsc` over USB, or a local copy of
    the web installer (`web/make_site.py`, see BUILDING.md).
 4. To go back: install M-VAVE's `FM-1.fwsc` the same way.
 

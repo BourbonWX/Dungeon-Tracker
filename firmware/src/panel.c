@@ -122,7 +122,11 @@ static void settings_init(void)
     }
     if (settings.magic != SETTINGS_MAGIC || settings.palette >= NPALETTES) {
         settings.magic = SETTINGS_MAGIC;
+#if RONDO_LAYOUT
+        settings.palette = UI_NIGHT_INDEX;     /* Dungeon Tracker 1.0: NIGHT, black and green (MENU > COLOR) */
+#else
         settings.palette = UI_GREY_INDEX;      /* GREY (default; named MONO before 1.0.2) */
+#endif
         settings.lowcut = 0;
         settings.zoom = 0;                     /* (retired: the LEDS setting, settings_persist.c) */
     }
