@@ -2049,6 +2049,8 @@ static void sweep_columns(void)
 #define FS_GAP 2u                                 /* px between frames, before the zoom */
 static void roll_turns(int32_t s)                 /* one UI frame with SELECT and KNOB 4 turned by s */
 {
+    if (sel_mode() != SEL_BPM)
+        menu_put(MI_SELECT, SEL_BPM);             /* (SELECT the tempo here: Felucca's default; Dungeon Tracker's PAGE) */
     host_enc[panel.enc[EN_SELECT]] += s * panel.dir[EN_SELECT];
     host_enc[panel.enc[EN_K4]] += s * panel.dir[EN_K4];
     host_ticks += 16000u; fm1_ms += 16u;

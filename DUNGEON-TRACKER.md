@@ -49,7 +49,20 @@ KIT uses the General MIDI drum map, so the QY70's drum notes play as they are), 
 For tempo sync, have the QY70 send MIDI clock and set the FM-1's CLOCK page (on HOME, tap HOME twice) to `CLK TRS`.
 The per-track channels can also be set one by one: `MENU > MIDI > MIDI IN: TRACK`, then `T1..T4 CHANNEL`.
 
-**The panel** works as in Felucca. On a FMKIT track, tap **EDIT** to walk its pages:
+**Getting around.** Dungeon Tracker gives each knob of the left-hand trio one job everywhere:
+
+| Knob | Does |
+|---|---|
+| **SELECT** | **navigates**: the pages of the family you are in (tap EDIT, then SELECT walks EDIT 1, EDIT 2, DICE, MORPH, VOICE…; on HOME: HOME, MIXER, CLOCK), and in the MENU every row, rolling from one tab into the next; in ABOUT it scrolls |
+| **PRESETS** | sounds (on a page), rows (in the MENU) |
+| **ALGORITHM** | the track (on a page), tabs (in the MENU) |
+| **KNOB 1–4**, **OCT±** | change what is selected |
+
+The **tempo** is **GLO + SELECT**, HOME > CLOCK's **KNOB 1**, or TAP (GLO + F4). If you prefer Felucca's way
+(SELECT always the tempo), set `MENU > CONTROL > SELECT` to BPM; PAGE is Dungeon Tracker's default (a setting saved
+by Felucca reads PAGE here unless it was set to PAGE, which reads BPM).
+
+**The panel** works as in Felucca otherwise. On a FMKIT track, tap **EDIT** to walk its pages:
 
 | Page | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
 |---|---|---|---|---|

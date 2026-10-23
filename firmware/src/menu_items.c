@@ -324,7 +324,9 @@ static void menu_put(uint32_t row, uint32_t v)
         ui_home_view = (uint8_t)(v < HV_COUNT ? v : HV_SCOPE);
         ui.force = 1;
         break;
-    case MI_SELECT:                                    /* (1.5.5 PAGE bit 4; 1.5.6 MODW VEL bit 6 too: ui.c sel_mode) */
+    case MI_SELECT:                                    /* (1.5.5 PAGE bit 4; 1.5.6 MODW VEL bit 6 too: ui.c sel_mode;
+                                                         * Dungeon Tracker: BPM and PAGE stored swapped, sel_swap) */
+        v = sel_swap(v);
         ui_prefs2 = (uint8_t)((ui_prefs2 & ~((PREF_SEL_PAGE | PREF_SEL_HI) >> 16)) | (v & 1u) << 4 | (v & 2u) << 5);
         break;
     case MI_LEDS:                                      /* (INV LO / INV HI: INV and its level, ui.c ui_leds_inv) */

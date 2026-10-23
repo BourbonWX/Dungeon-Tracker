@@ -46,3 +46,6 @@ if command -v node >/dev/null 2>&1; then node web/test_web.mjs > build/host/web.
 mkdir -p build/boot_song
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/boot_song_test tests/boot_song_test.c -lm
 build/host/boot_song_test build/boot_song
+# SELECT navigates (tests/nav_test.c: the pages, the MENU's rows, the tempo's other ways, MENU > SELECT BPM)
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/nav_test tests/nav_test.c -lm
+build/host/nav_test

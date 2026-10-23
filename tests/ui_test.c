@@ -2075,9 +2075,12 @@ static int test_mono_screens(void)
  * change mid-roll retargets; a fast turn, another shape, a page / track / palette change and ui.force snap. */
 static uint16_t roll_shot[240 * 240];
 static const page_t ROLL_PG = {"CLOCK", FAM_TRK, SC_GLOBAL, GR_NONE, {G_BPM, G_SWING, G_CLOCK, G_TUNE}};
+/* MENU > CONTROL > SELECT BPM: SELECT the tempo, as Felucca has it by default (Dungeon Tracker's: PAGE) */
+static void sel_bpm(void) { menu_put(MI_SELECT, SEL_BPM); }
 static void roll_settle(void)                     /* CLOCK + TUNE, nothing rolling, no knob hot */
 {
     uint32_t k;
+    sel_bpm();                                    /* (the header's BPM is turned with SELECT here) */
     go_title("CLOCK");
     page_over = &ROLL_PG;                         /* (cur_page(): its knobs, its cards; a layer's way, ui_layer.c) */
     ui.hot_t = 0; ui.bpm_t = 0;
@@ -8141,6 +8144,7 @@ static int test_bpm_lock(void)
     uint32_t i, page;
     ui_power_on();
     ui_prefs = 0;
+    sel_bpm();                                    /* (BPM LOCK is about SELECT as the tempo) */
     frame();
     b0 = song.g[G_BPM];
     turn(EN_SELECT, 2);
@@ -8153,6 +8157,7 @@ static int test_bpm_lock(void)
     b0 = song.g[G_BPM];
     turn(EN_SELECT, 3);
     ok = str_eq(MI_NAME[MI_BPMLOCK], "BPM LOCK") && ui.menu == 1u && song.g[G_BPM] == b0;   /* (the menu: no tempo) */
+    ui.menu_sel = MI_BPMLOCK;                                         /* (Dungeon Tracker: SELECT walked the rows) */
     turn(EN_K1, 1); ok &= (ui_prefs & PREF_BPM_LOCK) != 0u;          /* right: ON */
     turn(EN_K1, -1); ok &= !(ui_prefs & PREF_BPM_LOCK);              /* left: OFF */
     press(B_OCTUP); ok &= (ui_prefs & PREF_BPM_LOCK) && ui.menu;      /* OCT+: ON */
@@ -8226,6 +8231,7 @@ static int test_bpm_lock(void)
         ok &= settings_import(&p, (int)(sizeof p - sizeof p.favorites)) == 2 && !ui_prefs;
         q = p;
         ok &= settings_import(&q, (int)sizeof q) == 1 && !ui_prefs;
+        sel_bpm();                                                    /* (older settings: Dungeon Tracker's PAGE) */
         frame();
         b0 = song.g[G_BPM];
         go_home(); frame();

@@ -416,9 +416,14 @@ static uint32_t menu_split(uint32_t n)
 }
 static void draw_menu(void)
 {
-    static const khint_t KEYS[3][3] = {{{KC_ALGO, "TAB"}, {KC_PRESETS, "ROW"}, {KC_OCTPM, "VALUE"}},
-                                       {{KC_ALGO, "TAB"}, {KC_PRESETS, "ROW"}, {KC_OCTUP, "OPEN"}},
-                                       {{KC_ALGO, "TAB"}, {KC_PRESETS, "ROW"}, {KC_OCTUP, "CLEAR"}}};
+#if RONDO_LAYOUT
+#define MKC_ROW KC_SELECT                              /* (Dungeon Tracker: SELECT walks the rows; PRESETS still does) */
+#else
+#define MKC_ROW KC_PRESETS
+#endif
+    static const khint_t KEYS[3][3] = {{{KC_ALGO, "TAB"}, {MKC_ROW, "ROW"}, {KC_OCTPM, "VALUE"}},
+                                       {{KC_ALGO, "TAB"}, {MKC_ROW, "ROW"}, {KC_OCTUP, "OPEN"}},
+                                       {{KC_ALGO, "TAB"}, {MKC_ROW, "ROW"}, {KC_OCTUP, "CLEAR"}}};
     uint32_t pass, k, first, n, split, sig;
     int32_t pos0 = mt.pos;
     if (ui.menu == 1)
@@ -472,7 +477,7 @@ static void draw_menu(void)
             cv_blit(0, H_HEAD + pass * 124u);
         }
         cv_begin(240, 240 - (H_HEAD + MENU_DOC_H), T_BG);
-        cv_key_hint(8, 4, KC_PRESETS, "SCROLL", 1, T_BG);
+        cv_key_hint(8, 4, MKC_ROW, "SCROLL", 1, T_BG);
         cv_blit(0, H_HEAD + MENU_DOC_H);
         return;
     }
@@ -515,6 +520,26 @@ static void menu_close(void)
  * last picked in it), any of KNOB 1..4 or OCT+ / OCT- change a value (menu_items.c menu_step), OCT+ opens CALIBRATION /
  * INFO / ABOUT (OCT- nothing there); OCT- in INFO and ABOUT goes back to the tabs. HOME closes it, from them too
  * (ui_input.c) */
+/* SELECT (Dungeon Tracker): one knob through the whole menu, a row a detent, from a tab's last row on to the next
+ * tab's first (and back), round */
+static void menu_walk(int32_t s)
+{
+    uint32_t t = menu_tab(), f = mtab_first(t), n = mtab_rows(t), r = ui.menu_sel - f;
+    if (s > 0) {
+        if (r + 1u < n) {
+            ui.menu_sel++;
+        } else {
+            t = (t + 1u) % MTAB_COUNT;
+            ui.menu_sel = (uint8_t)mtab_first(t);
+        }
+    } else if (r) {
+        ui.menu_sel--;
+    } else {
+        t = (t + MTAB_COUNT - 1u) % MTAB_COUNT;
+        ui.menu_sel = (uint8_t)(mtab_first(t) + mtab_rows(t) - 1u);
+    }
+    ui.menu_row[menu_tab()] = (uint8_t)(ui.menu_sel - mtab_first(menu_tab()));
+}
 static void menu_move(int32_t s)                       /* PRESETS: the next / previous row of the tab */
 {
     uint32_t t = menu_tab(), f = mtab_first(t), n = mtab_rows(t), k = (ui.menu_sel - f + (s > 0 ? 1u : n - 1u)) % n;
@@ -537,7 +562,8 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
                                                         * the tabs */
         if (dn)
             ui.menu = 1, ui.force = 1;
-        else if (ui.menu == 2 && (s = panel_enc(EN_PRESET)) != 0)
+        else if (ui.menu == 2 && (s = panel_enc(EN_PRESET) + (RONDO_LAYOUT ? panel_enc(EN_SELECT) : 0)) != 0)   /* (Dungeon
+                                                         * Tracker: SELECT too) */
             ui.menu_scroll = (uint16_t)clamp((int32_t)ui.menu_scroll + clamp(s, -128, 128) * 18, 0, menu_scroll_max());
         enc_drop();
         return;
@@ -546,6 +572,11 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         menu_move(s);
     if ((s = panel_enc(EN_ALGO)) != 0)
         menu_tab_go(s);
+#if RONDO_LAYOUT
+    if ((s = panel_enc(EN_SELECT)) != 0)              /* Dungeon Tracker: SELECT walks every row, tab to tab */
+        for (k = (uint32_t)(s > 0 ? s : -s); k; k--)
+            menu_walk(s);
+#endif
     for (s = 0, k = 0; k < 4u; k++)                    /* KNOB 1..4, any of them */
         s += panel_enc(EN_K1 + k);
     if (menu_valued(ui.menu_sel)) {

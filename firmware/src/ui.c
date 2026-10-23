@@ -90,7 +90,12 @@ static uint32_t up_gen;                      /* bumped on every user bank change
  * ui_prefs2 (0 in every older setting = BPM; 1.5.5's PAGE keeps its bit; firmware before 1.5.6 reads MODW as BPM and
  * VEL as PAGE (its bit 4), before 1.5.5 both as BPM) */
 enum { SEL_BPM, SEL_PAGE, SEL_MODW, SEL_VEL, SEL_N };
-static uint32_t sel_mode(void) { return ((ui_prefs2 >> 4) & 1u) | ((ui_prefs2 >> 5) & 2u); }
+/* Dungeon Tracker: SELECT navigates by default. The stored BPM and PAGE are swapped (0, every blank or older setting,
+ * reads PAGE; MODW, VEL as they were): SELECT steps the pages, the MENU's rows; the tempo is GLO + SELECT, CLOCK's
+ * KNOB 1 and TAP, or MENU > CONTROL > SELECT BPM as before. sel_stored / sel_mode: the stored bits <-> the mode */
+#define SEL_SWAP (RONDO_LAYOUT ? 1u : 0u)              /* (RONDO_LAYOUT=0: Felucca's, BPM the default) */
+static uint32_t sel_swap(uint32_t m) { return m < 2u ? m ^ SEL_SWAP : m; }
+static uint32_t sel_mode(void) { return sel_swap(((ui_prefs2 >> 4) & 1u) | ((ui_prefs2 >> 5) & 2u)); }
 /* 1.3 (Discussions #112, #134): MENU > DISPLAY > HOME, what the HOME page shows under its four cards: 0 SCOPE (the
  * oscilloscope, as before), 1 TRACKS (the four tracks as rows: ui_graph.c draw_home_tracks), 2 LEVELS (1.5, #134: the
  * rows of TRACKS, and KNOB 1..4 the LEVEL of T1..T4 in place of the engine's four: home_param). A byte of its own no
