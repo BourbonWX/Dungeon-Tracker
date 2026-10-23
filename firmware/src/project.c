@@ -1177,6 +1177,101 @@ static void project_load(uint32_t slot)
     }
 }
 
+/* Dungeon Tracker: SAVE > TOOLS, KNOB 1 turned on past CLEAR (ui_input.c): NEW, a blank song to start from. Every
+ * track's steps and automation, the song order, the other patterns of the bank (B..F; the current one is the cleared
+ * tracks), the project's name and slot; the tempo, the globals, MIDI stay. sounds: NEW + DEFAULT SOUNDS, the power-on
+ * sounds too (TRK_DEF, the mix with them; SOUND MORPH off). Its undo: SAVE held while nothing changed since (new_undo):
+ * the song before it as a project (new_copy, packed: 3.8 KB of the pool), the bank's patterns never wiped (their keys
+ * only emptied, so the flash forgets them; given back if still empty) */
+static uint32_t autosave_sig(void);
+static project_store_t new_copy __attribute__((section(".pool")));
+static struct {
+    uint8_t ok, cur, used, from[NTRK];
+    uint32_t from_h[NTRK], after;
+} nw;
+static void new_song(uint32_t sounds)
+{
+    uint32_t k;
+    if (chain_busy()) {
+        ui_message("STOP TO EDIT");
+        return;
+    }
+    project_capture(&proj_scratch);
+    nw.ok = (uint8_t)(proj_pack(&new_copy, &proj_scratch) != 0);
+    nw.cur = proj_cur;
+    memcpy(nw.from, pat_from, sizeof nw.from);
+    memcpy(nw.from_h, pat_from_h, sizeof nw.from_h);
+    mom_back(0);
+    undo_depth++;                                       /* (no single-track undo copy of these) */
+    for (k = 0; k < NTRK; k++) {
+        track_t *t = &trk[k];
+        seq_release(t);
+        if (sounds) {
+            drum_mute[k] = 0;
+            track_defaults(t);                          /* (the mix, LEN DIV SWING GATE, ARP, SCALE) */
+            set_engine_of(t, TRK_DEF[k][0]);
+            apply_preset_to(t, TRK_DEF[k][1]);
+        }
+        track_defaults_steps(t);
+        t->nheld = 0;
+        t->arp_phys = 0;
+        pat_sig[k] = steps_sig(t);
+        pat_last[k] = 0;
+    }
+    undo_depth--;
+#if RONDO_LAYOUT
+    if (sounds)
+        morph_reset();
+    {
+        uint32_t f = motion_guard();
+        uint8_t others = (uint8_t)(bank.used & ~(1u << bank.cur));
+        nw.used = others;
+        bank.used = (uint8_t)(bank.used & ~others);
+        bank.dirty |= others;                           /* (bank_poll: an empty record each) */
+        bank.queue = CHAIN_OFF;
+        motion_unguard(f);
+    }
+#endif
+    chain_defaults(&chain_config);
+    ui.song_row = 0;
+    proj_name[0] = 0;
+    proj_cur = PROJ_NO_SLOT;
+    pat_from_set(0);
+    undo.trk = 0;                                       /* (SAVE held: this NEW, not a load before it) */
+    sync_reload = 1;
+    ui.tl_new = 0;
+    ui.act = 0;
+    ui.force = 1;
+    nw.after = autosave_sig();
+    ui_message(sounds ? "NEW SONG + SOUNDS" : "NEW SONG");
+    str_cpy(ui.msg2, "[SAVE] HOLD TO UNDO", sizeof ui.msg2);
+}
+/* SAVE held: the NEW undone when nothing changed since (a note, a sound, the tempo: the held SAVE is the usual undo,
+ * of nothing). 1 = done */
+static int new_undo(void)
+{
+    if (!nw.ok || undo.trk || chain_busy() || autosave_sig() != nw.after)
+        return 0;
+    nw.ok = 0;
+    if (!proj_import(&proj_scratch, &new_copy, sizeof new_copy))
+        return 0;
+    proj_bound(&proj_scratch);
+    if (project_restore_runtime(&proj_scratch))
+        return 0;
+    proj_cur = nw.cur;
+    memcpy(pat_from, nw.from, sizeof pat_from);
+    memcpy(pat_from_h, nw.from_h, sizeof pat_from_h);
+#if RONDO_LAYOUT
+    {
+        uint8_t back = (uint8_t)(nw.used & ~bank.used);   /* (a key filled since keeps what it has now) */
+        bank.used |= back;
+        bank.dirty |= back;
+    }
+#endif
+    ui_message("NEW UNDONE");
+    return 1;
+}
+
 /* settings + learned panel table: one flash object. The flash copy wins at
  * boot (the .noinit copies are garbage after a power-off). */
 #include "settings_persist.c"

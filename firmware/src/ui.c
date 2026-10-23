@@ -186,6 +186,7 @@ static struct {
     uint8_t bpm_t;               /* frames the BPM stays highlighted after a SELECT turn */
     uint8_t act;                 /* action pages: the column whose action OCT+ does, + 1; 0 = none (act_col) */
     uint8_t tl_clean;            /* SAVE > TOOLS: KNOB 2 turned on past INIT, CLEAN INIT picked (1.5.5, #190) */
+    uint8_t tl_new;              /* SAVE > TOOLS: KNOB 1 turned on past CLEAR: 1 NEW, 2 NEW + DEFAULT SOUNDS (project.c) */
     uint32_t rec_t0;             /* REC press time: a tap arms (btn_hold, no hold: held, REC opens its layer) */
     uint32_t save_t0;           /* SAVE press time (btn_hold: held = UNDO) */
     uint8_t confirm;             /* the OCT- / OCT+ dialog: CF_*, 0 = none */
@@ -232,7 +233,10 @@ static struct {
 } ui;
 
 enum { CF_NONE, CF_CLEAR_SEQ, CF_CLEAR_TRK, CF_OVR_PROJ, CF_OVR_USER, CF_LOAD_PAT,
-       CF_DEL_ROW, CF_CLEAR_SONG, CF_INIT_SOUND, CF_CLEAR_MOTION, CF_ERASE_USER, CF_ERASE_PROJ, CF_CLEAN_SOUND };
+       CF_DEL_ROW, CF_CLEAR_SONG, CF_INIT_SOUND, CF_CLEAR_MOTION, CF_ERASE_USER, CF_ERASE_PROJ, CF_CLEAN_SOUND,
+       CF_NEW, CF_NEW_SOUNDS };
+static void new_song(uint32_t sounds);           /* (project.c) SAVE > TOOLS: NEW, NEW + DEFAULT SOUNDS */
+static int new_undo(void);                       /* (project.c) SAVE held right after: 1 = undone */
                                   /* ui.confirm: TOOLS' clears; SAVE over a used slot; a pattern over the user's steps;
                                    * USER ERASE; PROJECT ERASE (1.5.5, #199); CLEAN INIT (1.5.5, #190) */
 
@@ -565,6 +569,7 @@ static void page_entered(void)
     ui.hot_t = 0;                                /* clear the previous page's emphasis */
     ui.act = pg->graph == GR_USER ? 4u : 0u;     /* the save screen is ready for OCT+ */
     ui.tl_clean = 0;
+    ui.tl_new = 0;
     help_start();
     ui.force = 1;
 }
@@ -1865,6 +1870,7 @@ static const char *act_name(uint32_t c)          /* column c's action (the foote
 #endif
     if (cur_page()->graph == GR_TOOLS) {
         static const char *const actions[] = {"CLEAR", "INIT", "DELETE", "CLEAR"};
+        if ((c & 3u) == 0u && ui.tl_new) return "NEW";                   /* (KNOB 1 on: NEW, NEW + SOUNDS) */
         return (c & 3u) == 1u && ui.tl_clean ? "CLEAN" : actions[c & 3u];   /* (1.5.5: KNOB 2 on: CLEAN INIT) */
     }
     if (cur_page()->graph == GR_SONG)
@@ -1893,7 +1899,7 @@ static int act_ready(void)
     if (cur_page()->graph == GR_VARY) return !chain_busy() && !seq_is_empty(TSEL);
 #endif
     if (cur_page()->graph == GR_TOOLS)                  /* one case per column: CLEAR PAT, INIT, DELETE ROW, CLEAR SONG */
-        return !chain_busy() && (c == 0u ? !seq_is_empty(TSEL) || motion_count(TSEL) : c == 1u ? 1 :
+        return !chain_busy() && (c == 0u ? ui.tl_new || !seq_is_empty(TSEL) || motion_count(TSEL) : c == 1u ? 1 :
                                  c == 2u ? ui.song_row < chain_config.count : chain_config.count != 0u);
     if (cur_page()->graph == GR_SONG)
         return song.playing || chain_busy() || chain_config.count;

@@ -41,6 +41,21 @@ chord progression, an FMKIT beat on T1, chords on T2, a bass line on T3 and a le
 different at every power-on. HOME shows the dungeon with the whole party and **PRESS PLAY**: press it and they walk.
 Nothing of it is saved until you change something; then it is yours and comes back at the next power-on.
 
+### Starting from scratch: NEW
+
+SAVE > TOOLS (tap SAVE until TOOLS), **KNOB 1**: the first turn right picks CLEAR (the selected track's pattern, as
+before), the next **NEW**, the next **NEW+S**; turning left steps back. OCT+ asks, OCT+ again does it.
+
+- **NEW** — a blank song: all four tracks' steps and automation, the song order, the other patterns of the PATTERN
+  BANK and the project's name are cleared. The sounds, the tempo and the other settings stay, so you start writing
+  with the sounds you were just hearing.
+- **NEW+S** (NEW + DEFAULT SOUNDS) — the same, and the four tracks go back to the default sounds (CYCLE KIT,
+  FM PAD, FM BASS, FM LEAD) with their default mix; SOUND MORPH off.
+
+**Hold SAVE** right afterwards to undo either one: the whole song comes back, its sounds, song order and patterns
+too. The undo is there until you change something (a note, a sound, the tempo). A SONG playing has to be stopped
+first; a pattern playing keeps playing, now empty.
+
 ## Playing it
 
 **MIDI:** channels **1–4 play tracks 1–4** (Felucca's default `MENU > MIDI > MIDI IN: CH1-4`), over USB or the TRS input
@@ -474,7 +489,7 @@ git submodule update --init                             # firmware/engines (Felu
 ```sh
 sh tests/run_rondo.sh          # Dungeon Tracker's checks (engines, tracker, commands, vary, dice, dungeon, live effects,
                                # the pattern bank and its flash, the arrangement, MIDI
-                               # program changes, sound morph), demo WAVs
+                               # program changes, sound morph, NEW), demo WAVs
 ```
 
 `tests/run_tests.sh` is Felucca's full suite; build it with `CC="cc -DRONDO_LAYOUT=0"` to check Felucca's behaviour

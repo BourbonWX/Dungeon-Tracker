@@ -1095,7 +1095,9 @@ static void draw_columns(void)
         static const char *const labels[] = {"PAT", "SOUND", "SEC", "SONG"};
         static const uint8_t icons[] = {ICON_AUTO, ICON_AUTO, ICON_X_SONG, ICON_X_SONG};   /* ROW, SONG: the song's */
         for (c = 0; c < 4u; c++)                       /* (1.5.5: KNOB 2 on past INIT, CLEAN) */
-            draw_act_column(c, c == 1u && ui.tl_clean && act_col() == 2u ? "CLEAN" : labels[c], VAL(c), icons[c]);
+            draw_act_column(c, c == 1u && ui.tl_clean && act_col() == 2u ? "CLEAN" :
+                               c == 0u && ui.tl_new && act_col() == 1u ? (ui.tl_new > 1u ? "NEW+S" : "NEW") : labels[c],
+                            VAL(c), icons[c]);
         return;
     }
     if (cur_page()->scope == SC_TRK) {                 /* LEVEL PAN REV MUTE of the selected track */
@@ -1655,6 +1657,14 @@ static void confirm_text(char *a, char *b)
         break;
     case CF_CLEAR_SONG:
         str_cpy(a, "CLEAR SONG ORDER?", 24);
+        break;
+    case CF_NEW:                                     /* Dungeon Tracker: SAVE > TOOLS, KNOB 1 past CLEAR (project.c) */
+        str_cpy(a, "NEW SONG?", 24);
+        str_cpy(b, "CLEARS ALL 4 TRACKS", 24);
+        break;
+    case CF_NEW_SOUNDS:
+        str_cpy(a, "NEW SONG + SOUNDS?", 24);
+        str_cpy(b, "DEFAULT SOUNDS TOO", 24);
         break;
     case CF_INIT_SOUND:
         str_cpy(a, "INITIALIZE SOUND?", 24);

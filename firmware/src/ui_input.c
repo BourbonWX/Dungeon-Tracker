@@ -1054,6 +1054,18 @@ static void edit_param(uint32_t slot, int32_t steps)
         return;
     }
 #endif
+    if (pg->graph == GR_TOOLS && slot == 0u) {           /* TOOLS' KNOB 1 (Dungeon Tracker): right CLEAR, on NEW, */
+        if (steps > 0) {                                  /* on NEW + DEFAULT SOUNDS; left back, then none: one */
+            if (ui.act == 1u && ui.tl_new < 2u) ui.tl_new++;  /* stage a turn, however fast (a quick turn picks */
+            else if (ui.act != 1u) ui.tl_new = 0;         /* CLEAR, as it always did, never NEW at once) */
+            ui.act = 1;
+        } else if (ui.act == 1u && ui.tl_new) {
+            ui.tl_new--;
+        } else if (ui.act == 1u) {
+            ui.act = 0;
+        }
+        return;
+    }
     if (pg->graph == GR_TOOLS && slot == 1u) {           /* TOOLS' KNOB 2 (1.5.5, #190): right INIT, on CLEAN INIT; */
         if (steps > 0) {                                  /* left back, then none */
             ui.tl_clean = ui.act == 2u;
@@ -1134,7 +1146,8 @@ static void act_do(void)
             ui_message(c == 2u ? "NOTHING TO DELETE" : "NOTHING TO CLEAR");
             return;
         }
-        confirm_open(c == 0u ? CF_CLEAR_SEQ : c == 1u ? (ui.tl_clean ? CF_CLEAN_SOUND : CF_INIT_SOUND) :
+        confirm_open(c == 0u ? (ui.tl_new > 1u ? CF_NEW_SOUNDS : ui.tl_new ? CF_NEW : CF_CLEAR_SEQ) :
+                     c == 1u ? (ui.tl_clean ? CF_CLEAN_SOUND : CF_INIT_SOUND) :
                      c == 2u ? CF_DEL_ROW : CF_CLEAR_SONG, c == 2u ? ui.song_row : song.sel);
         return;
     }
@@ -1680,8 +1693,8 @@ static void ui_input(void)
     }
     if (save == BT_HOLD && chain_busy())
         ui_message("STOP TO UNDO");
-    else if (save == BT_HOLD)                                /* SAVE held: undo the last sound load */
-        undo_swap();
+    else if (save == BT_HOLD && !new_undo())                 /* SAVE held: undo the last sound load (a NEW just */
+        undo_swap();                                         /* done: the song before it, project.c new_undo) */
     else if (save == BT_TAP && !ui.confirm)             /* SAVE acts on release (a hold is the undo) */
         open_family(FAM_SAVE);
     if (ui.confirm) {                                   /* OCT- cancels, OCT+ does it; nothing else reacts */
@@ -1715,6 +1728,8 @@ static void ui_input(void)
                 if (!chain_busy()) { chain_defaults(&chain_config); ui.song_row = 0; ui_message("SONG CLEARED"); }
             } else if (kind == CF_INIT_SOUND) {
                 if (!chain_busy()) { set_engine(TSEL->eng_req); ui_message("SOUND INIT"); }
+            } else if (kind == CF_NEW || kind == CF_NEW_SOUNDS) {
+                new_song(kind == CF_NEW_SOUNDS);
             } else if (kind == CF_CLEAN_SOUND) {
                 if (!chain_busy()) { clean_engine(); ui_message("CLEAN INIT"); }
             } else {

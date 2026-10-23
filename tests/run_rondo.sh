@@ -49,3 +49,6 @@ build/host/boot_song_test build/boot_song
 # SELECT navigates (tests/nav_test.c: the pages, the MENU's rows, the tempo's other ways, MENU > SELECT BPM)
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/nav_test tests/nav_test.c -lm
 build/host/nav_test
+# SAVE > TOOLS' NEW, NEW + DEFAULT SOUNDS and their undo (tests/new_song_test.c)
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/new_song_test tests/new_song_test.c -lm
+build/host/new_song_test
