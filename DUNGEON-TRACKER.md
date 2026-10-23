@@ -219,16 +219,16 @@ Dungeon Tracker is a plain four-track FM groovebox.
 
 **To play:** hold **HOME** for the MENU, turn **ALGORITHM** to the **GAME** tab (one step left from DISPLAY), and
 switch **DUNGEON** on with KNOB 1 or OCT+. A run starts at B1. Goblins, skeletons and slimes come up the corridor
-and are fought one round per beat, and every fifth floor has an ogre in the middle. The game then runs on every page,
+and are fought in turns, played by your song (below), and every fifth floor has an ogre in the middle. The game then runs on every page,
 whatever HOME shows. Switch DUNGEON off to end the run: every cut track comes back at once. It is off again after
 every power-on; it is not saved.
 
 | Track | Adventurer | Fights with |
 |---|---|---|
-| T1 | RGE rogue | a sword |
-| T2 | CLR cleric | heals the party when it is hurt, otherwise a strike; raises the fallen |
+| T1 | RGE rogue | a sword; dodges when the drums leave a gap |
+| T2 | CLR cleric | heals the party when it is hurt, otherwise a strike; heals over time while a note is held; raises the fallen |
 | T3 | FTR fighter | an axe, more health |
-| T4 | MAG mage | a bolt every other beat, hits hard |
+| T4 | MAG mage | bolts that ignore armour; stores power while a note is held |
 
 * Every track that has steps and is not muted joins the party. With no steps anywhere the view reads NO PARTY.
 * Each adventurer's level (L1–L9, in the HUD) is how much its track does. Levels rise with:
@@ -239,11 +239,38 @@ every power-on; it is not saved.
   42. A wounded adventurer's name blinks (under a third of its health). Make a track busier mid-fight and it gains the
   extra health at once.
 * After 24 squares the party takes the stairs one floor down (B1, B2, …). Monsters grow with depth **and match your
-  party**: their health and their blows scale with the adventurers' average level, so a busy song meets tougher
-  monsters, a fight lasts about three beats, and they get to strike back. Walking heals a little every other square;
-  the cleric heals whoever drops under half. Expect push and pull: with a typical song, in ten minutes, around eight
-  falls and one whole-party fall, the first a few minutes in. A busy song still goes deepest and falls least; a lone
-  simple loop struggles most.
+  party**: their health and blows scale with the adventurers' average level, with how many there are, and with how
+  much they play. Walking heals a little every other square (more when there is no cleric in the party). Expect push
+  and pull: with a typical song, in ten minutes, around eight falls and one whole-party fall, the first about five
+  minutes in, and fights of about six beats.
+
+### Fighting in turns (1.0)
+
+A fight is played by the song, sixteenth by sixteenth. A **round is five sixteenths**: the monster's turn first,
+then T1's, T2's, T3's and T4's, one each. A beat has four sixteenths, so the rounds turn against the beat
+(five against four): each round starts a beat later and one sixteenth deeper, and every turn visits every place in
+the beat once every five beats. Nothing on the screen shows whose turn it is; listen, watch who swings, and work it
+out.
+
+On its turn, each hero does what **its track played since its last turn**: only notes that actually sounded count (a
+step whose chance skipped it is nothing), and a fallen hero's turn simply passes.
+
+* **A note: the action.** The rogue and the fighter strike, the mage bolts, the cleric heals whoever is under 60 %
+  (or strikes when nobody is). The strongest note since the last turn sets how strong:
+  * velocity scales it, an **accent** adds half again and may land a critical hit;
+  * on the kit, each drum weighs differently (the kick heaviest, the hats lightest);
+  * a **chord** adds a quarter a note; on the cleric it heals the whole party;
+  * a **ratchet** is a flurry of hits, a **slide** cuts through a skeleton's armour;
+  * a **chance** below 100 % hits harder when it does play, a **nudge** off the grid is a sneak attack (the rogue's best);
+  * more notes in the same window add a little (+15 % each, up to +45 %).
+* **A held note (tie).** The rogue and the fighter follow through, weaker each turn (half, then a quarter). The
+  cleric heals over time, more each turn the note is held; the mage stores power for its next bolt.
+* **Nothing played: charge.** The hero gathers itself: +100 % on its next action for each turn it waited, up to four.
+  Sparse parts hit rarely but hard; busy parts hit often.
+* **An explicit REST step: guard.** The monster hits a guarding hero half as often.
+* **The monster** strikes one standing hero at random each round. If it picks the rogue on a sixteenth where **T1
+  plays no drum**, the rogue isn't there: a dodge. A busy drum part never dodges; a sparse or syncopated one often
+  does.
 
 ### Falling cuts the track
 
@@ -262,10 +289,12 @@ A fallen adventurer gets back up:
 
 Muting and unmuting a fallen track does not raise it.
 
-How often it happens (ten minutes at 120 BPM, 20 runs each): a lone kick loop reaches about B4 and is silent about
-6 % of the time (it falls roughly twice a minute). A kit, chords and bass reach about B21, and each track drops out
-for a bar or two roughly every 30 seconds between them. A busy four-track song reaches about B36, and its tracks are
-cut less than 0.1 % of the time.
+How often it happens (ten minutes at 120 BPM, 20 runs each): a lone kick loop on the beats reaches about B12 and is
+silent about 1 % of the time (its rogue dodges three monster turns in four). A busy four-track song reaches about B31,
+and its tracks are cut about 0.2 % of the time. The power-on songs fall about eight times in ten minutes at their own
+tempos. `tools/combat_sim.py` models the fight; it was tuned on the power-on songs and a set of styles (sparse,
+busy, syncopated, drones, drums and bass only) so the music decides more: syncopated and expressive parts fall least,
+and nobody is left out.
 
 MENU > DISPLAY > HOME still offers Felucca's TRACKS and LEVELS views in place of the corridor (DUNGEON). With the
 game on, it keeps playing, and cutting, behind them.

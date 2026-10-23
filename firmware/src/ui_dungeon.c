@@ -5,10 +5,11 @@
  * party walks it a square a beat, and the HUD shows each track's adventurer and level; nothing is rolled, no monster
  * comes, nothing is cut. MENU > GAME > DUNGEON ON (hold HOME for the MENU; dg_game, not saved) starts a run at B1:
  * the game below plays on every page until it is switched off, which ends the run and lifts every cut at once.
- * The game: the party walks one square a beat (the tempo's), monsters come up the corridor and are fought a
- * round a beat. The song is the party:
- *   - every track that has steps and is not muted is one adventurer: T1 the ROGUE (a sword), T2 the CLERIC (heals
- *     the party), T3 the FIGHTER (an axe, more hit points), T4 the MAGE (a bolt, every other beat, hard);
+ * The game: the party walks one square a beat (the tempo's), monsters come up the corridor and are fought in turns
+ * (Dungeon Tracker 1.0: a turn a sixteenth, the monster's then T1..T4's, each hero acting on what its track played;
+ * dg_sixteenth below). The song is the party:
+ *   - every track that has steps and is not muted is one adventurer: T1 the ROGUE (a sword; dodges on a drumless
+ *     sixteenth), T2 the CLERIC (heals the party), T3 the FIGHTER (an axe, more hit points), T4 the MAGE (bolts);
  *   - each adventurer's LEVEL (1..9) is how much its track does: notes on, distinct pitches (a kit: distinct drums),
  *     chords, parameter locks, chances, conditions, ratchets and nudges (dg_level);
  *   - a floor is cleared after a walk of DG_FLOOR squares: the stairs, one floor down. Monsters get stronger with the
@@ -83,6 +84,15 @@ static struct {
     uint32_t tph;                                        /* the turn's way, 0..65535 */
     uint32_t seed;                                       /* the hallway: its walls' pattern */
     uint16_t way[3];                                     /* straight on, left, right: how often (tests/dungeon_test.c) */
+    /* Dungeon Tracker 1.0: the fight in turns (dg_sixteenth) */
+    uint32_t sstep;                                      /* the next sixteenth to read (seq.c dgq) */
+    uint8_t tslot;                                       /* whose turn the next sixteenth is: 0 the monster, 1..4 T1..T4 */
+    uint8_t charge[4];                                   /* turns passed without a note (the next action: +100 % each) */
+    uint8_t chan[4];                                     /* the cleric's heal growing while held, the mage's power stored */
+    uint8_t guard;                                       /* bit k: T(k+1) rested on its turn, harder to hit */
+    struct { uint8_t on, fl, tie, rest; uint16_t w; } pw[4];   /* what each track played since its hero's last turn */
+    uint16_t act[4];                                     /* how often a hero finds something to do, Q8 (dg_activity) */
+    uint32_t dodged;                                     /* the rogue's dodges (tests/dungeon_test.c) */
 } dg = {0, 0, 0, 0, 1, 1};
 #define DG_TURN 2u                                       /* a turn lasts 1 / DG_TURN beat */
 static const char DG_HEAD[4] = {'N', 'E', 'S', 'W'};
@@ -141,6 +151,24 @@ static uint32_t dg_level(const track_t *t)
     score = on / 2u + 2u * (dp < 12u ? dp : 12u) + chords + motion_lock_count(t) + 2u * extras;
     return (uint32_t)clamp(1 + (int32_t)score / 5, 1, 9);
 }
+/* how often the hero finds something to do on its turn (Q8, 256 = always): the share of its five sixteenths with a new
+ * note (a tie: half for the casters, a little for the weapons), as one turn of five catches one. A quiet party meets
+ * smaller monsters (dg_walk) */
+static uint32_t dg_activity(const track_t *t, uint32_t k)
+{
+    static const uint8_t PER[10] = {4, 2, 1, 1, 1, 1, 8, 16, 32, 64};   /* sixteenths a step, by DIV (N_DIV) */
+    uint32_t len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP), i, on = 0, tie = 0, x, r = 256u;
+    const step_t *s = seq_steps(t);
+    for (i = 0; i < len; i++) {
+        on += step_on(&s[i]);
+        tie += s[i].time == ST_TIE;
+    }
+    x = (on * 256u + tie * (k == 1u || k == 3u ? 128u : 38u)) / (len * PER[clamp(t->p[P_SDIV], 0, 9)]);
+    x = x > 256u ? 256u : x;
+    for (i = 0; i < 5u; i++)
+        r = r * (256u - x) / 256u;                       /* (1 - x)^5: a turn's five sixteenths, none with a note */
+    return 256u - r;
+}
 static int16_t dg_hpmax(uint32_t k) { return (int16_t)(6 + 4 * dg.lvl[k] + (k == DG_FTR ? 4 : 0)); }
 static int dg_fallen(uint32_t k) { return (dg.dead >> k) & 1u; }
 static int dg_deadly(void)                               /* a fall cuts its track: the game on, playing */
@@ -170,6 +198,7 @@ static void dg_party(void)
         int16_t was = dg_hpmax(k);
         dg.in[k] = (uint8_t)in;
         dg.lvl[k] = (uint8_t)(in ? dg_level(t) : 0u);
+        dg.act[k] = (uint16_t)(in ? dg_activity(t, k) : 0u);
         if (dg_fallen(k))
             dg.hp[k] = 0;                                /* (fallen: until raised, joining or not) */
         else if (joins)
@@ -202,6 +231,13 @@ static int32_t dg_avg10(void)                            /* the party's average 
     return n ? (int32_t)(s * 10u / n) : 10;
 }
 
+static uint32_t dg_act_avg(void)                        /* the party's activity, Q8 (those in it) */
+{
+    uint32_t k, a = 0, n = dg_party_n();
+    for (k = 0; k < 4u; k++)
+        a += dg.in[k] ? dg.act[k] : 0u;
+    return n ? a / n : 256u;
+}
 /* a beat while walking: one square on; a monster may come; the stairs at the end of the floor */
 static void dg_walk(void)
 {
@@ -211,7 +247,8 @@ static void dg_walk(void)
     dg_step_on();
     for (k = 0; k < 4u && (dg.walked & 1u); k++)      /* walking heals a little, the cleric more (every other square) */
         if (dg.in[k] && !dg_fallen(k) && dg.hp[k] < dg_hpmax(k))
-            dg.hp[k] = (int16_t)(dg.hp[k] + (dg.in[DG_CLR] && !dg_fallen(DG_CLR) ? 2 : 1) - (dg_rand() & 1u));
+            dg.hp[k] = (int16_t)(dg.hp[k] + (dg.in[DG_CLR] && !dg_fallen(DG_CLR) ? 2 : !dg.in[DG_CLR] ? 3 : 1) -
+                                 (dg_rand() & 1u));      /* (1.0: no cleric in the party, a longer rest) */
     if (dg.dead && dg.in[DG_CLR] && !dg_fallen(DG_CLR) && dg_roll(100u / DG_RAISE)) {   /* the cleric raises one */
         for (k = 0; k < 4u && !dg_fallen(k); k++)
             ;
@@ -233,12 +270,18 @@ static void dg_walk(void)
         uint32_t boss = dg.floor % 5u == 0u && dg.walked == DG_FLOOR / 2u;
         dg.mon = (uint8_t)(boss ? DM_OGRE : DM_GOBLIN + dg_rand() % 3u);
         dg.mon_dist = 4;
-        dg.mon_max = dg.mon_hp = (int16_t)((4 + 3 * dg.floor + 16 * dg_avg10() / 10) * (boss ? 3 : 1) +
-                                           (dg.mon == DM_SLIME ? -2 : 0));   /* (DIFFICULTY, at dg_avg10) */
+        int32_t hp = (4 + 3 * (int32_t)dg.floor + 16 * dg_avg10() / 10) * (boss ? 3 : 1) + (dg.mon == DM_SLIME ? -2 : 0);
+#if RONDO_LAYOUT
+        hp = hp * (1 + (int32_t)dg_party_n()) / 5;       /* 1.0: a smaller party, a smaller monster; */
+        hp = hp * (77 + 179 * (int32_t)dg_act_avg() / 256) / 256;   /* a quiet one, too; */
+        hp = hp * 7 / 5;                                 /* (the turns: tuned, tools/combat_sim.py) */
+#endif
+        dg.mon_max = dg.mon_hp = (int16_t)(hp > 1 ? hp : 1);   /* (DIFFICULTY, at dg_avg10) */
         dg_say(DM_NAME[dg.mon]);
     }
 }
 
+#if !RONDO_LAYOUT
 /* a beat of the fight: the party strikes, then the monster */
 static void dg_fight(void)
 {
@@ -295,6 +338,210 @@ static void dg_fight(void)
         dg_say("THE PARTY FALLS");
     }
 }
+#else
+/* Dungeon Tracker 1.0: THE FIGHT IN TURNS. A round is five sixteenths of the song: the monster's, then T1 T2 T3 T4's,
+ * one each, so it turns against the beat (five against four: every turn visits every place in the beat once in five
+ * beats). What a hero does on its turn is what its track played since its last turn (seq.c dgq, what really sounded):
+ *   - a note: the action, as strong as the strongest note (velocity, accent, the drum, a chord, a chance that played, a
+ *     nudge; dgq_on) and a little more for the others (+15 % each, to +45 %), +100 % for each turn charged before it;
+ *     the rogue and the fighter strike (a ratchet: as many hits, a slide through a skeleton's armour, an accent may
+ *     crit), the mage bolts with the power it stored, the cleric heals one who is hurt (a chord: everyone) or strikes;
+ *   - a tie, the note held: a weapon follows through, weaker each turn (1/2, 1/4, never under 1/4); the cleric heals a
+ *     little, more each turn held; the mage stores power for its next bolt;
+ *   - an explicit REST: it guards (the monster hits it half as often);
+ *   - nothing: it charges (up to four turns).
+ * The monster strikes one standing adventurer at random; the rogue dodges it when its own sixteenth has no drum.
+ * Tuned on the power-on songs and a set of styles (tools/combat_sim.py): about what DIFFICULTY moderate was, the music
+ * deciding more (busy and syncopated parts fall least, a lone simple loop most) */
+#define DG_CHARGE_MAX 4u
+static void dg_slain(void)
+{
+    dg.kills++;
+    dg_say(dg.mon == DM_OGRE ? "OGRE SLAIN" : "SLAIN");
+    dg.mon = DM_NONE;
+    dg.mon_dist = 0;
+}
+static int32_t dg_base(uint32_t k)                       /* a blow's dice, by level and class */
+{
+    int32_t lv = dg.lvl[k];
+    return lv + (int32_t)(dg_rand() % (uint32_t)(lv + 1)) + (k == DG_RGE ? 2 : k == DG_FTR ? 1 : k == DG_MAG ? lv * 3 / 4 : 0);
+}
+static void dg_strike(uint32_t k, int32_t d256, int pierce)   /* damage x 256 */
+{
+    int32_t d = (d256 + 128) >> 8;
+    if (dg.mon == DM_SKEL && !pierce)
+        d -= 2;                                          /* (bones: a blade glances, a slide or a spell does not) */
+    if (d <= 0 || !dg.mon)
+        return;
+    dg.mon_hp = (int16_t)(dg.mon_hp - d);
+    dg.dmg = (int16_t)d;
+    dg.mon_hit = 6;
+    (void)k;
+}
+static void dg_heal(uint32_t j, int32_t h)
+{
+    if (h > 0 && dg.in[j] && !dg_fallen(j))
+        dg.hp[j] = (int16_t)clamp(dg.hp[j] + h, 0, dg_hpmax(j));
+}
+static uint32_t dg_hurt_most(int ratio)                  /* the standing one hurt most (by health, or its share), 4: none */
+{
+    uint32_t j, w = 4;
+    for (j = 0; j < 4u; j++) {
+        if (!dg.in[j] || dg_fallen(j) || dg.hp[j] >= dg_hpmax(j))
+            continue;
+        if (w == 4u || (ratio ? dg.hp[j] * dg_hpmax(w) < dg.hp[w] * dg_hpmax(j) : dg.hp[j] < dg.hp[w]))
+            w = j;
+    }
+    return w;
+}
+static void dg_hero(uint32_t k)
+{
+    int32_t lv = dg.lvl[k], d256;
+    uint32_t on = dg.pw[k].on, fl = dg.pw[k].fl, tie = dg.pw[k].tie, rest = dg.pw[k].rest, w = dg.pw[k].w, j;
+    memset(&dg.pw[k], 0, sizeof dg.pw[k]);
+    if (!dg.in[k] || dg_fallen(k))
+        return;                                          /* (its turn passes: a round is always five) */
+    dg.guard &= (uint8_t)~(1u << k);
+    if (!on && !tie) {
+        if (rest)
+            dg.guard |= (uint8_t)(1u << k);              /* REST: on guard */
+        else if (dg.charge[k] < DG_CHARGE_MAX)
+            dg.charge[k]++;                              /* nothing: it gathers itself */
+        return;
+    }
+    dg.swing[k] = 10;
+    if (!on) {                                           /* a tie: the note held */
+        if (k == DG_CLR) {
+            dg.chan[k] = (uint8_t)(dg.chan[k] < 4u ? dg.chan[k] + 1u : 4u);
+            j = dg_hurt_most(1);
+            if (j < 4u)
+                dg_heal(j, ((2 + lv) * dg.chan[k] * 3 + 5) / 10);   /* (1 + level / 2) x turns held x 0.6 */
+        } else if (k == DG_MAG) {
+            dg.chan[k] = (uint8_t)(dg.chan[k] < 4u ? dg.chan[k] + 1u : 4u);
+        } else {
+            int32_t f = tie < 2u ? 128 : 64;             /* 1/2, then 1/4 from the second tie on */
+            d256 = dg_base(k) * f;
+            if (d256 >= 128 && dg_roll((uint32_t)(50 + 5 * lv)))
+                dg_strike(k, d256, 0);
+        }
+        return;
+    }
+    {   /* a note: the action */
+        uint32_t extra = on - 1u, fx = extra * 15u, acc = fl & DGQ_ACC, r = ((fl >> DGQ_RAT_SH) & 3u) + 1u, i;
+        w = w * (1u + dg.charge[k]);
+        w = w * (100u + (fx > 45u ? 45u : fx)) / 100u;
+        dg.charge[k] = 0;
+        if (k == DG_CLR) {
+            dg.chan[k] = 1;
+            for (j = 0; j < 4u && !(dg.in[j] && !dg_fallen(j) && dg.hp[j] * 10 < dg_hpmax(j) * 6); j++)
+                ;
+            if (j < 4u) {                                /* someone under 60 %: a heal */
+                if ((fl >> DGQ_CH_SH) & 3u) {            /* a chord: everyone, half as much */
+                    for (j = 0; j < 4u; j++)
+                        dg_heal(j, (int32_t)(((uint32_t)(2 + lv) * w + 256u) / 512u));
+                } else {
+                    dg_heal(dg_hurt_most(0), (int32_t)(((uint32_t)(3 + lv) * w + 128u) / 256u));
+                }
+                return;
+            }
+            d256 = dg_base(k) * (int32_t)w * 154 / 256;  /* nobody hurt: the mace (x 0.6) */
+        } else if (k == DG_MAG) {
+            d256 = dg_base(k) * (int32_t)w * (int32_t)(2u + dg.chan[k]) / 2;   /* + 50 % a turn stored */
+            dg.chan[k] = 0;
+        } else {
+            d256 = dg_base(k) * (int32_t)w;
+        }
+        if (r > 1u)
+            d256 = d256 / (int32_t)r * 13 / 10;          /* a ratchet: its hits, a little more in all */
+        for (i = 0; i < r; i++)
+            if (dg_roll((uint32_t)(50 + 5 * lv + (acc ? 10 : 0))))
+                dg_strike(k, acc && dg_roll(15u) ? d256 * 2 : d256, (fl & DGQ_SLIDE) || k == DG_MAG);
+    }
+}
+static void dg_monster(const dgq_t *b)                   /* the monster's turn: b, this sixteenth's tracks */
+{
+    uint32_t k, n = 0, alive[4], p, hit;
+    for (k = 0; k < 4u; k++)
+        if (dg.in[k] && !dg_fallen(k))
+            alive[n++] = k;
+    if (!n)
+        return;
+    p = alive[dg_rand() % n];
+    hit = (dg.guard >> p) & 1u ? 30u : 60u;
+    dg.mon_atk = 5;
+    if (p == DG_RGE && !b[DG_RGE].on) {                  /* no drum on its sixteenth: the rogue is not there */
+        dg.dodged++;
+        return;
+    }
+    if (dg_roll(hit)) {
+        int32_t d = 1 + dg.floor / 4 + 13 * dg_avg10() / 100 + (dg.mon == DM_OGRE ? 3 : 0);
+        d = (d * (1 + (int32_t)dg_party_n()) * 21 + 50) / 100;   /* (a smaller party, a smaller blow; x 1.05) */
+        dg.hp[p] = (int16_t)(dg.hp[p] - (d > 1 ? d : 1));
+        if (dg.hp[p] <= 0) {                             /* it falls: its track is cut (dg_tick) */
+            dg.hp[p] = 0;
+            dg.dead |= (uint8_t)(1u << p);
+            dg_say(DG_FALL[dg_deadly()][p]);
+        }
+    }
+    if (!dg_up()) {                                      /* the party falls: a bar of silence, then the retreat */
+        dg.wipe = DG_WIPE;
+        dg.mon = DM_NONE;
+        dg.mon_dist = 0;
+        dg_say("THE PARTY FALLS");
+    }
+}
+static void dg_engage(void)                              /* a fight begins: the monster's turn first */
+{
+    dg.tslot = 0;
+    dg.guard = 0;
+    memset(dg.charge, 0, sizeof dg.charge);
+    memset(dg.chan, 0, sizeof dg.chan);
+    memset(dg.pw, 0, sizeof dg.pw);
+}
+/* a sixteenth of the song played: what each track did goes to its hero; fighting, it is someone's turn */
+static void dg_sixteenth(const dgq_t *b)
+{
+    uint32_t k, slot;
+    for (k = 0; k < 4u; k++) {
+        if (b[k].on) {
+            dg.pw[k].on = (uint8_t)(dg.pw[k].on + b[k].on < 255u ? dg.pw[k].on + b[k].on : 255u);
+            if (b[k].w > dg.pw[k].w) {
+                dg.pw[k].w = b[k].w;
+                dg.pw[k].fl = b[k].fl;
+            }
+        }
+        if (b[k].tie > dg.pw[k].tie)
+            dg.pw[k].tie = b[k].tie;
+        dg.pw[k].rest |= b[k].rest;
+    }
+    if (dg.wipe || !dg.mon || dg.mon_dist > 1u)
+        return;
+    slot = dg.tslot;
+    dg.tslot = (uint8_t)((dg.tslot + 1u) % 5u);
+    if (!slot) {
+        dg_monster(b);
+        return;
+    }
+    dg_hero(slot - 1u);
+    if (dg.mon && dg.mon_hp <= 0)
+        dg_slain();
+}
+/* a whole round as if every track played a plain note on every sixteenth (tests/dungeon_test.c) */
+static void dg_fight(void)
+{
+    dgq_t b[NTRK];
+    uint32_t i, k;
+    for (i = 0; i < 5u && dg.mon && dg.mon_dist <= 1u && !dg.wipe; i++) {
+        for (k = 0; k < NTRK; k++) {
+            b[k].on = 1;
+            b[k].fl = 0;
+            b[k].tie = b[k].rest = 0;
+            b[k].w = 256;
+        }
+        dg_sixteenth(b);
+    }
+}
+#endif
 static void dg_retreat(void)                             /* after the fallen party's bar: one floor up, healed */
 {
     uint32_t k;
@@ -321,6 +568,9 @@ static void dg_game_set(uint32_t on)
     dg_game = (uint8_t)(on != 0u);
     dg_cut = 0;
     dg_party();                                          /* (all of them join at full) */
+#if RONDO_LAYOUT
+    dg.sstep = dgq.step;
+#endif
     if (on)
         dg_say("INTO THE DUNGEON");
 }
@@ -444,6 +694,9 @@ static void dg_tick(void)
             for (k = 0; k < 4u; k++)
                 if (dg.in[k] && dg.hp[k] < dg_hpmax(k))
                     dg.hp[k]++;
+#if RONDO_LAYOUT
+        dg.sstep = dgq.step;                             /* (nothing played meanwhile counts) */
+#endif
         dg_cut = 0;
         return;
     }
@@ -453,7 +706,18 @@ static void dg_tick(void)
         dg_turning(add);
         if (!dg.wipe && !dg_up())                        /* (fallen, and nobody else: as a fallen party) */
             dg.wipe = DG_WIPE;
-        if (dg.wipe || (dg.mon && dg.mon_dist <= 1u)) {  /* fighting: a round a beat, the view standing still */
+#if RONDO_LAYOUT
+        {   /* 1.0: the sixteenths the song played since the last tick: the fight's turns (dg_sixteenth) */
+            uint32_t now_s = dgq.step;
+            if (now_s - dg.sstep > DGQ_N - 2u)
+                dg.sstep = now_s - (DGQ_N - 2u);         /* (far behind: the latest only) */
+            while (dg.sstep != now_s) {
+                dg_sixteenth(dgq.b[dg.sstep % DGQ_N]);
+                dg.sstep++;
+            }
+        }
+#endif
+        if (dg.wipe || (dg.mon && dg.mon_dist <= 1u)) {  /* fighting: the view standing still */
             dg.fphase += add;
             if (dg.fphase >= 65536u) {
                 dg.fphase &= 0xFFFFu;
@@ -461,8 +725,11 @@ static void dg_tick(void)
                 if (dg.wipe) {
                     if (!--dg.wipe)
                         dg_retreat();
-                } else
-                    dg_fight();
+                }
+#if !RONDO_LAYOUT
+                else
+                    dg_fight();                          /* (a round a beat) */
+#endif
             }
             dg.phase = 0;
             dg_cut = dg_deadly() ? dg.dead & 15u : 0u;
@@ -479,6 +746,9 @@ static void dg_tick(void)
                 dg_walk();
             if (dg.mon && dg.mon_dist <= 1u) {
                 dg.phase = 0;
+#if RONDO_LAYOUT
+                dg_engage();                             /* (the monster's turn on the next sixteenth) */
+#endif
                 break;
             }
         }

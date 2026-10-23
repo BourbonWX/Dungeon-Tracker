@@ -835,6 +835,9 @@ static void bank_stop(void);
 static void bank_tick(uint32_t n);
 static void bank_start(void);
 #endif
+#if RONDO_LAYOUT
+static void dgq_start(void);                          /* (below: the dungeon's sixteenths) */
+#endif
 static void seq_start(void)
 {
     uint32_t i;
@@ -843,6 +846,9 @@ static void seq_start(void)
 #endif
     motion_begin();
     chain_start();
+#if RONDO_LAYOUT
+    dgq_start();                                   /* (Dungeon Tracker: the dungeon's sixteenths from here) */
+#endif
     for (i = 0; i < NTRK; i++) {                   /* every track from its step 0, together */
         track_t *t = &trk[i];
         t->seq_idx = (uint16_t)(t->p[P_SLEN] - 1);
@@ -935,6 +941,90 @@ static int seq_miss(const track_t *t, const step_t *s, uint32_t idx)
     return step_chance(s) < 100u && rng() % 100u >= step_chance(s);
 }
 #define SEQ_REP (1u << 16)
+#if RONDO_LAYOUT
+/* Dungeon Tracker 1.0: what each track played, a sixteenth at a time (the dungeon's turns: ui_dungeon.c dg_sixteenth).
+ * The ISR fills the bucket of the sixteenth playing (dgq.step, counted on the sequencer's own clock: dgq_clock), the
+ * main loop reads the ones before it. A note that plays (its chance or condition passed; a ratchet's repeats are the
+ * same note) is weighed here (dgq_on): its velocity, accent, drums, chord, chance and nudge; a tie that holds counts its
+ * ties since the note; an explicit REST step is a rest. The ring holds DGQ_N sixteenths: the main loop is never that
+ * far behind (it skips ahead if it is) */
+#define DGQ_N 8u
+#define DGQ_ACC 1u                                      /* fl: accented */
+#define DGQ_SLIDE 2u                                    /* .. a slide */
+#define DGQ_RAT_SH 2u                                   /* .. ratchet hits - 1 (bits 2, 3) */
+#define DGQ_CH_SH 4u                                    /* .. the chord's notes - 1 (bits 4, 5) */
+typedef struct {
+    uint8_t on;                                         /* notes that played (a busy sixteenth: 1) */
+    uint8_t fl;                                         /* the strongest one's: DGQ_ACC DGQ_SLIDE, ratchet, chord */
+    uint8_t tie;                                        /* a tie held: ties since its note (1..), 0 none */
+    uint8_t rest;                                       /* an explicit REST step */
+    uint16_t w;                                         /* the strongest one's weight, Q8 (256 = a plain note) */
+} dgq_t;
+static struct {
+    volatile uint32_t step;                             /* the sixteenth playing (its bucket: b[step % DGQ_N]) */
+    uint32_t pos;                                       /* samples into it */
+    uint8_t ties[NTRK];
+    dgq_t b[DGQ_N][NTRK];
+} dgq;
+static void dgq_next(void)                              /* (ISR) the next sixteenth: its bucket empty */
+{
+    memset(dgq.b[(dgq.step + 1u) % DGQ_N], 0, sizeof dgq.b[0]);
+    RING_PUBLISH();
+    dgq.step++;
+}
+static void dgq_clock(uint32_t n)                       /* (ISR) the sequencer's samples this block, before its steps */
+{
+    uint32_t six = div_samples(2);
+    if (!song.playing)
+        return;
+    dgq.pos += n;
+    while (six && dgq.pos >= six) {
+        dgq.pos -= six;
+        dgq_next();
+    }
+}
+static void dgq_start(void) { dgq.pos = 0; dgq_next(); }   /* (ISR) PLAY: the first sixteenth from now */
+/* a drum's weight (Q8): KICK SNARE CLAP HATCL HATOP TOM RIM BELL */
+static const uint16_t DGQ_LANE[NLANE] = {307, 246, 246, 154, 205, 246, 205, 205};
+static void dgq_on(const track_t *t, const step_t *s)    /* (ISR) a step's notes play */
+{
+    uint32_t k = trk_index(t), v = s->vel ? s->vel : 96u, w, acc, i, lw = 0, nl = 0, ch = step_chance(s), r = step_ratchet(s);
+    dgq_t *b = &dgq.b[dgq.step % DGQ_N][k];
+    acc = (s->flags & SF_ACCENT) || (s->acc & s->hit);
+    w = 128u + v * 128u / 127u;
+    if (acc)
+        w = w * 3u / 2u;
+    for (i = 0; i < NLANE; i++)
+        if ((s->hit >> i) & 1u) {
+            lw = DGQ_LANE[i] > lw ? DGQ_LANE[i] : lw;
+            nl++;
+        }
+    if (nl)
+        w = w * (lw + 26u * (nl - 1u)) / 256u;
+    if (s->n > 1u)
+        w = w * (3u + s->n) / 4u;                       /* +25 % a note more */
+    if (ch < 100u && s->probability < COND_FIRST)
+        w = w * (200u - ch) / 100u;                     /* a gamble that played hits harder */
+    if (step_nudge(s))
+        w = w * (k == 0u ? 15u : 11u) / 10u;            /* off the grid: the rogue's sneak attack */
+    dgq.ties[k] = 0;
+    if (b->on < 255u)
+        b->on++;
+    if (w > b->w) {
+        b->w = (uint16_t)(w < 65535u ? w : 65535u);
+        b->fl = (uint8_t)((acc ? DGQ_ACC : 0u) | (s->flags & SF_SLIDE ? DGQ_SLIDE : 0u) | ((r - 1u) << DGQ_RAT_SH) |
+                          ((uint32_t)(s->n > 1u ? (s->n > 4u ? 3u : s->n - 1u) : 0u) << DGQ_CH_SH));
+    }
+}
+static void dgq_tie(const track_t *t)                   /* (ISR) a tie holds the note on */
+{
+    uint32_t k = trk_index(t);
+    if (dgq.ties[k] < 255u)
+        dgq.ties[k]++;
+    dgq.b[dgq.step % DGQ_N][k].tie = dgq.ties[k];
+}
+static void dgq_rest(const track_t *t) { dgq.b[dgq.step % DGQ_N][trk_index(t)].rest = 1; }
+#endif
 #define SEQ_ROLLED (1u << 17)   /* seq_tick rolled the chance already (before the step's parameter locks): it passed */
 #define SEQ_MISS (1u << 18)     /* .. it failed: nothing plays */
 static __attribute__((noinline)) void seq_step(track_t *t, const step_t *s, uint32_t idx, uint32_t period, uint32_t skip)
@@ -962,15 +1052,28 @@ static __attribute__((noinline)) void seq_step(track_t *t, const step_t *s, uint
     }
     if (s->time == ST_TIE) {
         if (t->seq_n) {
+#if RONDO_LAYOUT
+            if (song.playing)
+                dgq_tie(t);
+#endif
             t->seq_off = gate + period / 2u;
             t->seq_hold = (s->flags & SF_SLIDE) != 0 || next_tie;   /* chains hold at any GATE / swing */
         }
         return;
     }
     if (s->time == ST_REST || (!s->n && !s->hit)) {
+#if RONDO_LAYOUT
+        if (song.playing && s->time == ST_REST)
+            dgq_rest(t);
+        dgq.ties[trk_index(t)] = 0;
+#endif
         seq_release(t);
         return;
     }
+#if RONDO_LAYOUT
+    if (song.playing && !(skip & SEQ_REP))
+        dgq_on(t, s);
+#endif
     if (hits > 1u) {                                /* RATCH: the gate of a part, no slide or tie out */
         gate = step_samples(t, period, idx) / hits * (uint32_t)t->p[P_SGATE] / 128u;
         if (!(skip & SEQ_REP))
@@ -1536,6 +1639,9 @@ static void events_block(uint32_t n)
     chain_tick(seq_n);
 #if RONDO_LAYOUT
     bank_tick(seq_n);                                 /* RONDO: the next pattern of the bank at this one's end */
+#endif
+#if RONDO_LAYOUT
+    dgq_clock(seq_n);                                 /* Dungeon Tracker: the dungeon's sixteenths (its turns) */
 #endif
     for (i = 0; i < NTRK; i++)
         seq_tick(&trk[i], seq_n);

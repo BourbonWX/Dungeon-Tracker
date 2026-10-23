@@ -13,7 +13,7 @@
  *    silence, then the retreat a floor up, healed; stopping raises everyone.
  * 6. the sound: a cut track's audio ramps to silence and comes back when raised (perform.c's black-key mute).
  * 7. ten minutes x 20 seeds: the simple loop is cut the most, the busy song now and then (Dungeon Tracker's moderate
- *    DIFFICULTY: the monsters match the party).
+ *    DIFFICULTY: the monsters match the party; 1.0: a lone kick on the beats dodges three monster turns in four).
  * 7b. twenty power-on songs (boot_song.c), ten minutes each at 120 BPM: push and pull, a few falls and a whole-party
  *    fall now and then, the first fall a few minutes in, kills all along.
  * 8. the game off (power-on): the corridor walks a square a beat, the party and levels shown, but no monster in ten
@@ -21,7 +21,13 @@
  *    from B1, OFF the run over and a cut lifted at once.
  * 9. the crossroads: ten minutes at 120 BPM of a 16-step loop (4 beats a phrase), the game off: a crossroads every other
  *    phrase, reached as that phrase ends (within a beat of the next one starting), straight on / left / right about a
- *    third each, the turns half a beat and the compass following; the game on, a monster ahead: straight on. */
+ *    third each, the turns half a beat and the compass following; the game on, a monster ahead: straight on.
+ * 10. 1.0, the fight in turns (dg_sixteenth): a round is five sixteenths, the monster's first, T1..T4 after, so its
+ *    turns walk through the beat (sixteenths 0 5 10 15: each place once); a hero with nothing played charges and its
+ *    next blow is stronger; a REST guards; a drumless sixteenth, the rogue dodges; a tie: the weapons follow through
+ *    weaker, the cleric heals while held (more each turn), the mage stores power and bolts harder; a step that does not
+ *    play (chance 0) is nothing to its hero; a party of two still takes five sixteenths a round; a smaller party, a
+ *    smaller monster. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 #include "../firmware/src/boot_song.c"           /* (7b: the power-on songs) */
@@ -79,21 +85,37 @@ static void reset_game(uint32_t seed)
     dg_game = 1;                                         /* (sections 1..7: the game on) */
 }
 static uint32_t cut_ms[4], play_ms;
+/* 1.0: the fight's turns follow what the sequencer plays (seq.c dgq): 33 ms of it (its events, no sound), then a UI tick */
+static uint32_t seq_left;
+static void seq_ms33(void)
+{
+    uint32_t n = seq_left + FS * 33u / 1000u;
+    for (; n >= CTL; n -= CTL)
+        events_block(CTL);
+    seq_left = n;
+}
+static void go(void) { song.g[G_BPM] = 120; seq_start(); song.playing = 1; }
+static void halt(void) { song.playing = 0; seq_stop(); }
+static void tick33(void)
+{
+    fm1_ms += 33u;
+    if (song.playing)
+        seq_ms33();
+    dg_tick();
+}
 static uint32_t play(uint32_t seconds)               /* the deepest floor reached */
 {
     uint32_t ms, best = 1, k;
-    song.playing = 1;
-    song.g[G_BPM] = 120;
+    go();
     for (ms = 0; ms < seconds * 1000u; ms += 33u) {
-        fm1_ms += 33u;
-        dg_tick();
+        tick33();
         play_ms += 33u;
         for (k = 0; k < 4u; k++)
             cut_ms[k] += ((dg_cut >> k) & 1u) * 33u;
         best = dg.floor > best ? dg.floor : best;
         if (dg.floor < 1u || dg.floor > 99u) return 0;
     }
-    song.playing = 0;
+    halt();
     return best;
 }
 
@@ -213,7 +235,7 @@ int main(void)
         for (k = 0; k < 4u; k++)
             busy_cut += 100.0 * cut_ms[k] / play_ms / 4.0;
         snprintf(what, sizeof what, "falls cut the simple loop %.1f %% of the time, a busy song's tracks %.2f %%", simple_cut, busy_cut);
-        ok4(what, simple_cut > 2.0 && simple_cut < 25.0 && busy_cut > 0.1 && busy_cut < 8.0 && busy_cut < simple_cut);
+        ok4(what, simple_cut > 0.3 && simple_cut < 25.0 && busy_cut > 0.05 && busy_cut < 8.0 && busy_cut < simple_cut);
     }
     {   /* 7b. the power-on songs: the push and pull */
         uint32_t falls = 0, wipes = 0, kills = 0, firsts[20], nf = 0, ms, k;
@@ -226,11 +248,9 @@ int main(void)
             reset_game(500 + s);
             ui_home_view = HV_SCOPE;
             fm1_ms += 2000u;
-            song.playing = 1;
-            song.g[G_BPM] = 120;
+            go();
             for (ms = 0; ms < 600000u; ms += 33u) {
-                fm1_ms += 33u;
-                dg_tick();
+                tick33();
                 for (k = 0; k < 4u; k++)
                     if (((dg.dead >> k) & 1u) && !((dead0 >> k) & 1u)) {
                         falls++;
@@ -240,7 +260,7 @@ int main(void)
                 dead0 = dg.dead;
                 wipe0 = dg.wipe;
             }
-            song.playing = 0;
+            halt();
             kills += dg.kills;
             if (first) firsts[nf++] = first;
         }
@@ -508,6 +528,171 @@ int main(void)
         ok4("  the game on, a monster ahead: straight on to it", dg.way[0] == n0 + 1u && !dg.turn && !dg.junc);
         dg.mon = DM_NONE;
         song.playing = 0;
+    }
+
+    /* 10. the fight in turns */
+    {
+        dgq_t b[NTRK];
+        uint32_t i, mon_at[8], nm = 0;
+        int32_t hp0;
+        #define B_CLEAR() memset(b, 0, sizeof b)
+        #define B_NOTE(k) (b[k].on = 1, b[k].w = 256)
+        busy_song();
+        reset_game(41);
+        fm1_ms += 2000u;
+        dg_party();
+        dg.mon = DM_GOBLIN; dg.mon_dist = 1; dg.mon_max = dg.mon_hp = 30000;
+        dg_engage();
+        for (i = 0; i < 20u; i++) {                       /* every track a note every sixteenth */
+            uint32_t atk0;
+            B_CLEAR(); for (k = 0; k < 4u; k++) B_NOTE(k);
+            for (k = 0; k < 4u; k++) dg.hp[k] = dg_hpmax(k);
+            atk0 = dg.mon_atk = 0;
+            dg_sixteenth(b);
+            if (dg.mon_atk && nm < 8u) mon_at[nm++] = i;
+            (void)atk0;
+        }
+        snprintf(what, sizeof what, "the turns: the monster on sixteenths %u %u %u %u (places in the beat %u %u %u %u)",
+                 mon_at[0], mon_at[1], mon_at[2], mon_at[3], mon_at[0] % 4u, mon_at[1] % 4u, mon_at[2] % 4u, mon_at[3] % 4u);
+        ok4(what, nm == 4u && mon_at[0] == 0u && mon_at[1] == 5u && mon_at[2] == 10u && mon_at[3] == 15u);
+
+        {   /* charge: four turns of nothing, then a note, against a note every turn (the fighter, many rounds) */
+            double plain = 0, charged = 0;
+            uint32_t r;
+            for (r = 0; r < 400u; r++) {
+                int16_t h;
+                dg.mon_hp = 30000; dg_engage(); dg.charge[DG_FTR] = 0;
+                B_CLEAR(); B_NOTE(DG_FTR); dg.pw[DG_FTR].on = 1; dg.pw[DG_FTR].w = 256;
+                h = dg.mon_hp; dg_hero(DG_FTR); plain += h - dg.mon_hp;
+                dg.mon_hp = 30000; dg.charge[DG_FTR] = 4; dg.pw[DG_FTR].on = 1; dg.pw[DG_FTR].w = 256;
+                h = dg.mon_hp; dg_hero(DG_FTR); charged += h - dg.mon_hp;
+            }
+            snprintf(what, sizeof what, "charge: four turns of nothing, then a note: %.1f against %.1f a plain one (x%.1f)",
+                     charged / 400, plain / 400, charged / plain);
+            ok4(what, charged > plain * 4.0 && charged < plain * 6.0);
+            dg.charge[DG_FTR] = 0;
+            memset(&dg.pw[DG_FTR], 0, sizeof dg.pw[0]);
+            dg_hero(DG_FTR);
+            ok4("  nothing played: it charges", dg.charge[DG_FTR] == 1u);
+            dg.pw[DG_FTR].rest = 1;
+            dg_hero(DG_FTR);
+            ok4("  a REST: on guard, no charge", (dg.guard >> DG_FTR & 1u) && dg.charge[DG_FTR] == 1u);
+        }
+        {   /* the dodge */
+            uint32_t r, hits_drum = 0, hits_none = 0;
+            dg.floor = 30;
+            for (r = 0; r < 600u; r++) {
+                for (k = 0; k < 4u; k++) dg.hp[k] = dg_hpmax(k);
+                dg.dead = 0; dg.wipe = 0; dg.mon = DM_GOBLIN; dg.mon_dist = 1; dg.guard = 0;
+                dg.in[1] = dg.in[2] = dg.in[3] = 0;           /* (only the rogue to strike) */
+                B_CLEAR(); B_NOTE(0);
+                dg_monster(b);
+                hits_drum += dg.hp[0] < dg_hpmax(0);
+                dg.hp[0] = dg_hpmax(0);
+                B_CLEAR();
+                dg_monster(b);
+                hits_none += dg.hp[0] < dg_hpmax(0);
+            }
+            snprintf(what, sizeof what, "the rogue: hit %u of 600 with a drum on the monster's sixteenth, %u without (dodged)",
+                     hits_drum, hits_none);
+            ok4(what, hits_drum > 250u && hits_drum < 470u && hits_none == 0u);
+            dg.floor = 1;
+            dg_party();
+            fm1_ms += 2000u;
+            dg_party();
+        }
+        {   /* ties: the weapons weaker, the cleric heals while held, the mage stores */
+            uint32_t r;
+            double note = 0, tie1 = 0, tie4 = 0;
+            int16_t h;
+            for (r = 0; r < 400u; r++) {
+                dg.mon = DM_GOBLIN; dg.mon_dist = 1;
+                dg.mon_hp = 30000; dg.charge[DG_RGE] = 0; dg.pw[DG_RGE].on = 1; dg.pw[DG_RGE].w = 256;
+                h = dg.mon_hp; dg_hero(DG_RGE); note += h - dg.mon_hp;
+                dg.mon_hp = 30000; dg.pw[DG_RGE].tie = 1;
+                h = dg.mon_hp; dg_hero(DG_RGE); tie1 += h - dg.mon_hp;
+                dg.mon_hp = 30000; dg.pw[DG_RGE].tie = 4;
+                h = dg.mon_hp; dg_hero(DG_RGE); tie4 += h - dg.mon_hp;
+            }
+            snprintf(what, sizeof what, "a tie: the rogue follows through %.1f, then %.1f, a note %.1f", tie1 / 400, tie4 / 400, note / 400);
+            ok4(what, tie1 < note * 0.7 && tie1 > note * 0.3 && tie4 < tie1 && tie4 > 0);
+            for (k = 0; k < 4u; k++) dg.hp[k] = dg_hpmax(k);
+            dg.hp[DG_FTR] = 1;
+            dg.chan[DG_CLR] = 0;
+            {
+                int16_t a, c;
+                dg.pw[DG_CLR].tie = 1; dg_hero(DG_CLR); a = dg.hp[DG_FTR];
+                dg.pw[DG_CLR].tie = 2; dg_hero(DG_CLR); c = dg.hp[DG_FTR];
+                snprintf(what, sizeof what, "  the cleric holds a chord: heals %d, then %d (more each turn held)", a - 1, c - a);
+                ok4(what, a > 1 && c - a > a - 1);
+            }
+            {
+                double plainb = 0, stored = 0;
+                for (r = 0; r < 400u; r++) {
+                    dg.mon_hp = 30000; dg.chan[DG_MAG] = 0; dg.pw[DG_MAG].on = 1; dg.pw[DG_MAG].w = 256;
+                    h = dg.mon_hp; dg_hero(DG_MAG); plainb += h - dg.mon_hp;
+                    dg.pw[DG_MAG].tie = 1; dg_hero(DG_MAG); dg.pw[DG_MAG].tie = 2; dg_hero(DG_MAG);
+                    dg.mon_hp = 30000; dg.pw[DG_MAG].on = 1; dg.pw[DG_MAG].w = 256;
+                    h = dg.mon_hp; dg_hero(DG_MAG); stored += h - dg.mon_hp;
+                }
+                snprintf(what, sizeof what, "  the mage holds two turns, then bolts: %.1f against %.1f", stored / 400, plainb / 400);
+                ok4(what, stored > plainb * 1.7);
+            }
+        }
+        {   /* the sequencer: what really played. A track whose steps never play (chance 0): its hero only charges */
+            uint32_t ms, acted = 0, n0;
+            busy_song();
+            for (i = 0; i < 16u; i++) step_set_chance(&trk[2].step[i], 0);
+            reset_game(43);
+            fm1_ms += 2000u;
+            dg_party();
+            go();
+            for (ms = 0; ms < 3000u; ms += 33u) {
+                uint32_t a = dgq.step;
+                tick33();
+                for (n0 = a; n0 != dgq.step; n0++)
+                    acted += dgq.b[n0 % DGQ_N][2].on;
+            }
+            halt();
+            snprintf(what, sizeof what, "chance 0 on T3: none of its notes reach the fighter (%u), T2's do (%u)", acted,
+                     (uint32_t)dgq.b[0][1].on + dgq.b[1][1].on + dgq.b[2][1].on + dgq.b[3][1].on + dgq.b[4][1].on + dgq.b[5][1].on + dgq.b[6][1].on + dgq.b[7][1].on);
+            ok4(what, acted == 0u);
+        }
+        {   /* a party of two: still five sixteenths a round; a smaller monster */
+            uint32_t at[3], na = 0;
+            int32_t big, small;
+            busy_song();
+            reset_game(44);
+            fm1_ms += 2000u;
+            dg_party();
+            dg.floor = 6; dg.walked = 3;
+            dg.rng = 5; dg.mon = DM_NONE;
+            while (!dg.mon) { dg.walked = 3; dg_walk(); }
+            big = dg.mon_max;
+            track_defaults_steps(&trk[1]);
+            track_defaults_steps(&trk[3]);
+            fm1_ms += 2000u;
+            dg_party();
+            dg.rng = 5; dg.mon = DM_NONE;
+            while (!dg.mon) { dg.walked = 3; dg_walk(); }
+            small = dg.mon_max;
+            dg.mon_dist = 1; dg.mon_hp = 30000;
+            dg_engage();
+            for (i = 0; i < 15u; i++) {
+                B_CLEAR(); B_NOTE(0); B_NOTE(2);
+                for (k = 0; k < 4u; k++) dg.hp[k] = dg.in[k] ? dg_hpmax(k) : 0;
+                dg.mon_atk = 0;
+                dg_sixteenth(b);
+                if (dg.mon_atk && na < 3u) at[na++] = i;
+            }
+            snprintf(what, sizeof what, "a party of two: the monster still every fifth sixteenth (%u %u %u); its health %d against %d",
+                     at[0], at[1], at[2], small, big);
+            ok4(what, na == 3u && at[1] == 5u && at[2] == 10u && small < big * 3 / 4);
+        }
+        hp0 = 0; (void)hp0;
+        dg.mon = DM_NONE;
+        #undef B_CLEAR
+        #undef B_NOTE
     }
 
     /* 4. */
