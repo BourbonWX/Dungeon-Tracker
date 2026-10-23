@@ -12,7 +12,7 @@
  *   - each adventurer's LEVEL (1..9) is how much its track does: notes on, distinct pitches (a kit: distinct drums),
  *     chords, parameter locks, chances, conditions, ratchets and nudges (dg_level);
  *   - a floor is cleared after a walk of DG_FLOOR squares: the stairs, one floor down. Monsters get stronger with the
- *     depth (every fifth floor a boss); a party that falls retreats one floor up, healed. A full, busy song goes deep,
+ *     depth (every fifth floor a boss) and match the party's strength (DIFFICULTY, at dg_avg10); a party that falls retreats one floor up, healed. A full, busy song goes deep,
  *     a lone simple loop stays near the top.
  * Each adventurer's health is hidden (no bar: a wounded one's name blinks): its most is 6 + 4 per level (the fighter 4
  * more), so a busier track takes more blows; a track made busier mid-fight gains the difference at once.
@@ -188,6 +188,19 @@ static uint32_t dg_up(void)                              /* adventurers standing
     return n;
 }
 static uint32_t dg_party_n(void) { return (uint32_t)(dg.in[0] + dg.in[1] + dg.in[2] + dg.in[3]); }
+/* DIFFICULTY (Dungeon Tracker 0.1, "moderate"): the monsters match the party as well as the depth, so a busy song meets
+ * tougher ones and a fight lasts about three beats, long enough for them to strike back; walking heals every other
+ * square. A monster's health 4 + 3 x floor + 16 x the party's average level (an ogre x 3); its blow 1 + floor / 4 +
+ * 1.3 x the average level (an ogre + 3), at 60 %. Simulated (tests/dungeon_test.c too): a typical power-on song, ten
+ * minutes: about 8 falls and a whole-party fall, the first fall near five minutes; a busy song falls less and goes
+ * deepest, a sparse loop struggles most */
+static int32_t dg_avg10(void)                            /* the party's average level x 10 (those in it) */
+{
+    uint32_t k, s = 0, n = dg_party_n();
+    for (k = 0; k < 4u; k++)
+        s += dg.in[k] ? dg.lvl[k] : 0u;
+    return n ? (int32_t)(s * 10u / n) : 10;
+}
 
 /* a beat while walking: one square on; a monster may come; the stairs at the end of the floor */
 static void dg_walk(void)
@@ -196,7 +209,7 @@ static void dg_walk(void)
     dg.walked++;
     dg.cell++;
     dg_step_on();
-    for (k = 0; k < 4u; k++)                             /* walking heals a little, the cleric more */
+    for (k = 0; k < 4u && (dg.walked & 1u); k++)      /* walking heals a little, the cleric more (every other square) */
         if (dg.in[k] && !dg_fallen(k) && dg.hp[k] < dg_hpmax(k))
             dg.hp[k] = (int16_t)(dg.hp[k] + (dg.in[DG_CLR] && !dg_fallen(DG_CLR) ? 2 : 1) - (dg_rand() & 1u));
     if (dg.dead && dg.in[DG_CLR] && !dg_fallen(DG_CLR) && dg_roll(100u / DG_RAISE)) {   /* the cleric raises one */
@@ -220,7 +233,8 @@ static void dg_walk(void)
         uint32_t boss = dg.floor % 5u == 0u && dg.walked == DG_FLOOR / 2u;
         dg.mon = (uint8_t)(boss ? DM_OGRE : DM_GOBLIN + dg_rand() % 3u);
         dg.mon_dist = 4;
-        dg.mon_max = dg.mon_hp = (int16_t)((4 + 3 * dg.floor) * (boss ? 3 : 1) + (dg.mon == DM_SLIME ? -2 : 0));
+        dg.mon_max = dg.mon_hp = (int16_t)((4 + 3 * dg.floor + 16 * dg_avg10() / 10) * (boss ? 3 : 1) +
+                                           (dg.mon == DM_SLIME ? -2 : 0));   /* (DIFFICULTY, at dg_avg10) */
         dg_say(DM_NAME[dg.mon]);
     }
 }
@@ -266,7 +280,7 @@ static void dg_fight(void)
         return;
     pick = alive[dg_rand() % n];
     if (dg_roll(60u)) {
-        dg.hp[pick] = (int16_t)(dg.hp[pick] - (1 + dg.floor / 2 + (dg.mon == DM_OGRE ? 2 : 0)));
+        dg.hp[pick] = (int16_t)(dg.hp[pick] - (1 + dg.floor / 4 + 13 * dg_avg10() / 100 + (dg.mon == DM_OGRE ? 3 : 0)));
         dg.mon_atk = 5;
         if (dg.hp[pick] <= 0) {                          /* it falls: its track is cut (dg_tick) */
             dg.hp[pick] = 0;

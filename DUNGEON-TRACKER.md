@@ -222,7 +222,12 @@ every power-on; it is not saved.
 * **Health is hidden.** It is 6 + 4 per level (the fighter gets 4 more), so a simple kick loop has 10 and a busy track
   42. A wounded adventurer's name blinks (under a third of its health). Make a track busier mid-fight and it gains the
   extra health at once.
-* After 24 squares the party takes the stairs one floor down (B1, B2, …). Monsters grow with depth.
+* After 24 squares the party takes the stairs one floor down (B1, B2, …). Monsters grow with depth **and match your
+  party**: their health and their blows scale with the adventurers' average level, so a busy song meets tougher
+  monsters, a fight lasts about three beats, and they get to strike back. Walking heals a little every other square;
+  the cleric heals whoever drops under half. Expect push and pull: with a typical song, in ten minutes, around eight
+  falls and one whole-party fall, the first a few minutes in. A busy song still goes deepest and falls least; a lone
+  simple loop struggles most.
 
 ### Falling cuts the track
 

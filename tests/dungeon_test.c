@@ -12,7 +12,10 @@
  *    unmuting does not raise it; the cleric raises, the stairs raise; the whole party fallen: a bar (DG_WIPE beats) of
  *    silence, then the retreat a floor up, healed; stopping raises everyone.
  * 6. the sound: a cut track's audio ramps to silence and comes back when raised (perform.c's black-key mute).
- * 7. ten minutes x 20 seeds: the simple loop is cut now and then, the busy song (almost) never.
+ * 7. ten minutes x 20 seeds: the simple loop is cut the most, the busy song now and then (Dungeon Tracker's moderate
+ *    DIFFICULTY: the monsters match the party).
+ * 7b. twenty power-on songs (boot_song.c), ten minutes each at 120 BPM: push and pull, a few falls and a whole-party
+ *    fall now and then, the first fall a few minutes in, kills all along.
  * 8. the game off (power-on): the corridor walks a square a beat, the party and levels shown, but no monster in ten
  *    minutes, no floor, nothing cut; MENU > GAME > DUNGEON (a tab of its own, OFF at power-on) switches it: ON a run
  *    from B1, OFF the run over and a cut lifted at once.
@@ -21,6 +24,7 @@
  *    third each, the turns half a beat and the compass following; the game on, a monster ahead: straight on. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
+#include "../firmware/src/boot_song.c"           /* (7b: the power-on songs) */
 
 static int fails4;
 static void ok4(const char *what, int ok) { fails4 += check(what, ok); }
@@ -209,7 +213,49 @@ int main(void)
         for (k = 0; k < 4u; k++)
             busy_cut += 100.0 * cut_ms[k] / play_ms / 4.0;
         snprintf(what, sizeof what, "falls cut the simple loop %.1f %% of the time, a busy song's tracks %.2f %%", simple_cut, busy_cut);
-        ok4(what, simple_cut > 2.0 && simple_cut < 15.0 && busy_cut < 1.0);
+        ok4(what, simple_cut > 2.0 && simple_cut < 25.0 && busy_cut > 0.1 && busy_cut < 8.0 && busy_cut < simple_cut);
+    }
+    {   /* 7b. the power-on songs: the push and pull */
+        uint32_t falls = 0, wipes = 0, kills = 0, firsts[20], nf = 0, ms, k;
+        for (s = 0; s < 20u; s++) {
+            uint8_t dead0 = 0, wipe0 = 0;
+            uint32_t first = 0;
+            ui_power_on();
+            boot_song(0xB007u + s * 7919u);
+            boot_song_settle();
+            reset_game(500 + s);
+            ui_home_view = HV_SCOPE;
+            fm1_ms += 2000u;
+            song.playing = 1;
+            song.g[G_BPM] = 120;
+            for (ms = 0; ms < 600000u; ms += 33u) {
+                fm1_ms += 33u;
+                dg_tick();
+                for (k = 0; k < 4u; k++)
+                    if (((dg.dead >> k) & 1u) && !((dead0 >> k) & 1u)) {
+                        falls++;
+                        if (!first) first = ms | 1u;
+                    }
+                wipes += dg.wipe && !wipe0;
+                dead0 = dg.dead;
+                wipe0 = dg.wipe;
+            }
+            song.playing = 0;
+            kills += dg.kills;
+            if (first) firsts[nf++] = first;
+        }
+        {
+            uint32_t i, j, med;
+            for (i = 0; i < nf; i++)                         /* (sorted: the median) */
+                for (j = i + 1u; j < nf; j++)
+                    if (firsts[j] < firsts[i]) { uint32_t t = firsts[i]; firsts[i] = firsts[j]; firsts[j] = t; }
+            med = nf ? firsts[nf / 2u] : 0u;
+            snprintf(what, sizeof what, "20 power-on songs x 10 min: %.1f kills, %.1f falls, %.2f whole-party falls a run; "
+                     "the first fall at %.1f min (median, %u of 20 fell)", kills / 20.0, falls / 20.0, wipes / 20.0,
+                     med / 60000.0, nf);
+            ok4(what, kills >= 40u * 20u && falls >= 3u * 20u && falls <= 15u * 20u && wipes <= 3u * 20u && nf >= 15u &&
+                med >= 90000u && med <= 480000u);
+        }
     }
 
     /* 5. health and falls */
