@@ -1287,7 +1287,31 @@ static void step_toggle(const track_t *t, step_t *st, const uint8_t *ch, uint32_
  * keys moves on one step (wrapping inside LEN). With CHRD on a key writes what it sounds, as live recording does:
  * POLY its chord, MONO the chord's root. MENU > CONTROL > CHORD ENTRY ADD (1.2, #155): each key adds its notes to
  * the cursor step or takes them out (step_toggle), one after another with one hand, and letting go moves nothing: the
- * cursor moves by KNOB 1 (STEP) or PRESETS only, as it always could (EDIT still clears the step and moves on) */
+ * cursor moves by KNOB 1 (STEP) or PRESETS only, as it always could (EDIT still clears the step and moves on).
+ * Dungeon Tracker 1.0: on a drum kit (DRUM, FMKIT) a key ADDS its drum to the cursor step (live recording merges them
+ * too: seq.c rec_note), so a beat is built a drum at a time: the kicks, then back to the top for the hats. Letting go
+ * still moves on; EDIT clears a step */
+static void seq_entry_kit(track_t *t, step_t *st, uint32_t note)
+{
+    uint32_t l = drum_lane(note), j;
+    if (st->time != ST_NOTE) {                            /* (a tie or a rest there: a fresh step) */
+        st->n = st->hit = st->acc = 0;
+        st->flags = 0;
+        st->vel = 0;
+    }
+    st->time = ST_NOTE;
+    if (((st->hit >> l) & 1u) && note == DRUM_LANE_NOTE[l])
+        return;                                           /* (that drum is there already, as a hit) */
+    for (j = 0; j < st->n && st->note[j] != note; j++)
+        ;
+    if (j < st->n)
+        return;                                           /* (already there) */
+    if (st->n < 4u)
+        st->note[st->n++] = (uint8_t)note;                /* the drum joins the step's notes (step entry's way) */
+    else if (note == DRUM_LANE_NOTE[l])
+        st->hit |= (uint8_t)(1u << l);                    /* (four there already: a lane's hit) */
+    (void)t;
+}
 static void seq_entry(uint32_t pressed)
 {
     track_t *t = TSEL;
@@ -1303,6 +1327,15 @@ static void seq_entry(uint32_t pressed)
         note = kb_map(t, k);
         if (note == KB_SILENT)
             continue;
+#if RONDO_LAYOUT
+        if (!add && drum_track(t)) {                      /* a kit: the drum joins the step */
+            ui.entry_open = 1;
+            follow_hold();
+            seq_entry_kit(t, st, note);
+            last_note = (uint8_t)note;
+            continue;
+        }
+#endif
         if (!ui.entry_open) {
             ui.entry_open = 1;
             follow_hold();                                /* (1.6, #242) */

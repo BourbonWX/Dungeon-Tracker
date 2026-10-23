@@ -52,3 +52,6 @@ build/host/nav_test
 # SAVE > TOOLS' NEW, NEW + DEFAULT SOUNDS and their undo (tests/new_song_test.c)
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/new_song_test tests/new_song_test.c -lm
 build/host/new_song_test
+# drums written one at a time share a step (tests/kit_entry_test.c)
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/kit_entry_test tests/kit_entry_test.c -lm
+build/host/kit_entry_test

@@ -332,7 +332,8 @@ TOOLS (LEN, DIV, SWING, GATE, euclid, double, half, …).
 | FX | a command (below), or a parameter lock: short name + hex value (`BDP41`, `DEC3A`) | set it on this step | which: SPEED, LOOP, PITCH, then the parameters (the engine's eight, a kit's voice values, level, pan, envelope, sends) |
 
 **EDIT** clears the cursor's cell (on NOTE: the whole step and its locks, and the cursor moves down). Keys: with the
-track armed (**REC**) and the transport stopped they write the cursor's step (on a kit, its drums) and move down;
+track armed (**REC**) and the transport stopped they write the cursor's step and move down; on a kit they **add** their
+drum to what is already there, so a beat is built one drum at a time (the kicks, then back to the top for the hats);
 otherwise they just play. SAVE held undoes, as everywhere in Felucca.
 
 ### Commands (the FX column)
@@ -525,7 +526,7 @@ sh tests/run_rondo.sh          # Dungeon Tracker's checks (engines, tracker, com
 `tests/run_tests.sh` is Felucca's full suite; build it with `CC="cc -DRONDO_LAYOUT=0"` to check Felucca's behaviour
 is unchanged outside the new engines. Felucca's `tests/ui_test.c` runs to the end in both layouts (and clean under
 AddressSanitizer); its failures are Felucca behaviour Dungeon Tracker changes on purpose (TRACKER in place of STEP / DETAIL and
-the DRUM grid, the two new engines in the lists, the header's pattern letter): 56 with `RONDO_LAYOUT=0`, 190 in the
+the DRUM grid, the two new engines in the lists, the header's pattern letter, step entry adding drums on T1's kit): 56 with `RONDO_LAYOUT=0`, 192 in the
 Dungeon Tracker layout. A change should leave those lists exactly as they are.
 
 ## Flashing (at your own risk)
