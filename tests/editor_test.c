@@ -45,6 +45,9 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #include "../firmware/src/ui.c"
 #include "../firmware/src/menu_items.c"
 static void panel_setup(void) {}
+#if RONDO_LAYOUT
+static void dg_game_set(uint32_t on) { (void)on; }   /* (RONDO: the dungeon is ui_graph.c's, not linked here) */
+#endif
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
 
@@ -431,6 +434,24 @@ static int samples(void)
     bad += check("END cannot change published sample zones without BEGIN",
                  request(ED_SMP_END, a, n) == 8u && host_wire[6] == 2 && host_writes == 2 &&
                  usr_zone[0][0].rate == 65536u);
+#if RONDO_LAYOUT
+    {   /* Dungeon Tracker: USR2's flash holds the song slots: no sample command writes or erases there */
+        uint8_t w[64] = {1, 0, 4, 0};                     /* (slot 2, offset 512) */
+        uint32_t m = pack7(data, 32, w + 4) + 4u;
+        host_erases = host_writes = 0; a[0] = 1;
+        bad += check("1.2: USR2 retired: BEGIN refused (6), nothing erased",
+                     request(ED_SMP_BEGIN, a, 1) == 8u && host_wire[6] == 6 && !host_erases);
+        bad += check("1.2: .. ERASE answers ok (it is empty), nothing erased",
+                     request(ED_SMP_ERASE, a, 1) == 8u && !host_wire[6] && !host_erases);
+        bad += check("1.2: .. WRITE refused (1), nothing written", request(ED_SMP_WRITE, w, m) == 11u && host_wire[9] == 1 &&
+                     !host_writes && !host_erases);
+        a[0] = 1; n = pack7((const uint8_t *)&h, sizeof h, a + 1) + 1u;
+        bad += check("1.2: .. END refused (6), nothing written", request(ED_SMP_END, a, n) == 8u && host_wire[6] == 6 &&
+                     !host_writes && !usr_nz[1]);
+        bad += check("1.2: .. USR1 as before (80 KiB); USR2 none (1.3: USR3 none either)",
+                     smp_user_size(0) == 0x14000u && !smp_user_size(2) && !smp_user_size(1) && !smp_user_ok(1) && !smp_user_ok(2));
+    }
+#endif
     song.playing = 1; host_progress = 0; a[0] = 0; a[1] = 0;
     bad += check("user-preset STORE does not mutate RAM when audio cannot stop",
                  request(ED_UP_STORE, a, 2) == 8u && host_wire[6] == 2 && !up_used(0));
@@ -457,7 +478,7 @@ static int song_protocol(void)
     bad += check("SONG PLAY refuses extra argument bytes", !request(ED_SONG, a, 2) && !transport_req);
     {   /* 1.2 (`57 01 04`): sections with a slot per track, ops 4..7; the v6 ops see each section's clock lane */
         static const uint8_t set[] = {5, 2, 0, 1, CHAIN_SILENT, 0, 3, CHAIN_SILENT, CHAIN_SILENT, CHAIN_SILENT, CHAIN_SILENT, 1};
-        static const uint8_t q4[] = {4}, q0[] = {0}, bad5[] = {5, 1, 0, 0, 5, 0, 1}, old4[] = {1, 1, CHAIN_SILENT, 1};
+        static const uint8_t q4[] = {4}, q0[] = {0}, bad5[] = {5, 1, 0, 0, 7, 0, 1}, old4[] = {1, 1, CHAIN_SILENT, 1};
         static const uint8_t info[] = {0};
         uint32_t n, i, tag = 0;
         reset();
@@ -472,7 +493,7 @@ static int song_protocol(void)
         n = request(ED_SONG, q0, 1);
         bad += check("SONG op 0 (v6 editors): a row per section, its clock lane's slot (T1 A; all - : A)",
                      n == 16u && host_wire[11] == 0 && host_wire[12] == 3 && host_wire[13] == 0 && host_wire[14] == 1);
-        bad += check("SONG op 5: a slot past - (5) refused, the sections kept",
+        bad += check("SONG op 5: a slot past the last (7: past - in Felucca, past F in RE-1) refused, the sections kept",
                      request(ED_SONG, bad5, sizeof bad5) == 22u && host_wire[6] == 1 && chain_config.count == 2);
         bad += check("SONG op 1 (v6): no - in a row of one slot", request(ED_SONG, old4, sizeof old4) == 16u &&
                      host_wire[6] == 1 && chain_config.count == 2);
@@ -496,7 +517,7 @@ static int song_protocol(void)
 
 static int malformed_saves(void)
 {
-    static const uint8_t slot[] = {1, 4}, name[] = {0, 'X', 0, 'Y'};
+    static const uint8_t slot[] = {1, NPROJ}, name[] = {0, 'X', 0, 'Y'};   /* (one past the last slot: A..D, Dungeon Tracker A..H) */
     const uint8_t save[] = {1, 0};
     project_store_t old;
     int bad = 0;
@@ -906,13 +927,13 @@ static int menu_protocol(void)
         {"SCREEN OFF", "NEVER,5 MIN,15 MIN,30 MIN,60 MIN"},
         {"SCOPE", "OUT,MIX"}, {"STEP PREVIEW", "OFF,ON"}, {"CHORD ENTRY", "HOLD,ADD"},                  /* (1.2) */
         {"MIDI IN", "CH1-4,SEL,CH5-8,CH9-12,CH13-16,TRACK"}, {"TUNE", 0},   /* (1.2: the project's ROUT and TUNE; TUNE a number) */
-        {"HOME", "SCOPE,TRACKS,LEVELS"},                                                       /* (1.3; 1.5: LEVELS) */
+        {"HOME", "DUNGEON,TRACKS,LEVELS"},                                   /* (1.3; 1.5: LEVELS; RE-1: SCOPE is the dungeon) */
         {"HELP", "OFF,ON"},                                                                          /* (1.5) */
         {"SELECT", "BPM,PAGE,MODW,VEL"},                                                             /* (1.5.5; 1.5.6 MODW VEL) */
         {"T1 CHANNEL", TCH_NAMES}, {"T2 CHANNEL", TCH_NAMES}, {"T3 CHANNEL", TCH_NAMES}, {"T4 CHANNEL", TCH_NAMES},   /* (1.5.5) */
         {"AUTO SELECT", "OFF,ON"}, {"SCREEN WAKE", "+MIDI,PANEL"},                                   /* (1.5.5) */
         {"2ND CORE", "OFF,ON (BETA)"}};                                                           /* (1.6.1; OFF the default) */
-    static const int32_t DEF[33] = {-1, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 0, 0, 0};   /* (COLOR: the default palette) */
+    static const int32_t DEF[33] = {-1, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, RONDO_LAYOUT ? 1 : 0, 0, 1, 2, 3, 0, 0, 0};   /* (SELECT: Dungeon Tracker PAGE) */   /* (COLOR: the default palette) */
     static const uint8_t TAB[33] = {0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 4, 2, 2, 2, 4, 1, 0, 0, 1, 1, 3, 2, 0, 4, 1, 3, 3, 3, 3, 3, 3, 4};   /* DISPLAY CONTROL AUDIO
                                                                                                          * MIDI SYSTEM (1.2) */
     static const char *const TABN[5] = {"DISPLAY", "CONTROL", "AUDIO", "MIDI", "SYSTEM"};
@@ -1000,7 +1021,7 @@ static int menu_protocol(void)
                                                          * project's, rc 0: in the music, no settings record) */
     ok &= menu_set(23, 1) == 3 && ui_home_view == HV_TRACKS && ui_prefs2 == 7u && ui_scr == 1u;   /* (1.3: its own byte) */
     ok &= menu_set(24, 1) == 3 && ui_prefs2 == 15u && help_on();                                  /* (1.5: HELP, bit 3) */
-    ok &= menu_set(25, 1) == 3 && ui_prefs2 == 31u;                                               /* (1.5.5: SELECT, bit 4) */
+    ok &= menu_set(25, RONDO_LAYOUT ? 0 : 1) == 3 && ui_prefs2 == 31u;   /* (1.5.5: SELECT, bit 4: PAGE; Dungeon Tracker: BPM, stored swapped) */
     ok &= menu_set(26, 9) == 0 && mch_get(0) == 9u && song.mch[0] == 9u && menu_set(27, MCH_OMNI) == 0 &&   /* (1.5.5: */
           mch_get(1) == MCH_OMNI && menu_set(28, MCH_OFF) == 0 && mch_get(2) == MCH_OFF && menu_set(29, 0) == 0 &&   /* the */
           mch_get(3) == 0u && song.mch[3] == 13u;           /* project's T1..T4 CHANNEL, rc 0, as MIDI IN) */
@@ -1015,7 +1036,7 @@ static int menu_protocol(void)
     ok &= menu_set(32, 1) == 1 && ui_prefs2 == 0x3Fu;   /* (no 2ND CORE in a FELUCCA_CPU2=0 build: an unknown id, nothing set) */
 #endif
     for (i = 0; i < MENU_N; i++) {                         /* MENU_DESC reads them back */
-        static const int32_t SET[33] = {2, 1, 1, 1, 1, 3, 1, 1, 1, 2, 1, 0, 2, 0, 2, 1, 1, 2, 1, 1, 1, 2, -13, 1, 1, 1, 9, 16, 17, 0, 1, 1, 1};
+        static const int32_t SET[33] = {2, 1, 1, 1, 1, 3, 1, 1, 1, 2, 1, 0, 2, 0, 2, 1, 1, 2, 1, 1, 1, 2, -13, 1, 1, RONDO_LAYOUT ? 0 : 1, 9, 16, 17, 0, 1, 1, 1};   /* (SELECT as set above) */
         menu_desc(i, &it);
         ok &= it.value == SET[i];
     }

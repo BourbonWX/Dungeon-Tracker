@@ -37,6 +37,11 @@ static void fl_plain_window_init(void) {}
 #include "../firmware/src/storage.c"
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
+#if PROJ_SONGS                                  /* Dungeon Tracker: a slot's project in the song store */
+#define BK_SLOT_LOAD(s) sg_get_project((s), &proj_wire, sizeof proj_wire)
+#else
+#define BK_SLOT_LOAD(s) st_load(OBJ_PROJECT0 + (s), &proj_wire, sizeof proj_wire)
+#endif
 #include "old_pack.h"
 
 enum { ED_BACKUP_LIST = 65, ED_BACKUP_GET, ED_BACKUP_PUT };
@@ -178,8 +183,8 @@ int main(void)
 
     reset();
     trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 96, 0, 0};
-    bad += check("LIST captures the runtime: 13 objects (id 8 empty, id 9 the FM6 patches), runtime 3840 B (FUN10)",
-                 list(0, &len, &crc) == 0 && rep[2] == 13u && len == sizeof(project_store_t) && len == 3840u &&
+    bad += check("LIST captures the runtime: 13 objects (id 8 empty, id 9 the FM6 patches; Dungeon Tracker 20, projects E..K "
+                 "10..16), runtime 3840 B (FUN10)", list(0, &len, &crc) == 0 && rep[2] == ED_BK_N && ED_BK_N == (RONDO_LAYOUT ? 20u : 13u) && len == sizeof(project_store_t) && len == 3840u &&
                  crc == st_crc32(ED_BK_RAW, len));
     bad += check("an empty project slot lists as length 0", list(2, &len, &crc) == 0 && len == 0);
     bad += check("GET of the runtime copy", get(0, 0, 64) == 0);
@@ -279,7 +284,7 @@ int main(void)
     proj_pack(&st, &proj_scratch);
     bad += check("a FUN10 project restores into slot 3 (flash and RAM)",
                  put_all(4, &st, sizeof st, st_crc32(&st, sizeof st)) == 0 && project_used(2) &&
-                 !memcmp(&proj_slot[2], &st, sizeof st) && st_load(OBJ_PROJECT0 + 2, &proj_wire, sizeof proj_wire) == (int)sizeof st);
+                 !memcmp(&proj_slot[2], &st, sizeof st) && BK_SLOT_LOAD(2) == (int)sizeof st);
     {   /* FUN8 of 1.0.x (3584 bytes, 91 parameters) and FUN9 of 1.1 (3648, 99): restore as FUN10, E0 at P_E0, lanes
          * 100 %, the four 1.2 parameters at their defaults; a FUN9 with 64 motion records keeps them all */
         static uint8_t v8[3584], v9[3648];
@@ -377,7 +382,7 @@ int main(void)
         bad += check("an id 9 of another layout is refused (2), the patches kept",
                      put_all(9, &got, sizeof got, st_crc32(&got, sizeof got)) == 2u && !upf_get(0, pk));
         bad += check("an id 9 of the wrong size is refused at begin (1)", put_begin(9, sizeof got - 4u, 0) == 1u);
-        bad += check("an id 10 is refused (1)", put_begin(10, 0, 0) == 1u);
+        bad += check("an id 17 is refused (1) (10..16: Dungeon Tracker's projects E..K)", put_begin(RONDO_LAYOUT ? 17 : 10, 0, 0) == 1u);
     }
     memcpy(&st, &proj_slot[2], sizeof st);
     erase_error = 1;

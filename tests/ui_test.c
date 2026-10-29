@@ -51,9 +51,9 @@ static uint32_t host_slots[3u * 0x14000u / 4u];          /* USR1..3 (zero: empty
 #define FM1_NCOL 11u
 static const int8_t FM1_KEYMAP[6][FM1_NCOL];
 static uint8_t fm1_led[FM1_NCOL], fm1_led_dim[FM1_NCOL], fm1_led_breath[FM1_NCOL], fm1_led_mid[FM1_NCOL];
-static uint32_t host_dim_lo;                      /* bsp/boards/fm1/fm1_input.h: the glow MENU > LEDS asked for (1: DIM LO) */
+static uint32_t host_dim_lo;                      /* hal/fm1_input.h: the glow MENU > LEDS asked for (1: DIM LO) */
 static void fm1_led_dim_level(uint32_t lo) { host_dim_lo = lo; }
-static int host_anim;                             /* bsp/boards/fm1/fm1_input.h: the power-on sweep running (it has the LEDs) */
+static int host_anim;                             /* hal/fm1_input.h: the power-on sweep running (it has the LEDs) */
 static int host_idle, host_idle_glow;             /* .. the idle animation (1.2: MENU > ANIM IDLE) running, its glow */
 static int fm1_led_anim_on(void) { return host_anim || host_idle; }
 static void fm1_led_idle_start(uint32_t glow) { host_idle = 1; host_idle_glow = (int)glow; }
@@ -168,11 +168,17 @@ static int check(const char *what, int ok)
 static void ui_power_on(void)
 {
     uint32_t i;
+    dg_game = 0;                                  /* (RONDO: the dungeon's game off, as RAM at power-on) */
+    dg_cut = 0;
     memset(trk, 0, sizeof trk);
     memset(&song, 0, sizeof song);
     memset(midi_lit_ms, 0, sizeof midi_lit_ms); midi_seen = 0;   /* (1.5.5: no MIDI IN light) */
     memset(&chain, 0, sizeof chain);
     chain_defaults(&chain_config);
+#if RONDO_LAYOUT
+    bank_reset();                                 /* (RONDO: the PATTERN BANK empty, A current) */
+    morph_reset();                                /* (RONDO: no SOUND MORPH) */
+#endif
     memset(&ui, 0, sizeof ui);
     page_over = 0;                                /* (no layer's knobs; roll_settle's test page gone) */
     cin_left = cin_total = 0;                     /* (no count-in) */
@@ -181,6 +187,11 @@ static void ui_power_on(void)
     proj_name[0] = 0;
     proj_cur = PROJ_NO_SLOT;
     memset(&favorites, 0, sizeof favorites);
+#if RONDO_LAYOUT
+    party_waiting = 0;                            /* (THE PARTY: nothing waiting, as at power-on) */
+    list_set(0);                                  /* (Dungeon Tracker: these checks browse as Felucca's PRESETS do, LIST
+                                                   * ALL; THE PARTY's CLASS list, the default: dungeon_test.c 14) */
+#endif
     ml_off();                                     /* (MIDI LEARN off, nothing learned) */
     memset(&undo, 0, sizeof undo);
     fop_op = fop_stg = 0;                         /* (FM6's operator pages: OP 1, stage 1, as at power-on) */
@@ -253,6 +264,10 @@ static void frame(void)
     host_ticks += 16000u;
     fm1_ms += 16u;
     ui_input();
+#if RONDO_LAYOUT
+    bank_poll();                                  /* (main.c's loop: RONDO's PATTERN BANK) */
+    morph_poll();                                 /* (.. and SOUND MORPH) */
+#endif
     ui_draw();
 }
 static void press(uint32_t label)                 /* a tap: down, a frame, up, a frame */
@@ -488,10 +503,10 @@ static int test_sound_loads(void)
     project_load(1);
     bad += check("a project load drops the copy and takes none", undo.trk == 0 && undo_depth == 0);
     ui_power_on();
-    bad += check("SAMPLE factory browsing has four melodic presets and no PERC",
+    bad += check("SAMPLE factory browsing has four presets and no PERC (Dungeon Tracker: LOFI KIT for SAX)",
                  ENGINES[4]->npresets == 4u && str_eq(ENGINES[4]->presets[0].name, "PIANO") &&
-                 str_eq(ENGINES[4]->presets[3].name, "SAX"));
-    {   /* TRANH (SET 1, preset 1) is gone: both are PIANO aliases, kept for old data, never offered */
+                 str_eq(ENGINES[4]->presets[3].name, RONDO_LAYOUT ? "LOFI KIT" : "SAX"));
+    {   /* TRANH (SET 1, preset 1) is gone; Dungeon Tracker 1.0: its index is the DUNGEON KIT, offered */
         const param_desc_t *sd = &ENGINES[4]->edit[0];
         uint32_t all, pos, k, e, pos0, shown = 0;
         set_engine_of(TSEL, 4);
@@ -504,12 +519,11 @@ static int test_sound_loads(void)
                 shown++;
         e = preset_all_at(pos0 + 1u, &k);
         apply_preset_to(TSEL, 1);
-        bad += check("SAMPLE: old SET 1 / preset 1 (TRANH) play PIANO; browsing and knobs skip them",
-                     SMP_SETS[1].z0 == SMP_SETS[0].z0 && SMP_SETS[1].nz == SMP_SETS[0].nz && pos == pos0 &&
-                     shown == 3u && e == 4u && k == 2u && TSEL->preset == 0u && TSEL->p[P_E0] == 0 &&
-                     str_eq(sd->names[1], "PIANO") && enum_step(sd, 0, 1) == 2 && enum_step(sd, 2, 1) == 0 &&
-                     enum_step(sd, 1, 2) == 2 && enum_orig(sd, 1) == 0 && enum_orig(sd, 5) == 5 &&
-                     enum_orig(&ENGINES[8]->edit[0], 1) == 0);
+        bad += check("SAMPLE: SET 1 / preset 1 (once TRANH) is the DUNGEON KIT, browsed and stepped to",
+                     SMP_SETS[1].nz >= 10u && SMP_SETS[1].z0 != SMP_SETS[0].z0 && pos == pos0 + 1u &&
+                     shown == 4u && e == 4u && k == 1u && TSEL->preset == 1u && TSEL->p[P_E0] == 1 &&
+                     str_eq(sd->names[1], "DUNGEON KIT") && enum_step(sd, 0, 1) == 1 && enum_step(sd, 2, 1) == 1 &&
+                     enum_orig(sd, 1) == 1 && enum_orig(sd, 5) == 5 && enum_orig(&ENGINES[8]->edit[0], 1) == 1);
         bad += check("SAMPLE / GRAIN SET 4 (PERC, retired): a PIANO alias, knobs skip it, USR1..3 stay 5..7",
                      str_eq(sd->names[SMP_SET_PERC], "PIANO") && enum_orig(sd, SMP_SET_PERC) == 0 &&
                      enum_step(sd, 3, 4) == 5 && enum_step(sd, 5, 4) == 3 && str_eq(sd->names[5], "USR1") &&
@@ -980,6 +994,11 @@ static void go_title(const char *title)
     uint32_t i;
     for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, title); i++)
         ;
+    if (i == NPAGES && (str_eq(title, "STEP") || str_eq(title, "DETAIL")))   /* RE-1: TRACKER in their place */
+        for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, "TRACKER"); i++)
+            ;
+    if (i == NPAGES)                                  /* (no such page: stay; never past PAGES[]) */
+        return;
     ui.home = 0;
     ui.page = (uint8_t)i;
     page_entered();
@@ -1417,6 +1436,9 @@ static int test_categories(void)
     char b[16], s1[16];
     ui_power_on();
     memset(&favorites, 0, sizeof favorites);
+#if RONDO_LAYOUT
+    list_set(0);                                           /* (LIST ALL: Dungeon Tracker's default is CLASS, before ALL) */
+#endif
     memset(up_bank, 0, sizeof up_bank);
     for (e = 0; e < NENGINES; e++) {
         const char *c = PRESET_CAT[e];
@@ -1428,18 +1450,6 @@ static int test_categories(void)
     bad += check("categories: every factory preset of every engine has one (the table's strings == the preset counts)",
                  ok && preset_cat(0, 2) == CAT_BASS && preset_cat(ENGI_DRUM, 0) == CAT_DRUM && preset_cat(ENGI_FM6, 0) == CAT_KEYS &&
                  preset_cat(ENGI_DRUM, 9) == CAT_DRUM && preset_cat(0, 99) == CAT_OTHER);
-#if FELUCCA_ADPCM
-    {   /* 1.8: ADPCM (engine 14, no row of its own) keeps its favourites in settings byte [15][13], through a round trip */
-        persist_t p;
-        int fok = favorite_set(ENGI_ADPCM, 6, 1) && favorite_has(ENGI_ADPCM, 6) && favorites.factory[15][13] == 0x40u &&
-                  !favorite_set(ENGI_ADPCM, 8, 1) && !favorite_has(ENGI_ADPCM, 9);
-        settings_export(&p);
-        favorites.factory[15][13] = 0;
-        fok &= settings_import(&p, sizeof p) == 1 && favorite_has(ENGI_ADPCM, 6) && !favorite_has(ENGI_ADPCM, 5);
-        fok &= favorite_set(ENGI_ADPCM, 6, 0) && !favorites.factory[15][13] && ml_tab[0] == ml_tab[0];
-        bad += check("favourites: ADPCM's in settings byte [15][13] (MIDI LEARN's row 14 untouched), kept with the settings", fok);
-    }
-#endif
     go_page(GR_BROWSE);
     select_engine(0);
     apply_preset(0);                                       /* ANALOG SAW LEAD */
@@ -1475,13 +1485,26 @@ static int test_categories(void)
         settings_export(&p);
         ok = p.favorites.factory[15][11] == CAT_PAD && p.favorites.filter == 0u;
         p.favorites.factory[15][11] = 9;
+#if RONDO_LAYOUT                                           /* (Dungeon Tracker: an unknown value, and 0, are CLASS; ALL 0xFF) */
+        ok &= settings_import(&p, sizeof p) == 1 && list_mode() == LIST_CLASS;
+#else
         ok &= settings_import(&p, sizeof p) == 1 && list_mode() == 0u;
+#endif
         p.favorites.factory[15][11] = CAT_FX;
         ok &= settings_import(&p, sizeof p) == 1 && list_mode() == 1u + CAT_FX;
         turn(EN_K4, -20);
+#if RONDO_LAYOUT                                           /* (CLASS at the left end, then ALL, FAV) */
+        ok &= list_mode() == LIST_CLASS && ui_lcat == 0u;
+        turn(EN_K4, 1);
+        ok &= list_mode() == 0u && ui_lcat == LIST_ALL_MARK;
+        turn(EN_K4, 1);
+        bad += check("  kept with the settings ([15][11], an unknown value: none); FAV clears it, CLASS then ALL at the left end",
+                     ok && list_mode() == 1u && favorites.filter == 1u && ui_lcat == 0u);
+#else
         turn(EN_K4, 1);
         bad += check("  kept with the settings ([15][11], an unknown value: none); FAV clears it, ALL at the left end",
                      ok && list_mode() == 1u && favorites.filter == 1u && ui_lcat == 0u);
+#endif
         turn(EN_K4, -1);
     }
     {   /* #197: LIST / FAV not written on every detent (a flash erase stops the LED scan: the whole panel flashed) */
@@ -2072,9 +2095,12 @@ static int test_mono_screens(void)
  * change mid-roll retargets; a fast turn, another shape, a page / track / palette change and ui.force snap. */
 static uint16_t roll_shot[240 * 240];
 static const page_t ROLL_PG = {"CLOCK", FAM_TRK, SC_GLOBAL, GR_NONE, {G_BPM, G_SWING, G_CLOCK, G_TUNE}};
+/* MENU > CONTROL > SELECT BPM: SELECT the tempo, as Felucca has it by default (Dungeon Tracker's: PAGE) */
+static void sel_bpm(void) { menu_put(MI_SELECT, SEL_BPM); }
 static void roll_settle(void)                     /* CLOCK + TUNE, nothing rolling, no knob hot */
 {
     uint32_t k;
+    sel_bpm();                                    /* (the header's BPM is turned with SELECT here) */
     go_title("CLOCK");
     page_over = &ROLL_PG;                         /* (cur_page(): its knobs, its cards; a layer's way, ui_layer.c) */
     ui.hot_t = 0; ui.bpm_t = 0;
@@ -3000,7 +3026,7 @@ static int test_product_ux(void)
     song.playing = song.rec = 1; ok = 1;
     for (i = 0; i < 120u; i++) { fm1_ms += 17; ui_leds(); ok &= (fm1_led[0] & 6u) == 4u && (fm1_led[8] & 2u); }
     bad += check("PLAY's green and REC LEDs stay lit across time and audio block phase", ok);
-    {   /* the power-on sweep (bsp/boards/fm1/fm1_input.h fm1_led_anim_on) has the LEDs: the UI writes none of them while it runs,
+    {   /* the power-on sweep (hal/fm1_input.h fm1_led_anim_on) has the LEDs: the UI writes none of them while it runs,
          * all of its own picture on the next frame after */
         uint8_t l0[FM1_NCOL], d0[FM1_NCOL];
         memset(fm1_led, 0x5A, sizeof fm1_led);
@@ -3583,6 +3609,29 @@ static int test_name(void)
     hold(B_HOME);
     bad += check("  HOME held in NAME: the menu, NAME closed", ui.menu && !name_on());
     hold(B_HOME);
+    /* 1.0.1: QUICK, the slot above A (the autosave): PRESETS / KNOB 1 reach it; its SAVE and LOAD are the autosave's
+     * (no NAME screen, slot D untouched), no ERASE, no rename */
+    {
+        char pd[16];
+        int dused = project_name(3, pd), ok;
+        go_page(GR_SLOTS);
+        song.g[G_SLOT] = 1;
+        turn(EN_PRESET, -1);
+        ok = song.g[G_SLOT] == 0;
+        turn(EN_PRESET, -3);
+        ok &= song.g[G_SLOT] == 0;
+        song.playing = 0;
+        ui.act = 4;                                     /* SAVE */
+        press(B_OCTUP);
+        ok &= !name_on() && (msg_is("QUICK SAVED") || msg_is("NO FLASH HERE")) && project_name(3, pd) == dused;
+        ui.act = 2;                                     /* ERASE */
+        press(B_OCTUP);
+        ok &= !ui.confirm && msg_is("QUICK IS THE AUTOSAVE");
+        press(B_EDIT);
+        ok &= !name_on() && msg_is("QUICK HAS NO NAME");
+        song.g[G_SLOT] = 1;
+        bad += check("  1.0.1: QUICK above A: SAVE writes the autosave (no NAME), no ERASE, no rename, D untouched", ok);
+    }
     return bad;
 }
 
@@ -3852,7 +3901,7 @@ static int test_slices(void)
         TSEL->p[P_E1] = SLC_DIV_MAN;
         go_page(GR_SLICES); frame();
         keep = *slc_man_of(slc_get(1));
-        set_engine(3u);                              /* LOFI, as ed_service's SET G_ENGSEL */
+        set_engine(3u);                              /* CHIP (LOFI), as ed_service's SET G_ENGSEL */
         TSEL->p[P_E0] = 1;
         before = *TSEL;
         slc_man_save = 0;
@@ -4046,8 +4095,8 @@ static int test_quick_layers(void)
     key_up(white(eng_rank(2))); frame();
     key_down(white(1)); key_up(white(1)); frame();
     ok &= TSEL->eng_req == ENGI_FM6;                    /* (G3: FM6, second in ENGINE_ORDER) */
-    key_down(white(LY_INIT - 1u)); key_up(white(LY_INIT - 1u)); frame();
-    ok &= TSEL->eng_req == ENGI_DRUM;                   /* (the last key: DRUM; ADPCM, after it, has none) */
+    key_down(white(NENG_KEYS - 1u)); key_up(white(NENG_KEYS - 1u)); frame();   /* (1.1: the last engine key) */
+    ok &= TSEL->eng_req == ENGI_DRUM;                   /* (the last key: DRUM) */
     ok &= !memcmp(TSEL->step, before.step, sizeof before.step) && TSEL->p[P_SLEN] == before.p[P_SLEN] &&
           TSEL->p[P_SLCR] == SL_STUT;
     btn_up(B_EDIT); frame();
@@ -4060,12 +4109,12 @@ static int test_quick_layers(void)
     btn_down(B_EDIT); frames(480);
     for (i = 0; i < LY_INIT; i++) {
         key_down(white(i)); key_up(white(i)); frame();
-        a += TSEL->eng_req == eng_vis(i);
+        a += i < NENG_KEYS ? TSEL->eng_req == eng_vis(i) : 0u;
         ok &= eng_ok(TSEL->eng_req);
     }
     btn_up(B_EDIT); frame();
-    bad += check("  the first 13 engines in PRESETS order have their white keys from F3 (ADPCM, the 14th, only with ENG; never DIGITAL)",
-                 ok && a == LY_INIT && LY_INIT == NENG_SHOWN - FELUCCA_ADPCM);
+    bad += check("  the first NENG_KEYS engines have their white keys from F3 (1.1: NOISE PRESETS only; never DIGITAL)",
+                 ok && a == NENG_KEYS);
     set_engine_of(TSEL, 0);
     lay_combo(B_EDIT, white(eng_rank(3))); key_up(white(eng_rank(3))); frame();
     turn(EN_K2, 1);
@@ -4080,35 +4129,35 @@ static int test_quick_layers(void)
     ok = TSEL->eng_req == eng_step(0, 1);
     btn_up(B_EDIT); frame();
     bad += check("  KNOB 1: the next engine", ok);
-    {                                                   /* #124: SAMPLE's alias (1 = PIANO) is not a stop on KNOB 2 */
+    {                                                   /* #124: SAMPLE's alias (4, once PERC) is not a stop on KNOB 2 */
         uint32_t tot, n, c0, c1, c2, seen = 0, alias = 0;
         set_engine_of(TSEL, ENGI_SAMPLE); go_home(); frame();
         eng_list_pos(&tot);
         btn_down(B_EDIT); frame();
         c0 = eng_list_pos(&tot);
         turn(EN_K2, 1);
-        ok = TSEL->preset == 2u && user_of(TSEL) >= UP_SLOTS;
+        ok = TSEL->preset == 1u && user_of(TSEL) >= UP_SLOTS;   /* (1.0: the DUNGEON KIT in TRANH's 1) */
         c1 = eng_list_pos(&tot);
         turn(EN_K2, 1);
-        ok &= TSEL->preset == 3u;
+        ok &= TSEL->preset == 2u;
         c2 = eng_list_pos(&tot);
         ok &= c0 == 0u && c1 == 1u && c2 == 2u && tot >= SMP_NPRESETS - SMP_NALIAS;
         apply_preset(0);
         for (n = 0; n < tot; n++) {                     /* right: every sound once, back to the first */
             turn(EN_K2, 1);
             seen |= 1u << eng_list_pos(&tot);
-            alias |= user_of(TSEL) >= UP_SLOTS && TSEL->preset == 1u;
+            alias |= user_of(TSEL) >= UP_SLOTS && TSEL->preset == SMP_SET_PERC;
         }
         ok &= seen == (1u << tot) - 1u && TSEL->preset == 0u && user_of(TSEL) >= UP_SLOTS;
         seen = 0;
         for (n = 0; n < tot; n++) {                     /* left: the same, backwards */
             turn(EN_K2, -1);
             seen |= 1u << eng_list_pos(&tot);
-            alias |= user_of(TSEL) >= UP_SLOTS && TSEL->preset == 1u;
+            alias |= user_of(TSEL) >= UP_SLOTS && TSEL->preset == SMP_SET_PERC;
         }
         ok &= seen == (1u << tot) - 1u && TSEL->preset == 0u && !alias;
         btn_up(B_EDIT); frame();
-        bad += check("  #124 SAMPLE: KNOB 2 right PIANO, FLUTE, SAX (No. 1 2 3), both ways round the list, never the alias", ok);
+        bad += check("  #124 SAMPLE: KNOB 2 right PIANO, DUNGEON KIT, FLUTE (No. 1 2 3), both ways round the list, never the alias", ok);
     }
     song.playing = 0;
     lay_combo(B_EDIT, white(LY_INIT));
@@ -4906,8 +4955,8 @@ static int test_bughunt_ui2(void)
         bad += check("piano roll: the C-1 label stays inside the panel (every palette)", !out);
     }
     {   /* 7. EDIT: INIT is drawn in the cell after the engines, and that cell's white key is the one that inits */
-        uint32_t p, ok = LY_INIT == 13u + FELUCCA_FM4 && LY_CLEAN < 16u;   /* (layer_edit: INIT where it was before 1.8) */
-        for (p = LY_INIT; p < 16u; p++) {
+        uint32_t p, ok = LY_INIT == NENG_KEYS && LY_INIT < 16u;       /* (layer_edit: INIT in cell NENG_KEYS) */
+        for (p = NENG_KEYS; p < 16u; p++) {
             ui_power_on(); go_home(); frame();
             btn_down(B_EDIT); key_down(white(p)); frame(); frames(50);
             ok &= (ui.confirm == CF_INIT_SOUND) == (p == LY_INIT);
@@ -5057,14 +5106,10 @@ static int test_fm4_retired(void)
     }
     bad += check("PRESETS KNOB 2: the engines in order, DIGITAL skipped, back to the first",
                  seen == all && TSEL->eng_req == 0u && eng_step(0, 1) == ENGI_FM6 && eng_step(ENGI_FM6, 1) == 2u &&
-                 eng_step(ENGI_FM6, -1) == 0u && eng_step(0, -1) == (FELUCCA_ADPCM ? ENGI_ADPCM : ENGI_DRUM));
+                 eng_step(ENGI_FM6, -1) == 0u && eng_step(0, -1) == ENGI_DRUM);
     {   /* the display order (engines.c ENGINE_ORDER): every engine one can pick once; the PRESETS list follows it */
-        static const char *const ORDER[] = {"ANALOG", "FM6", "PHASE", "LOFI", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN",
-                                            "PHYS", "NOISE", "SLICE", "DRUM",
-#if FELUCCA_ADPCM
-                                            "ADPCM",
-#endif
-        };
+        static const char *const ORDER[] = {"ANALOG", "FM6", "PHASE", "CHIP", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN",
+                                            "PHYS", "NOISE", "SLICE", "DRUM"};
         uint32_t last = 0xFFu, r = 0, n = 0;
         ok = NENG_SHOWN == NELEM(ORDER);
         for (i = 0; ok && i < NENG_SHOWN; i++)
@@ -5079,7 +5124,7 @@ static int test_fm4_retired(void)
             last = e;
             r++;
         }
-        bad += check("engines shown ANALOG FM6 PHASE ... NOISE SLICE DRUM ADPCM (ENGINE_ORDER); PRESETS lists them so",
+        bad += check("engines shown ANALOG FM6 PHASE ... NOISE SLICE DRUM (ENGINE_ORDER); PRESETS lists them so",
                      ok && r == NENG_SHOWN);
     }
     /* a user preset stored with engine 1: kept as it is, it loads as FM6 with the converted patch */
@@ -5382,7 +5427,7 @@ static int test_midi_leds(void)
     return bad;
 }
 
-/* #119: what can be pressed breathes (bsp/boards/fm1/fm1_input.h fm1_led_breath: dark .. ~60 % of lit), never a hard blink: every
+/* #119: what can be pressed breathes (hal/fm1_input.h fm1_led_breath: dark .. ~60 % of lit), never a hard blink: every
  * layer, held and locked (double tap), in every MENU > LEDS mode: its keys that can be pressed and its button in the
  * breath set only (neither lit nor the glow), the ones in effect lit, the picture the same at any time (no 250 ms
  * toggle left); OCT+ in a dialog likewise; closing the layer leaves nothing breathing; the glow's level and
@@ -5554,7 +5599,7 @@ static int test_idle_glow(void)
 }
 
 /* "On the step sequencer all the LEDs go out": SEQ > STEP, the piano roll and the DRUM grid, stopped and playing,
- * in every LEDS mode, with the LEDs where the hardware has them (bsp/boards/fm1/fm1_input.h FM1_KEYMAP). The buttons keep
+ * in every LEDS mode, with the LEDs where the hardware has them (hal/fm1_input.h FM1_KEYMAP). The buttons keep
  * their glow and their active states; on the piano roll the keys glow under the held and playing ones; on the
  * grid its map is lit and its keys that do something glow (DIM LO / HI). Before: keys_own() took the grid's keys
  * out of the glow, so in DIM 26 of 27 keys of an empty 16-step grid went fully dark */
@@ -5569,7 +5614,7 @@ static uint32_t step_keys(uint32_t steps)
 }
 static int test_step_leds(void)
 {
-    static const int8_t MAP[6][FM1_NCOL] = {     /* (bsp/boards/fm1/fm1_input.h FM1_KEYMAP; the host stub is zero) */
+    static const int8_t MAP[6][FM1_NCOL] = {     /* (hal/fm1_input.h FM1_KEYMAP; the host stub is zero) */
         {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
         { 5, 11,  4, 10,  3,  9,  2,  8, -1, -1, -1},
         {34, 35, 36, 37, 38, 40, 39, 13,  7,  6, 12},
@@ -6327,7 +6372,7 @@ static int test_screen_wake(void)
 
 static int test_scale_leds(void)
 {
-    static const int8_t MAP[6][FM1_NCOL] = {     /* (bsp/boards/fm1/fm1_input.h FM1_KEYMAP; the host stub is zero) */
+    static const int8_t MAP[6][FM1_NCOL] = {     /* (hal/fm1_input.h FM1_KEYMAP; the host stub is zero) */
         {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
         { 5, 11,  4, 10,  3,  9,  2,  8, -1, -1, -1},
         {34, 35, 36, 37, 38, 40, 39, 13,  7,  6, 12},
@@ -8142,6 +8187,7 @@ static int test_bpm_lock(void)
     uint32_t i, page;
     ui_power_on();
     ui_prefs = 0;
+    sel_bpm();                                    /* (BPM LOCK is about SELECT as the tempo) */
     frame();
     b0 = song.g[G_BPM];
     turn(EN_SELECT, 2);
@@ -8154,6 +8200,7 @@ static int test_bpm_lock(void)
     b0 = song.g[G_BPM];
     turn(EN_SELECT, 3);
     ok = str_eq(MI_NAME[MI_BPMLOCK], "BPM LOCK") && ui.menu == 1u && song.g[G_BPM] == b0;   /* (the menu: no tempo) */
+    ui.menu_sel = MI_BPMLOCK;                                         /* (Dungeon Tracker: SELECT walked the rows) */
     turn(EN_K1, 1); ok &= (ui_prefs & PREF_BPM_LOCK) != 0u;          /* right: ON */
     turn(EN_K1, -1); ok &= !(ui_prefs & PREF_BPM_LOCK);              /* left: OFF */
     press(B_OCTUP); ok &= (ui_prefs & PREF_BPM_LOCK) && ui.menu;      /* OCT+: ON */
@@ -8227,6 +8274,7 @@ static int test_bpm_lock(void)
         ok &= settings_import(&p, (int)(sizeof p - sizeof p.favorites)) == 2 && !ui_prefs;
         q = p;
         ok &= settings_import(&q, (int)sizeof q) == 1 && !ui_prefs;
+        sel_bpm();                                                    /* (older settings: Dungeon Tracker's PAGE) */
         frame();
         b0 = song.g[G_BPM];
         go_home(); frame();
@@ -8978,7 +9026,7 @@ static uint32_t head_ink_cols(int32_t x0, int32_t x1)  /* header columns x0..x1 
 }
 static int head_is(const char *s)
 {
-    char b[3];
+    char b[4];                                         /* (head_slot: up to "A>C") */
     int on = head_slot(b);
     return s ? on && b[0] == s[0] && b[1] == s[1] : !on;
 }
@@ -9761,7 +9809,8 @@ static int test_edit_quick_actions(void)
 
     /* the kit's own names: KIT 66 plays a conga on TOM */
     TSEL->p[P_E0] = 6;                                /* (DK_66) */
-    ok = str_eq(eqa_of(TSEL, 5)->name(TSEL, 5), "CG") && str_eq(eqa_of(TSEL, 0)->name(TSEL, 0), "BD");
+    ok = eqa_of(TSEL, 5) && eqa_of(TSEL, 0) &&       /* (RE-1: none when the track is not a DRUM one) */
+         str_eq(eqa_of(TSEL, 5)->name(TSEL, 5), "CG") && str_eq(eqa_of(TSEL, 0)->name(TSEL, 0), "BD");
     btn_down(B_EDIT); frames(500);
     key_down(black(5)); frame(); key_up(black(5)); frame();
     ok &= msg_is("CONGA MUTED") && drum_mute[3] == (9u | 32u);
@@ -9847,6 +9896,7 @@ static int test_edit_quick_actions(void)
     return bad;
 }
 
+#ifndef UI_TEST_NO_MAIN                          /* (RONDO: tests/tracker_test.c includes this harness) */
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -9944,4 +9994,5 @@ int main(void)
     printf(bad ? "ui: %d FAILED\n" : "ui: all passed\n", bad);
     return bad ? 1 : 0;
 }
+#endif
 #endif

@@ -238,6 +238,7 @@ static void cs_hook(const char *v, const char *u);
 #define CARD_HOOK(v, u) cs_hook(v, u)
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
+#include "../firmware/src/boot_song.c"   /* Dungeon Tracker: the power-on song (S_HOME_BOOT) */
 
 static uint8_t large_on;                         /* the LARGE pass: every scene with MENU > LARGE ON */
 /* the card values set in S (ui_draw.c CARD_HOOK: M too wide for the card with its unit), distinct, for the report
@@ -661,9 +662,11 @@ static void state(void)                          /* a playing song with steps on
 {
     uint32_t i;
     ui_power_on();
+    as.pend = 0; as.have = 0;                    /* (1.0.1: the autosave's mark and QUICK, scene by scene) */
     seq_fill = 0;                                /* (1.5.5: GLO's FILL, held in layer_glo_fill only; */
     eu.on = 0;                                   /* SEQ TOOLS' EUCLID, open in layer_seq_euclid*) */
     if (large_on) ui_prefs |= PREF_LARGE;
+    lg_peek = 0;                                 /* (1.1: no knob turned on HOME: LARGE's dungeon whole) */
     song.playing = 1;
     song.g[G_BPM] = 124;
     clk_pos = 0; clk_step = 8; cin_total = cin_left = 0;   /* the bar's 3rd beat: the header's metronome at rest */
@@ -723,6 +726,23 @@ static void song_steps(uint32_t k)
         }
 }
 /* SONG's sources: project slot k saved with track 1's LEN steps of DIV (N_DIV's order), the patterns song_steps(k) */
+/* RONDO: the PATTERN BANK with A B C E stored (pictures of song_steps 0..3, A 16 steps, B 32, C 16, E 8), D F empty;
+ * A on the tracks */
+static void bank_fill(void)
+{
+    static const uint8_t P[4] = {0, 1, 2, 4};
+    static const int16_t L[4] = {16, 32, 16, 8};
+    uint32_t i;
+    for (i = 0; i < 4u; i++) {
+        song_steps(i);
+        trk[0].p[P_SLEN] = L[i];
+        trk[1].p[P_SLEN] = L[i];
+        bank_take(P[i]);
+    }
+    bank_give(0);
+    bank.cur = 0;
+    bank.used = 1u | 2u | 4u | 16u;
+}
 static void song_src(uint32_t k, int16_t len, int16_t div, const char *name)
 {
     song_steps(k);
@@ -741,7 +761,7 @@ static void sg_fresh(void)
  * OP LEVEL pages and the algorithm charts, exist only there: fm4_screen) */
 #define E_FM (FELUCCA_FM4 ? ENGI_DIGITAL : ENGI_FM6)
 
-enum { S_HOME, S_HOME_IDLE, S_MESSAGE, S_MESSAGE_KEY, S_MESSAGE_NOFILE, S_PRESETS, S_PRESETS_NOFAV, S_USER, S_PHRASES, S_PROJECT, S_TOOLS,
+enum { S_HOME, S_HOME_IDLE, S_HOME_BOOT, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TURN, S_MESSAGE, S_MESSAGE_KEY, S_MESSAGE_NOFILE, S_PRESETS, S_PRESETS_NOFAV, S_USER, S_PHRASES, S_PROJECT, S_TOOLS,
        S_SONG_EMPTY, S_SONG, S_STEP, S_AUTO_STEPS, S_AUTO_ADD_CHANCE, S_MOTION, S_DRUM, S_DRUM_HAND, S_DRUM_CYM, S_MIXER,
        S_MIXER_HOME, S_MIXER_PAN,
        S_ENV, S_ENVDEST, S_LFO, S_MOD, S_FX, S_SLICER, S_DLY, S_SCL, S_CHORD, S_CHORD_WIDE, S_CHORD_OFF, S_CHORD_KIT, S_ARP, S_VOICE, S_CLOCK, S_MENU_MIDI,
@@ -751,7 +771,7 @@ enum { S_HOME, S_HOME_IDLE, S_MESSAGE, S_MESSAGE_KEY, S_MESSAGE_NOFILE, S_PRESET
        S_CONFIRM_SEQ, S_CONFIRM_PROJ, S_CONFIRM_USER, S_CONFIRM_PAT, S_CONFIRM_MOTION, S_CONFIRM_ERASE,
        S_MENU, S_MENU_SPEAKER, S_ABOUT, S_ABOUT_REC, S_ABOUT_CREDITS, S_ABOUT_END, S_UBOOT, S_CALIBRATION, S_SPLASH,
        S_BATT0, S_BATT1, S_BATT2, S_BATT3, S_BATT_USB, S_MOTION_REC, S_MOTION_OFF, S_MOTION_CARD, S_SONG_HOME,
-       S_FX_PEEK, S_FX_HELD, S_FX_WAIT, S_FX_HARM, S_FX_MOD, S_FX_ASSIGN, S_MENU_HOLD, S_MENU_LEDS, S_MENU_END, S_MENU_SYSTEM, S_MENU_SLIDE, S_REVERB,
+       S_FX_PEEK, S_FX_HELD, S_FX_WAIT, S_FX_HARM, S_FX_MOD, S_FX_ASSIGN, S_MENU_HOLD, S_MENU_LEDS, S_MENU_END, S_MENU_SYSTEM, S_MENU_GAME, S_MENU_SLIDE, S_REVERB,
        S_GLO_PEEK, S_GLO_ACTIVE, S_GLO_EXT, S_SCL_PEEK, S_SCL_ACTIVE, S_EDIT_PEEK, S_EDIT_ACTIVE, S_EDIT_USER, S_LAYER_HINT, S_LAYER_LOCK, S_LAYER_LOCK_FX,
        S_SEQ_TOOLS, S_SEQ_TOOLS_DRUM, S_SEQ_TOOLS_SONG, S_EDIT_DRUM, S_EDIT_DRUM_KIT, S_DRUM_MUTED,
        S_NAME_USER, S_NAME_TYPING, S_NAME_123, S_NAME_EMPTY, S_NAME_FULL, S_NAME_PLAYING, S_PROJECT_NAMED, S_SONG_NAMED,
@@ -765,22 +785,30 @@ enum { S_HOME, S_HOME_IDLE, S_MESSAGE, S_MESSAGE_KEY, S_MESSAGE_NOFILE, S_PRESET
        S_HEAD_BPM_LOCKED, S_HEAD_GLO_TURN, S_HEAD_DOWNBEAT, S_HEAD_BEAT_2,
        S_SONG_LANES, S_SONG_LANES_PLAYING, S_SONG_LANES_SILENT, S_SONG_PICTURES, S_HEAD_SLOT, S_HEAD_SLOT_EDITED, S_HEAD_SLOT_SONG,
        S_MENU_TUNE, S_MENU_INFO, S_HOME_TRACKS, S_HOME_TRACKS_STOPPED, S_HOME_TRACKS_HOT, S_MENU_HOME, S_HOME_LEVELS, S_HELP_HOME, S_HELP_USER, S_HELP_GRID, S_HELP_LFO, S_HELP_GLO, S_HELP_SEQ, S_MENU_HELP,
-       S_INSERT_CRUSH, S_INSERT_FOLD, S_INSERT_PHASER, S_INSERT_OFF, S_INSERT_MIX,
+       S_INSERT_CRUSH, S_INSERT_FOLD, S_INSERT_PHASER, S_INSERT_OFF, S_INSERT_MIX, S_INSERT_FILTR, S_INSERT_DUCK, S_INSERT_REPT,
+       S_LAYER_ARP, S_LAYER_ARP_OFF, S_MFX, S_FX_MASTER, S_TRACKER_CMD, S_AUTO_CMD, S_VARY, S_VARY_KIT,
+       S_LAYER_ENV, S_LAYER_ENV_PLAY, S_LAYER_ENV_SONG, S_SONG_BANK, S_SONG_BANK_PLAY, S_HEAD_BANK,
+       S_MORPH, S_MORPH_OFF, S_SONG_ARR, S_SONG_ARR_REC, S_DICE_TONE, S_DICE_KIT, S_DICE_LOFI, S_EDIT_TONE, S_EDIT_TONE2,
        S_ENV_SYNC, S_ENV_DEST_SYNC, S_FILTER,
        S_LEARN_WAIT, S_LEARN_PICK, S_LEARN_SET, S_LEARN_LONG, S_GLO_LEARN, S_MENU_LCLEAR, S_MENU_LCLEAR_NONE,
        S_DLY_DOT, S_DLY_DOT16, S_FX_THROW,
        S_DETAIL, S_DETAIL_PLAYING, S_DETAIL_REST, S_DETAIL_DRUM, S_ROLL_MARKS, S_DRUM_MARKS, S_HELP_DETAIL,
        S_DETAIL_COND, S_DETAIL_FILL, S_AUTO_COND, S_GLO_FILL, S_SEQ_EUCLID, S_SEQ_EUCLID_DRUM, S_SEQ_EUCLID_64,
        S_MENU_SELECT, S_PROJECT_ERASE, S_CONFIRM_ERASE_PROJ, S_TOOLS_CLEAN, S_CONFIRM_CLEAN,
-       S_MENU_MIDI_TRACK, S_MENU_MIDI_TCH_UNUSED, S_MENU_MIDI_AUTO, S_HOME_TRACKS_MIDI, S_MIXER_MIDI, S_EDIT_PHASE_FOLD, S_COUNT };
-static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "message", "message_key", "message_nofile", "presets", "presets_nofav", "user",
+       S_MENU_MIDI_TRACK, S_MENU_MIDI_TCH_UNUSED, S_MENU_MIDI_AUTO, S_HOME_TRACKS_MIDI, S_MIXER_MIDI, S_EDIT_PHASE_FOLD,
+       S_TOOLS_NEW, S_TOOLS_NEW_S, S_CONFIRM_NEW, S_CONFIRM_NEW_S, S_PROJECT_QUICK, S_HEAD_UNSAVED, S_HEAD_UNSAVED_Q,
+       S_WAVES_EDIT1, S_WAVES_EDIT2, S_WAVES_HOME, S_WAVES_PRESETS, S_WAVES_EDIT_LAYER, S_HOME_FLOORFX, S_LG_HOME_FULL, S_LG_HOME_FIGHT, S_LG_HOME_PEEK, S_LG_HOME_BOOT, S_HOME_PAIR, S_LG_HOME_PAIR, S_HOME_PAIR_COMING,
+       S_SLOTS_LOW, S_SLOTS_LOW_LG, S_CONFIRM_LOAD_SONG, S_SLOTS_TOO_BIG,
+       S_SID_EDIT1, S_SID_EDIT2, S_SID_HOME, S_SID_PRESETS, S_LOFI_KIT, S_SLOTS_K,
+       S_MENU_PARTY, S_MENU_PARTY_OVER, S_HOME_TWO_ROGUES, S_PRESETS_CLASS, S_COUNT };
+static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_boot", "home_fallen", "home_cross", "home_turn", "message", "message_key", "message_nofile", "presets", "presets_nofav", "user",
     "phrases", "project", "tools", "song_empty", "song", "step", "auto_steps", "auto_add_chance", "automation", "drum",
     "drum_hand", "drum_cym", "mixer", "mixer_from_home", "mixer_pan", "env", "env_dest", "lfo", "mod", "fx", "slicer", "dly", "scl", "chord", "chord_wide", "chord_off", "chord_kit", "arp",
     "voice", "clock", "menu_midi", "edit_analog", FELUCCA_FM4 ? "edit_digital" : "edit_fm6", "op_env", "edit_wheel", "edit_sample",
     "edit_grain", "edit_phys", "alg_1", "alg_2", "alg_3", "alg_4", "alg_5", "alg_6", "alg_7", "alg_8", "op_level", "fm6_alg_01", "fm6_alg_05", "fm6_alg_22", "fm6_alg_32", "fm6_op", "fm6_op_fixed", "fm6_op2", "fm6_op_env", "fm6_op_env_rel", "confirm_seq", "confirm_project", "confirm_user", "confirm_pattern",
     "confirm_motion", "confirm_erase", "menu", "menu_speaker", "about", "about_rec", "about_credits", "about_end", "uboot", "calibration", "splash",
     "batt_0", "batt_1", "batt_2", "batt_3", "batt_usb", "motion_rec", "motion_off", "motion_card", "song_home",
-    "perform_peek", "perform_held", "perform_wait", "perform_harm", "perform_mod", "perform_assign", "menu_hold", "menu_leds", "menu_end", "menu_system", "menu_slide", "reverb_spring",
+    "perform_peek", "perform_held", "perform_wait", "perform_harm", "perform_mod", "perform_assign", "menu_hold", "menu_leds", "menu_end", "menu_system", "menu_game", "menu_slide", "reverb_spring",
     "layer_glo_peek", "layer_glo_active", "layer_glo_ext", "layer_scl_peek", "layer_scl_active", "layer_edit_peek",
     "layer_edit_active", "layer_edit_user", "layer_hint", "layer_lock", "layer_lock_fx",
     "layer_seq_tools", "layer_seq_tools_drum", "layer_seq_tools_song", "layer_edit_drum", "layer_edit_drum_kit", "drum_muted",
@@ -795,7 +823,10 @@ static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "message", "mes
     "head_bpm_locked", "head_glo_turn", "head_downbeat", "head_beat_2",
     "song_lanes", "song_lanes_playing", "song_lanes_silent", "song_pictures", "head_slot", "head_slot_edited", "head_slot_song",
     "menu_tune", "menu_info", "home_tracks", "home_tracks_stopped", "home_tracks_hot", "menu_home", "home_levels", "help_home", "help_user", "help_grid", "help_lfo", "layer_glo_help", "layer_seq_help", "menu_help",
-    "insert_crush", "insert_fold", "insert_phaser", "insert_off", "insert_mix",
+    "insert_crush", "insert_fold", "insert_phaser", "insert_off", "insert_mix", "insert_filtr", "insert_duck", "insert_rept",
+    "layer_arp", "layer_arp_off", "master", "fx_master", "tracker_cmd", "auto_cmd", "vary", "vary_kit",
+    "layer_env", "layer_env_play", "layer_env_song", "song_bank", "song_bank_play", "head_bank",
+    "morph", "morph_off", "song_arrange", "song_arrange_rec", "dice_tone", "dice_kit", "dice_lofi", "edit_tone", "edit_tone2",
     "env_sync", "env_dest_sync", "filter",
     "learn_wait", "learn_pick", "learn_set", "learn_long", "layer_glo_learn", "menu_learn_clear", "menu_learn_clear_none",
     "dly_dotted", "dly_dotted_16", "perform_throw",
@@ -803,7 +834,12 @@ static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "message", "mes
     "detail_cond", "detail_fill", "auto_cond", "layer_glo_fill", "layer_seq_euclid", "layer_seq_euclid_drum",
     "layer_seq_euclid_64",
     "menu_select", "project_erase", "confirm_erase_project", "tools_clean", "confirm_clean",
-    "menu_midi_track", "menu_midi_channels_unused", "menu_midi_auto_select", "home_tracks_midi", "mixer_midi", "edit_phase_fold"};
+    "menu_midi_track", "menu_midi_channels_unused", "menu_midi_auto_select", "home_tracks_midi", "mixer_midi", "edit_phase_fold",
+    "tools_new", "tools_new_sounds", "confirm_new", "confirm_new_sounds", "project_quick", "head_unsaved", "head_unsaved_queued",
+    "waves_edit1", "waves_edit2", "waves_home", "waves_presets", "waves_edit_layer", "home_floor_fx", "large_home_full", "large_home_fight", "large_home_peek", "large_home_boot", "home_pair", "large_home_pair", "home_pair_coming",
+    "slots_low", "slots_low_large", "confirm_load_song", "slots_too_big",
+    "sid_edit1", "sid_edit2", "sid_home", "sid_presets", "lofi_kit", "slots_k",
+    "menu_party", "menu_party_over", "home_two_rogues", "presets_class"};
 
 /* the STEP page's piano roll (ui_graph.c graph_roll) on track 1, stopped unless said: an empty pattern; ACID in
  * A minor; POLY chords (Am7 F C G, tied); a line with ties, slides and accents in C major; LEN 32 on its second
@@ -928,6 +964,9 @@ static void go_title_page(const char *title)
     uint32_t i;
     for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, title); i++)
         ;
+    if (i == NPAGES)                                  /* (RONDO: STEP and DETAIL are the TRACKER now) */
+        for (i = 0; i < NPAGES && PAGES[i].graph != GR_ROLL; i++)
+            ;
     ui.home = 0;
     ui.page = (uint8_t)i;
     page_entered();
@@ -980,9 +1019,56 @@ static void setup(int s)
     memset(kb_chn, 0, sizeof kb_chn);               /* no key held (roll_playing holds one) */
     state();
     memset(drum_mute, 0, sizeof drum_mute);          /* (1.4.1: no DRUM lane muted) */
+    memset(&dg, 0, sizeof dg);                       /* (RONDO: the dungeon from its start, B1, nobody fallen) */
+    dg.floor = dg.best = 1;
+    dg_cut = 0;
+    dg_game = 0;                                     /* (the game off, as at power-on: HOME's corridor alone) */
+    mk_reset();                                      /* (RONDO: the master knobs at rest, the first four) */
+    memset(&vary, 0, sizeof vary);                   /* (RONDO: VARY from scratch, the rolls the same each run) */
+    bank_reset();                                    /* (RONDO: the PATTERN BANK empty, A current) */
+    morph_reset();                                   /* (RONDO: no SOUND MORPH) */
+    memset((void *)&arr, 0, sizeof arr);             /* (RONDO: no arrangement recording) */
+    vary.rng = 12345u;
+    song.g[G_ENGGO] = 0;
     switch (s) {
     case S_HOME: song.octave = 2; song.rec = 1; usb.config = 1; break;
+    case S_HOME_CROSS:                              /* RONDO: the game off, a crossroads a square ahead, facing E */
+        song.playing = 1; dg.cell = 40; dg.phase = 20000; dg.junc = 41; dg.heading = 1; break;
+    case S_HOME_TURN:                               /* the game on, turning left at the crossroads, a third of the way */
+        song.playing = 1; dg_game = 1; dg.cell = 40; dg.phase = 30000; dg.jlast = 40; dg.turn = -1; dg.tph = 24000;
+        dg.floor = 3; dg.heading = 2; dg.lvl_ms = 0; break;
+    case S_HOME_FALLEN:                             /* RONDO: the fighter (T3) fallen, T3 cut, a skeleton fought */
+        song.playing = 1; ui_home_view = HV_SCOPE; dg_game = 1; dg.lvl_ms = 0;
+        trk[2].step[0].time = ST_NOTE; trk[2].step[0].n = 1; trk[2].step[0].note[0] = 36; trk[2].step[0].vel = 100; dg_party(); dg.in[2] = 1; dg.lvl[2] = 3;
+        dg.dead = 4; dg.hp[2] = 0; dg.hp[0] = 2; dg.mon = DM_SKEL; dg.mon_dist = 1; dg.mon_max = 30; dg.mon_hp = 17;
+        dg.floor = 7; dg.kills = 12; dg_say("FIGHTER FALLS: T3 CUT"); dg.msg_f = 250; dg.swing[0] = 6; break;
+    case S_HOME_FLOORFX:                            /* 1.1: FLOOR FX, the longest message (STAIRS: T4 FLANGER) */
+        song.playing = 1; ui_home_view = HV_SCOPE; dg_game = 1; dg.lvl_ms = 0; dg_party();
+        dg.floor = 8; dg.kills = 9; str_cpy(dgf.msg, "STAIRS: T4 FLANGER", sizeof dgf.msg); dg_say(dgf.msg); dg.msg_f = 250; break;
+    case S_LG_HOME_FULL: case S_LG_HOME_FIGHT: case S_LG_HOME_PEEK: case S_LG_HOME_BOOT:   /* 1.1: LARGE, the dungeon whole */
+        ui_prefs |= PREF_LARGE; go_home(); ui_home_view = HV_SCOPE; ui.msg_t = 0;
+        if (s == S_LG_HOME_BOOT) { song.playing = 0; dg_played = 0; dg_game = 0; dg_party(); break; }
+        song.playing = 1; dg_game = 1; dg.lvl_ms = 0; dg_party(); dg.floor = 6; dg.kills = 14;
+        if (s == S_LG_HOME_FIGHT) {
+            dg.mon = DM_OGRE; dg.mon_dist = 1; dg.mon_max = 40; dg.mon_hp = 23; dg.mon_hit = 2; dg.dmg = 6; dg.swing[0] = 6;
+            str_cpy(dgf.msg, "BOSS: T2 FLANGER", sizeof dgf.msg); dg_say(dgf.msg); dg.msg_f = 250;
+        } else if (s == S_LG_HOME_FULL) {
+            dg.mon = DM_GOBLIN; dg.mon_dist = 3;
+        } else {
+            ui.hot_col = 1; ui.hot_t = 30;              /* a knob turned: the tall cards back */
+        }
+        break;
+    case S_HOME_PAIR: case S_LG_HOME_PAIR: case S_HOME_PAIR_COMING:   /* 1.1: a pair, side by side (the longest name) */
+        if (s == S_LG_HOME_PAIR) ui_prefs |= PREF_LARGE;
+        go_home(); ui_home_view = HV_SCOPE; ui.msg_t = 0;
+        song.playing = 1; dg_game = 1; dg.lvl_ms = 0; dg_party(); dg.floor = 4; dg.kills = 7;
+        dg.mon = DM_SKEL; dg.mon2 = DM_GOBLIN; dg.mon_max = 18; dg.mon_hp = 11; dg.mon2_max = 10; dg.mon2_hp = 7;
+        dg.mon_dist = s == S_HOME_PAIR_COMING ? 3 : 1;
+        if (s != S_HOME_PAIR_COMING) { dg.mon2_hit = 2; dg.dmg = 5; dg.swing[2] = 6; }
+        str_cpy(dg.pair_msg, "SKELETON AND GOBLIN", sizeof dg.pair_msg); dg_say(dg.pair_msg); dg.msg_f = 250; break;
     case S_HOME_IDLE: song.playing = 0; song.batt_raw = 570; ui.hot_col = 1; ui.hot_t = 30; break;
+    case S_HOME_BOOT:                               /* Dungeon Tracker: just powered on, its own song, stopped: PRESS PLAY */
+        song.playing = 0; boot_song(0x5EEDu); boot_song_settle(); ui_home_view = HV_SCOPE; dg_played = 0; dg.lvl_ms = 0; dg_party(); break;
     case S_MESSAGE: ui_say("LOADED ", "07 A VERY LONG PATTERN NAME"); break;
     case S_MESSAGE_KEY: ui_message("[SAVE] HOLD TO UNDO"); break;            /* a message with a keycap */
     case S_MESSAGE_NOFILE:                          /* a missing sample (ui_input.c sample_notice): USR2 */
@@ -1158,6 +1244,112 @@ static void setup(int s)
     case S_INSERT_PHASER: set_ins_ui(IT_PHASER, 70, 110, 90, 127); go_title("INSERT"); break;
     case S_INSERT_OFF: go_title("INSERT"); break;
     case S_INSERT_MIX: set_ins_ui(IT_FLANGER, 40, 127, 110, 90); go_title("INSERT 2"); break;
+    /* RONDO: the three new INSERTs on INSERT 2 (A B C MIX); ARP held (T3's FILTR the target; one with none); FX > MASTER
+     * with the new four and some turned; the FX layer's cards of them */
+    case S_INSERT_FILTR: set_ins_ui(IT_FILTER, 70, 100, 30, 127); go_title("INSERT 2"); break;
+    case S_INSERT_DUCK: set_ins_ui(IT_DUCK, 110, 50, 60, 127); go_title("INSERT 2"); break;
+    case S_INSERT_REPT: set_ins_ui(IT_REPEAT, 60, 50, 100, 127); go_title("INSERT 2"); break;
+    case S_LAYER_ARP:
+        go_home(); track_select(2); set_ins_ui(IT_FILTER, 70, 100, 30, 127);
+        trk[0].p[P_ITYPE] = IT_DUCK; trk[1].p[P_ITYPE] = IT_REPEAT; ui.layer = LAYER_ARP;
+        break;
+    /* RONDO: the TRACKER's commands in the FX column (SPEED 1/2 on 08, LOOP 2x3 + PITCH +2 on 07, x2 on 12), playing
+     * (the row the commands play marked); AUTOMATION listing them; VARY after a roll (a melodic track, a kit) */
+    case S_TRACKER_CMD:
+        track_select(1); go_page(GR_ROLL);
+        motion_set_lock(TSEL, 8, CMD_SPD, 1); motion_set_lock(TSEL, 7, CMD_LOOP, 10); motion_set_lock(TSEL, 7, CMD_LPIT, 2);
+        motion_set_lock(TSEL, 12, CMD_SPD, 2);
+        { uint32_t c; for (c = 0; c < 9u && tk_col() != TC_FX; c++) tk.col[1]++; }
+        ui.cursor = 7; song.playing = 1; TSEL->seq_idx = 9; TSEL->pr_on = 1; TSEL->pr_row = 6; follow.hold = 1;
+        break;
+    case S_AUTO_CMD:
+        track_select(1); motion_set_lock(TSEL, 7, CMD_LOOP, 10); motion_set_lock(TSEL, 7, CMD_LPIT, 2);
+        motion_set_lock(TSEL, 8, CMD_SPD, 1); go_page(GR_EVENTS);
+        break;
+    case S_VARY:
+        track_select(1); go_page(GR_VARY); vary.wild[1] = 71; vary.hold[1] = 2; vary.cur[1] = 1; vary_roll(); vary.anim = 0;
+        break;
+    case S_VARY_KIT:
+        track_select(0); go_page(GR_VARY); vary.wild[0] = 91; vary_roll(); vary_roll(); vary_hist(1); vary.anim = 0;
+        break;
+    case S_LAYER_ARP_OFF: go_home(); track_select(3); trk[3].p[P_ITYPE] = 0; ui.layer = LAYER_ARP; break;
+    /* RONDO: ENV held, the PATTERN BANK: stopped (A current, B C E stored, D F empty; one not in the flash yet); playing
+     * with C queued (flashing, "A>C" in the header); a song playing (the keys say so); SONG on the bank: sections of A
+     * B E and F (empty: EMPTY KEY), stopped and playing; HOME with C queued */
+    case S_LAYER_ENV:
+        song.playing = 0; bank_fill(); bank.dirty = 4u; go_home(); ui.layer = LAYER_ENV; ui.msg_t = 0;
+        break;
+    case S_LAYER_ENV_PLAY: case S_HEAD_BANK:
+        bank_fill(); seq_start(); song.playing = 1; events_block(32); bank.queue = 2; fm1_ms = 250u * 3u;
+        go_home(); ui.layer = s == S_LAYER_ENV_PLAY ? LAYER_ENV : 0; ui.msg_t = 0;
+        break;
+    /* RONDO: EDIT > MORPH on T4 (its best-differing preset, 60 %; none picked); SONG with the arrangement armed, and
+     * recording */
+    case S_MORPH: case S_MORPH_OFF: {
+        uint32_t p, id, best = 1, most = 0;
+        track_select(3);
+        for (p = 1; s == S_MORPH && p <= morph_npresets(TSEL); p++) {
+            uint32_t n = 0;
+            morph_set(3, p, 0); morph_poll();
+            for (id = 0; id < P_COUNT; id++) n += (uint32_t)morph_differs(TSEL, id);
+            if (n > most) { most = n; best = p; }
+        }
+        morph_set(3, s == S_MORPH ? best : 0, s == S_MORPH ? 60 : 0); morph_poll();
+        go_page(GR_MORPH); ui.msg_t = 0;
+        break;
+    }
+    /* RE-1: EDIT > DICE after a roll (T4 FMTONE, T1 FMKIT); FMTONE's EDIT 1 and EDIT 2 (T3's bass) */
+    case S_DICE_TONE: case S_DICE_KIT:
+        track_select(s == S_DICE_TONE ? 3 : 0); go_page(GR_DICE); dice.rng = 0xD1CEu; dice_roll(); dice.anim = 0;
+        TSEL->engine = TSEL->eng_req; ui.msg_t = 0;
+        break;
+    case S_DICE_LOFI:                                   /* (T4 on CHIP, rolled; DIE on DUTY, MODE held) */
+        track_select(3); set_engine_of(TSEL, ENGI_LOFI); apply_preset_to(TSEL, 5);
+        TSEL->engine = TSEL->eng_req; go_page(GR_DICE); dice.rng = 0xC41Bu; dice.hold[3] = 1u; dice_roll();
+        dice.cur[3] = 2; dice.anim = 0; ui.msg_t = 0;
+        break;
+    case S_EDIT_TONE: case S_EDIT_TONE2:
+        track_select(2); go_title(s == S_EDIT_TONE ? "EDIT 1" : "EDIT 2"); ui.msg_t = 0;
+        break;
+    case S_SONG_ARR: case S_SONG_ARR_REC: {
+        song.playing = 0; bank_fill();
+        chain_config.count = 2;
+        chain_config.row[0] = chain_row_of(0, 2); chain_config.row[1] = chain_row_of(1, 1);
+        ui.song_row = 0; ui.song_trk = 0;
+        go_page(GR_SONG); sg_fresh();
+        arr.armed = s == S_SONG_ARR; arr.on = s == S_SONG_ARR_REC;
+        if (arr.on) { seq_start(); song.playing = 1; events_block(32); arr.on = 1; arr.armed = 0; }
+        ui.msg_t = 0;
+        break;
+    }
+    case S_LAYER_ENV_SONG:
+    case S_SONG_BANK: case S_SONG_BANK_PLAY: {
+        static const uint8_t R[4][5] = {{0, 0, 0, 0, 1}, {1, 1, 0, 1, 2}, {5, 5, 4, 0, 1}, {0, 6, 4, 4, 1}};
+        uint32_t k;
+        song.playing = 0; bank_fill();
+        chain_config.count = 4;
+        for (k = 0; k < 4u; k++) chain_config.row[k] = (chain_row_t){{R[k][0], R[k][1], R[k][2], R[k][3]}, R[k][4]};
+        ui.song_row = 3; ui.song_trk = 1;
+        go_page(GR_SONG); ui.msg_t = 0; sg_fresh();
+        if (s != S_SONG_BANK) {
+            chain_config.row[3].slot[1] = 0;            /* (F empty: no song) */
+            chain_prepare(); events_block(32);
+            for (k = 0; k < 4000u && chain.running && chain.row < 1u; k++) events_block(div_samples(2));
+            for (k = 0; k < 6u; k++) events_block(div_samples(2));
+            chain_config.row[3].slot[1] = 6;
+        }
+        if (s == S_LAYER_ENV_SONG) { go_home(); ui.layer = LAYER_ENV; }
+        ui.msg_t = 0;
+        break;
+    }
+    case S_MFX:
+        song.g[G_ENGGO] = 0; mk_assign(0, MK_ISO); mk_assign(1, MK_WASH); mk_assign(2, MK_PUMP); mk_assign(3, MK_RIDE);
+        mk_x[0] = -60; mk_x[2] = 45; go_page(GR_MFX);
+        break;
+    case S_FX_MASTER:
+        song.g[G_ENGGO] = 0; mk_assign(0, MK_ISO); mk_assign(1, MK_FILTER); mk_assign(2, MK_PUMP); mk_assign(3, MK_DEPTH);
+        mk_x[0] = 80; perf_k[0] = -30; mk_x[2] = 100; go_home(); ui.layer = LAYER_FX;
+        break;
     /* 1.5 MIDI LEARN (midi_learn.c): on, nothing picked (MIXER); T1 CUT picked, no CC yet (EDIT 2); T1 CUT on CC74 (its
      * message in the header); the widest line, a 5-letter label waiting; GLO's map with LEARN on (D4) */
     case S_LEARN_WAIT: go_page(GR_TRK); ml_toggle(); ui.msg_t = 0; break;
@@ -1349,6 +1541,7 @@ static void setup(int s)
     /* the MENU's tabs (1.0.5): menu DISPLAY (COLOR), menu_hold CONTROL, menu_speaker AUDIO, menu_system SYSTEM (USB
      * SERIAL); menu_slide: from DISPLAY to CONTROL with ANIM ON, the frame half way (draw) */
     case S_MENU_SYSTEM: ui.menu = 1; ui.menu_sel = MI_SERIAL; break;
+    case S_MENU_GAME: ui.menu = 1; ui.menu_sel = MI_GAME; dg_game = 1; break;   /* RONDO: GAME > DUNGEON ON */
     case S_MENU_SLIDE: ui.menu = 1; ui.menu_sel = MI_ACCEL; ui_prefs |= PREF_LATCH; break;
     /* the GLO SCL EDIT layers (ui_layer.c): just opened (a peek), and in use: GLO with T2 muted, T3 soloed (its key
      * held) and KNOB 1 turned; with CLK EXT (TAP dimmed); SCL at D# minor, KNOB 2 turned; EDIT on DIGITAL preset 3,
@@ -1542,6 +1735,60 @@ static void setup(int s)
     /* 1.5.5 (#190): SAVE > TOOLS with KNOB 2 turned on past INIT (CLEAN INIT picked); its dialog */
     case S_TOOLS_CLEAN: go_page(GR_TOOLS); ui.act = 2; ui.tl_clean = 1; break;
     case S_CONFIRM_CLEAN: ui.confirm = CF_CLEAN_SOUND; ui.confirm_trk = 0; break;
+    case S_TOOLS_NEW: go_page(GR_TOOLS); ui.act = 1; ui.tl_new = 1; break;          /* Dungeon Tracker: NEW */
+    case S_TOOLS_NEW_S: go_page(GR_TOOLS); ui.act = 1; ui.tl_new = 2; break;
+    case S_CONFIRM_NEW: ui.confirm = CF_NEW; ui.confirm_trk = 0; break;
+    case S_CONFIRM_NEW_S: ui.confirm = CF_NEW_SOUNDS; ui.confirm_trk = 0; break;
+    case S_SLOTS_LOW: case S_SLOTS_LOW_LG: case S_SLOTS_TOO_BIG:   /* 1.2: A..H, G picked (the list scrolled) */
+        song.playing = 0;
+        project_save_as(1, "DUB SKETCH"); project_save_as(5, "BOSS THEME"); project_save_as(7, "A VERY LONG NAME");
+        project_save_as(6, "");
+        if (s == S_SLOTS_LOW_LG) ui_prefs |= PREF_LARGE;
+        song.g[G_SLOT] = 7; go_page(GR_SLOTS); ui.act = 4;
+        if (s == S_SLOTS_TOO_BIG) ui_message("SONG TOO BIG"); else ui.msg_t = 0;
+        break;
+    case S_SID_EDIT1: case S_SID_EDIT2: case S_SID_HOME: case S_SID_PRESETS:   /* 1.3: SID */
+        eng(ENGI_SID); apply_preset_to(TSEL, s == S_SID_HOME ? 3 : 17); TSEL->engine = TSEL->eng_req;
+        if (s == S_SID_EDIT1) go_title("EDIT 1");
+        else if (s == S_SID_EDIT2) go_title("EDIT 2");
+        else if (s == S_SID_PRESETS) go_page(GR_BROWSE);
+        else go_home();
+        ui.msg_t = 0;
+        break;
+    case S_LOFI_KIT:                                    /* 1.3: SAMPLE's LOFI KIT */
+        eng(ENGI_SAMPLE); apply_preset_to(TSEL, 3); TSEL->engine = TSEL->eng_req; go_title("EDIT 1"); ui.msg_t = 0; break;
+    case S_SLOTS_K:                                     /* 1.3: A..K, K picked (the list's end) */
+        song.playing = 0; project_save_as(8, "CAVE TUNE"); project_save_as(10, "LAST STAND");
+        song.g[G_SLOT] = 11; go_page(GR_SLOTS); ui.act = 4; ui.msg_t = 0; break;
+    case S_MENU_PARTY: case S_MENU_PARTY_OVER:          /* 1.0: THE PARTY on MENU > GAME (over: T3 ROGUE waiting) */
+        party_waiting = 0;
+        song.clsx[1] = CLS_FIGHTER ^ 1u; song.clsx[2] = CLS_ROGUE ^ 2u;
+        ui.menu = 1; ui.menu_sel = MI_CLS3; dg_game = 1;
+        if (s == S_MENU_PARTY_OVER) { song.clsx[1] = 0; song.clsx[2] = 0; menu_put(MI_CLS3, CLS_ROGUE); }
+        break;
+    case S_HOME_TWO_ROGUES:                             /* 1.0: two rogues and a fighter on T2, the dungeon on */
+        song.clsx[1] = CLS_FIGHTER ^ 1u; song.clsx[2] = CLS_ROGUE ^ 2u;
+        for (uint32_t k = 0; k < 4u; k++) { trk[k].step[0].time = ST_NOTE; trk[k].step[0].n = 1; trk[k].step[0].note[0] = 36; trk[k].step[0].vel = 100; }
+        song.playing = 1; ui_home_view = HV_SCOPE; dg_game = 1; dg.lvl_ms = 0; dg_party(); dg.floor = 3; dg.kills = 5;
+        go_home(); ui.msg_t = 0; break;
+    case S_PRESETS_CLASS:                               /* 1.0: PRESETS on a ROGUE track, LIST CLASS: its drums */
+        song.sel = 0; memset(&favorites, 0, sizeof favorites); go_page(GR_BROWSE); ui.msg_t = 0; break;
+    case S_CONFIRM_LOAD_SONG: song.playing = 0; project_save_as(5, "BOSS THEME"); ui.confirm = CF_LOAD_SONG; ui.confirm_trk = 5; break;
+    case S_PROJECT_QUICK:                               /* 1.0.1: QUICK picked (the autosave there), A saved */
+        song.playing = 0; project_save(0); as.have = 1; song.g[G_SLOT] = 0; go_page(GR_SLOTS); ui.act = 4; break;
+    case S_WAVES_EDIT1: case S_WAVES_EDIT2: case S_WAVES_HOME: case S_WAVES_PRESETS: case S_WAVES_EDIT_LAYER:   /* 1.1 */
+        eng(ENGI_WAVES); apply_preset_to(TSEL, s == S_WAVES_HOME ? 12 : 9); TSEL->engine = TSEL->eng_req;
+        if (s == S_WAVES_EDIT1) go_title("EDIT 1");
+        else if (s == S_WAVES_EDIT2) go_title("EDIT 2");
+        else if (s == S_WAVES_PRESETS) go_page(GR_BROWSE);
+        else { go_home(); if (s == S_WAVES_EDIT_LAYER) ui.layer = LAYER_EDIT; }
+        ui.msg_t = 0;
+        break;
+    case S_HEAD_UNSAVED:                                /* 1.0.1: the header's unsaved mark after the pattern letter */
+        as.pend = 1; go_home(); ui.msg_t = 0; break;
+    case S_HEAD_UNSAVED_Q:                              /* .. with the next pattern queued (A>C*) */
+        bank_fill(); seq_start(); song.playing = 1; events_block(32); bank.queue = 2; fm1_ms = 250u * 3u;
+        as.pend = 1; go_home(); ui.msg_t = 0; break;
     case S_DRUM_LOCKS: case S_DRUM_LOCK_HELD:
         drum(0); go_page(GR_ROLL); ui.cursor = 4; ui.lane = 1; trk[3].seq_idx = 9;
         motion_set_lock(TSEL, 2, P_E1, 90); motion_set_lock(TSEL, 4, P_REV, 100); motion_set_lock(TSEL, 4, P_DLY, 70);
@@ -1642,34 +1889,37 @@ static void draw(int s)
     }
     if (s == S_SPLASH) {                          /* the power-on splash (main.c, before the UI): its lines, the version
                                                    * shown FELUCCA_VERSION (run_tests.sh: src/felucca.c's) */
-        static const char WANT[] = "Felucca|" FELUCCA_VERSION "|H\xFCgelton Instruments|with community";
+        static const char WANT[] = FELUCCA_VERSION "|a Felucca fork";   /* Dungeon Tracker: the words are drawn, not text */
         splash_seen[0] = 0;
         in_splash = 1;
         draw_splash();
         in_splash = 0;
-        {   /* the square whole on the screen (176 x 176 at 32,32, more than the canvas): its edges and square corners
-             * RAISE, BG just outside; its text's ink 16 px in from the left and the top (the bottom: AL_B, the hook) */
-            const int32_t q0 = 32, q1 = 32 + 176 - 1;
-            uint16_t bg = host_screen[0], ra = host_screen[(uint32_t)(q0 + 1) * 240u + (uint32_t)q0 + 1];
-            int32_t i, x, y, ix = 999, iy = 999, bad = ra == bg;
-            for (i = q0 - 1; i <= q1 + 1; i++) {
-                int32_t in = i >= q0 && i <= q1;
-                bad |= host_screen[(uint32_t)(q0 - 1) * 240u + (uint32_t)i] != bg || host_screen[(uint32_t)(q1 + 1) * 240u + (uint32_t)i] != bg
-                    || host_screen[(uint32_t)i * 240u + (uint32_t)(q0 - 1)] != bg || host_screen[(uint32_t)i * 240u + (uint32_t)(q1 + 1)] != bg;
-                if (in)
-                    bad |= host_screen[(uint32_t)q0 * 240u + (uint32_t)i] != ra || host_screen[(uint32_t)q1 * 240u + (uint32_t)i] != ra
-                        || host_screen[(uint32_t)i * 240u + (uint32_t)q0] != ra || host_screen[(uint32_t)i * 240u + (uint32_t)q1] != ra;
-            }
-            for (y = q0; y <= q1; y++)
-                for (x = q0; x <= q1; x++)
-                    if (host_screen[(uint32_t)y * 240u + (uint32_t)x] != ra) {
-                        if (x - q0 < ix) ix = x - q0;
-                        if (y - q0 < iy) iy = y - q0;
+        {   /* the marquee: each word's ink (rows SPL_W1.., SPL_W2.., its shadow in) centred within 2 px and on the screen,
+             * its letters' two colours there (the top rows not the bottom ones), the rules either side of it */
+            static const struct { int32_t y; const char *w; } W[2] = {{SPL_W1, "DUNGEON"}, {SPL_W2, "TRACKER"}};
+            uint16_t bg = host_screen[0];
+            int32_t k, x, y;
+            for (k = 0; k < 2; k++) {
+                int32_t x0 = 999, x1 = -1, h = SPL_GH * SPL_S + 3;
+                for (y = W[k].y; y < W[k].y + h; y++)
+                    for (x = 0; x < 240; x++)
+                        if (host_screen[(uint32_t)y * 240u + (uint32_t)x] != bg) {
+                            if (x < x0) x0 = x;
+                            if (x > x1) x1 = x;
+                        }
+                {
+                    int32_t left = x0, right = 239 - (x1 - 2), w = spl_width(W[k].w);   /* (the shadow's 2 px out) */
+                    uint16_t top = bg, low = bg;
+                    for (x = HALF_UP(240 - w); x < HALF_UP(240 - w) + w && (top == bg || low == bg); x++) {   /* (the first ink of each) */
+                        if (top == bg) top = host_screen[(uint32_t)(W[k].y + 1) * 240u + (uint32_t)x];
+                        if (low == bg) low = host_screen[(uint32_t)(W[k].y + 6 * SPL_S + 1) * 240u + (uint32_t)x];
                     }
-            if (bad || ix != 16 || iy != 16) {
-                if (rep) fprintf(rep, "FIND %-26s the splash square not whole (edges %s) or its text not 16 px in (left %d, top %d)\n",
-                                 cur_name, bad ? "off" : "ok", (int)ix, (int)iy);
-                nfind++;
+                    if (x1 < 0 || left < 8 || abs(left - right) > 2 || top == bg || low == bg || (top == low && k == 0 && ux.mid != ux.text)) {   /* (MONO: black and white, one tone) */
+                        if (rep) fprintf(rep, "FIND %-26s the splash's %s not centred or not two-toned (left %d right %d)\n",
+                                         cur_name, W[k].w, (int)left, (int)right);
+                        nfind++;
+                    }
+                }
             }
         }
         if (strcmp(splash_seen, WANT)) {
@@ -1889,6 +2139,8 @@ static void sweep_columns(void)
 #define FS_GAP 2u                                 /* px between frames, before the zoom */
 static void roll_turns(int32_t s)                 /* one UI frame with SELECT and KNOB 4 turned by s */
 {
+    if (sel_mode() != SEL_BPM)
+        menu_put(MI_SELECT, SEL_BPM);             /* (SELECT the tempo here: Felucca's default; Dungeon Tracker's PAGE) */
     host_enc[panel.enc[EN_SELECT]] += s * panel.dir[EN_SELECT];
     host_enc[panel.enc[EN_K4]] += s * panel.dir[EN_K4];
     host_ticks += 16000u; fm1_ms += 16u;
