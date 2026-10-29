@@ -10,7 +10,9 @@ The ADPCM state at the loop start is stored so loops restart exactly.
 
 Libraries:
   cc0        assets/samples-cc0/ (tools/fetch_cc0.py, Versilian Studios, CC0):
-             PIANO, FLUTE, SAX (set 1, once TRANH, and set 4, once PERC, are aliases of PIANO).
+             PIANO, FLUTE, and (Dungeon Tracker) the LOFI KIT in SAX's place (tools/make_lofi_kit.py, on the
+             General MIDI drum notes: LOFI_MAP) and the DUNGEON KIT in set 1, once TRANH (tools/make_dungeon_kit.py)
+             (set 4, once PERC, is an alias of PIANO).
              PIANO is the 5-zone piano of 1.0 .. 1.1.5 (1.2 .. 1.4.1 built a reduced 2-zone
              one at 11,025 Hz; 1.5 went back to the full one, the same bytes as 1.1.5)
 SAMPLE's factory presets end before set 4 (SMP_PERC_SLOT); every sample set and SET / USR
@@ -67,10 +69,22 @@ TR = 22050                                   # stored sample rate
 
 # CC0 library: set -> kind ("oneshot" decaying, "sus" looped sustain, "kit" one sample per key)
 # Built-in sets (piano, flute, sax); the other slots of the 8 are for the user (USR1-3, loaded
-# from the web editor). TRANH was removed (66 KB of flash); its index 1 stays, an alias of PIANO
-# ("alias": the set named). PERC (the GM kit) was removed (66 KB); its index 4 stays, an alias of
+# from the web editor). TRANH was removed (66 KB of flash); its index 1 was an alias of PIANO until Dungeon
+# Tracker's DUNGEON KIT took it ("alias": the set named). PERC (the GM kit) was removed (66 KB); its index 4 stays, an alias of
 # PIANO too (PERC_SLOT; its sounds load as the DRUM engine)
-CC0_SETS = [("PIANO", "oneshot"), ("PIANO", "alias"), ("FLUTE", "sus"), ("SAX", "sus"), ("PIANO", "alias")]
+CC0_SETS = [("PIANO", "oneshot"), ("DUNGEON KIT", "lofi"), ("FLUTE", "sus"), ("LOFI KIT", "lofi"), ("PIANO", "alias")]
+# Dungeon Tracker: set 3 is the LOFI KIT (assets/samples-cc0/LOFI, tools/make_lofi_kit.py: tape-treated VCSL drums
+# at 16 kHz), in place of SAX (31 KB); its files on the General MIDI drum notes, as the DRUM engine and BEAT play them:
+# file index -> [(lo, hi, root)]. A tom on six notes, pitched round its root; the hats and the shaker on two
+LOFI_DIR = "LOFI"
+LOFI_MAP = {0: [(35, 36, 36)], 1: [(38, 38, 38)], 2: [(39, 40, 40)], 3: [(37, 37, 37)], 4: [(42, 42, 42), (44, 44, 44)],
+            5: [(46, 46, 46)], 6: [(41, 41, 45), (43, 43, 45), (45, 45, 45), (47, 47, 45), (48, 48, 45), (50, 50, 45)],
+            7: [(70, 70, 70), (82, 82, 70)], 8: [(69, 69, 69)]}
+# Dungeon Tracker 1.0: set 1 (the index the retired TRANH kept as PIANO's alias) is the DUNGEON KIT
+# (assets/samples-cc0/DUNGEON, tools/make_dungeon_kit.py: dungeon sounds from VCSL as a drum kit, 16 kHz), on the LOFI
+# KIT's notes, and its GONG on the crashes
+KIT_DIRS = {"LOFI KIT": (LOFI_DIR, LOFI_MAP),
+            "DUNGEON KIT": ("DUNGEON", {**LOFI_MAP, 9: [(49, 49, 49), (52, 52, 49), (55, 55, 49), (57, 57, 49)]})}
 PERC_SLOT = 4                                # core.h SMP_SET_PERC: SAMPLE's factory presets end before it
 MEASURED_TUNING = ()                         # sets whose recordings are not at A440 (was TRANH, ~+35 ct)
 
@@ -96,7 +110,7 @@ BREAK_HITS = [(0, "kick", 1.0), (0, "chh", 0.55), (2, "kick", 0.7), (2, "chh", 0
 SLC_PIANO_NOTE = 60                          # SLICE's SRC PIANO: the PIANO zone of this root (middle C)
 SLC_GRID, SLC_AUTO = 128, 32                # eng_slice.c slc_src_t
 
-ENV = {"wave":(5, 80, 100, 50), "kit": (0, 127, 127, 60), "multi": (0, 85, 0, 75),
+ENV = {"wave":(5, 80, 100, 50), "kit": (0, 127, 127, 60), "lofi": (0, 127, 127, 60), "multi": (0, 85, 0, 75),
        "oneshot": (0, 127, 127, 70), "sus": (12, 80, 120, 60)}
 
 # PIANO's notes cut to 0.75 s (saves flash), faded out over the last SET_FADE s
@@ -316,6 +330,27 @@ class Builder:
         self.alias[len(self.sets)] = orig
         self.sets.append(self.sets[orig])
 
+    def lofi_set(self, name):
+        """the LOFI KIT (and the DUNGEON KIT): each file once in the blob at its own rate, as it is (cut and faded by
+        make_lofi_kit.py / make_dungeon_kit.py), on the zones its map (KIT_DIRS) gives it (several zones may share one
+        file's data)"""
+        entries = []
+        kdir, kmap = KIT_DIRS[name]
+        for k, p in enumerate(sorted((CC0 / kdir).glob("*.wav"))):
+            sr, x = wav(p)
+            pk = peak(x)
+            s = [int(v * 30000 / pk) for v in x]
+            off, st = self.add(s, len(s))
+            for lo, hi, root in kmap.get(k, []):
+                entries.append(dict(off=off, n=len(s), ls=len(s), le=len(s), looped=False, sr=sr, root16=root * 16,
+                                    pred=st[0], idx=st[1], key=None, lo=lo, hi=hi))
+        if not entries:
+            return
+        entries.sort(key=lambda e: e["lo"])
+        self.sets.append((name, len(self.zones), len(entries)))
+        self.zones += entries
+        self.kinds[name] = "lofi"
+
     def cc0_set(self, name, kind):
         entries = []
         for k, (_, s, loop, root) in enumerate(cc0_entries(name, kind)):
@@ -361,8 +396,8 @@ class Builder:
         for i, (name, _, _) in enumerate(named):
             k = self.kinds.get(name, "wave")
             a, d, s_, r = ENV[k]
-            loop = 0 if k == "kit" else 1
-            pat = ", PAT(12)" if k == "kit" else ""     # a kit: engines.c PATTERNS[11] BEAT
+            loop = 0 if k in ("kit", "lofi") else 1
+            pat = ", PAT(12)" if k in ("kit", "lofi") else ""     # a kit: engines.c PATTERNS[11] BEAT
             si = self.alias.get(i, i)                   # an alias: the original's preset (hidden by its name)
             L.append(f'    {{"{name}", {{{si}, 0, 0, {loop}, 127, 0, 0, 0}}, {{{a}, {d}, {s_}, {r}}}, 0, 0{pat}}},')
         L.append("};")
@@ -414,8 +449,8 @@ class Builder:
 
 
 def slice_on():
-    """the SLICE engine is built (src/core.h: on unless FELUCCA_SLICE=0)"""
-    return os.environ.get("FELUCCA_SLICE", "1") != "0"
+    """the SLICE engine is built (src/core.h: Dungeon Tracker builds without it, FELUCCA_SLICE=1 brings it back)"""
+    return os.environ.get("FELUCCA_SLICE", "0") != "0"
 
 
 def input_key(have_cc0):
@@ -453,6 +488,8 @@ def main(out):
         for name, kind in CC0_SETS:
             if kind == "alias":
                 b.alias_set(name)
+            elif kind == "lofi":
+                b.lofi_set(name)
             else:
                 b.cc0_set(name, kind)
     if slice_on():                                  # SLICE's BREAK: only when that engine is built
