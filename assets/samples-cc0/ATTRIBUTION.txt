@@ -14,6 +14,29 @@ PIANO/04_GPiano_sus_C5_v2_rr1_Player.wav  <-  sgossner/VCSL: Chordophones/Zither
 FLUTE/00_LDFlute_susvib_C4_v1_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Flute/susvib/LDFlute_susvib_C4_v1_1.wav
 FLUTE/01_LDFlute_susvib_C5_v1_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Flute/susvib/LDFlute_susvib_C5_v1_1.wav
 FLUTE/02_LDFlute_susvib_C6_v1_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Flute/susvib/LDFlute_susvib_C6_v1_1.wav
-SAX/00_BrettTenor_NV_Main_A#1_vl2_rr1.wav  <-  sgossner/VCSL: Aerophones/Reed Aerophones/Tenor Saxophone/Non-Vibrato/BrettTenor_NV_Main_A#1_vl2_rr1.wav
-SAX/01_BrettTenor_NV_Main_A#2_vl2_rr1.wav  <-  sgossner/VCSL: Aerophones/Reed Aerophones/Tenor Saxophone/Non-Vibrato/BrettTenor_NV_Main_A#2_vl2_rr1.wav
-SAX/02_BrettTenor_NV_Main_A#3_vl2_rr1.wav  <-  sgossner/VCSL: Aerophones/Reed Aerophones/Tenor Saxophone/Non-Vibrato/BrettTenor_NV_Main_A#3_vl2_rr1.wav
+
+LOFI/ (Dungeon Tracker: the LOFI KIT, tools/make_lofi_kit.py: tape-treated, 16 kHz; a derivative, also CC0)
+  <-  sgossner/VCSL: Membranophones/Struck Membranophones/Bass Drum 1/BDrumNew_hit_v7_rr1_Sum.wav
+  <-  sgossner/VCSL: Membranophones/Struck Membranophones/Snare Drum, Modern 1/Snare2_HitSN_v7_rr1_Mid.wav
+  <-  sgossner/VCSL: Membranophones/Struck Membranophones/Snare Drum, Modern 2/Snare3M_HitSN_v5_rr1_Mid.wav
+  <-  sgossner/VCSL: Membranophones/Struck Membranophones/Snare Drum, Modern 2/Snare3M_Xstick_v2_rr1_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Hi-Hat Cymbal/HiHat_HitC_v3_rr1_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Hi-Hat Cymbal/HiHat_HitO_rr1_Mid.wav
+  <-  sgossner/VCSL: Membranophones/Struck Membranophones/Tom 2/Stick/TomL_HitS_v3_rr1_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Shaker, Large/LShaker_Shake1D_rr2_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Shaker, Large/LShaker_Hit_rr1_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Woodblock/wood_click_mp.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Shaker, Small/Mid_ShakerLowFaster_Down_rr1.wav
+
+DUNGEON/ (Dungeon Tracker: the DUNGEON KIT, tools/make_dungeon_kit.py: a stone room and tape, 16 kHz; a derivative,
+also CC0; 08 DRIP is synthesized by the script)
+  <-  sgossner/VCSL: Membranophones/Struck Membranophones/Bass Drum 2/bassdrum_hit_ff.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Slit Drum/LogDrumLo_MedM_v3_rr1_Sum.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Anvil/Anvil_Hit2_v3_rr1_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Brake Drum/BrakeDrum1_Hammer_v3_rr1_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Sleigh Bells/Sleighbells_Hit_rr1_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Claves/Claves2_Hit_v3_rr1_Mid.wav
+  <-  sgossner/VCSL: Membranophones/Other Membranophones/Ocean Drum/OceanDrum_Sus_1_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Tubular Bells 1/chimes_C3_f_rr1.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Ratchet/Ratchet1_Fast_rr1_Mid.wav
+  <-  sgossner/VCSL: Idiophones/Struck Idiophones/Gong 1/gong_f.wav
