@@ -289,13 +289,22 @@ static void head_msg(int32_t x, int32_t maxw)
 static int head_slot(char *b)
 {
     uint32_t k = song.sel % NTRK, s;
-    b[1] = b[2] = 0;
+    b[1] = b[2] = b[3] = 0;
     if (chain.running) {
         s = chain.lane[k];
-        b[0] = s < 4u ? (char)('A' + s) : '-';
+        b[0] = s < CHAIN_PATS ? (char)('A' + s) : '-';
         return 1;
     }
-    if (!pat_from[k] || pat_from[k] > 4u)
+#if RONDO_LAYOUT
+    b[0] = (char)('A' + bank.cur % NBANK);              /* RONDO: the PATTERN BANK's current pattern, "A>C" one queued */
+    if (bank.queue < NBANK) {
+        b[1] = '>';
+        b[2] = (char)('A' + bank.queue);
+    }
+    (void)pat_from_sig;
+    return 1;
+#endif
+    if (!pat_from[k] || pat_from[k] > NPROJ)
         return 0;
     b[0] = (char)('A' + pat_from[k] - 1u);
     if (pat_from_sig(TSEL) != pat_from_h[k])
@@ -329,13 +338,14 @@ static void draw_head(void)
     head_geo_t g;
     int32_t beat = -1;                                 /* the metronome stands still (its swing removed in 1.1.5) */
     uint32_t rec = (song.rec >> song.sel) & 1u ? 2u : song.rec != 0u;   /* 2 the selected track armed, 1 another */
-    char sl[3];
+    char sl[4];
     int slot = head_slot(sl);
+    int unsaved = RONDO_LAYOUT && autosave_pending();   /* 1.0.1: not in the autosave yet (switch off now: lost) */
     uint32_t sig = (uint32_t)song.playing * 3u + rec * 5u + (uint32_t)(song.octave + 8) * 11u + song.sel * 13131u +
                    (ui.msg_t ? str_hash(7u, ui.msg) : ui.layer * 7919u + (uint32_t)layer_locked() * 3u) + (uint32_t)song.g[G_BPM] * 101u + (ui.bpm_t != 0) * 31u +
                    (uint32_t)seq_counting() * 7u + (ui_prefs & PREF_BPM_LOCK) * 4099u +
                    (uint32_t)batt_shown() * 7777u + (chain.running ? (chain.row + 1u) * 104729u : 0u) +
-                   (slot ? str_hash(11u, sl) : 0u) + (uint32_t)midi_lit(song.sel) * 15485863u;   /* (1.5.5) */
+                   (slot ? str_hash(11u, sl) : 0u) + (uint32_t)unsaved * 977u + (uint32_t)midi_lit(song.sel) * 15485863u;   /* (1.5.5) */
     int msg = ui.msg_t || ui.layer;
     int centre = !msg || ui.bpm_t || ui.layer == LAYER_GLO;   /* the BPM being changed: it stays, the message right */
     int32_t rx = HEAD_REC_X;
@@ -376,8 +386,12 @@ static void draw_head(void)
         char l[2] = {sl[0], 0};
         GFX_HOOK_ALIGN(0, 0, 0, H_HEAD, AL_V, "header text on its middle");
         rx = cv_text(HEAD_SLOT_X, HEAD_MY, &AF_M, l, sl[0] == '-' ? T_MID : T_THEME);
-        if (sl[1])                                     /* edited since: the mark, up by the letter's top */
+        if (sl[1] == '>')                              /* RONDO: the next pattern, small after it */
+            rx = cv_text(rx + 2, HEAD_SY, &AF_S, sl + 1, T_ACCENT);
+        else if (sl[1])                                /* edited since: the mark, up by the letter's top */
             rx = cv_text(rx, HEAD_MY, &AF_M, "*", T_MID);
+        if (unsaved)                                   /* 1.0.1: unsaved (the autosave not written yet) */
+            rx = cv_text(rx, HEAD_MY, &AF_M, "*", T_ACCENT);
         rx += 1;                                       /* (the REC mark's cell after it, its ink 3 px on) */
     }
     draw_rec_mark(rx, T_BG);
@@ -799,7 +813,7 @@ static uint32_t foot_rename(void)
     if (g == GR_USER)
         return 1u + (uint32_t)up_used(ui.uslot);
     if (g == GR_SLOTS)
-        return 1u + (uint32_t)graph_project_used((uint32_t)song.g[G_SLOT] - 1u);
+        return slot_quick() ? 0u : 1u + (uint32_t)graph_project_used((uint32_t)song.g[G_SLOT] - 1u);
     return 0;
 }
 
@@ -983,7 +997,7 @@ static void draw_columns(void)
         val[2] = 0;
         draw_column(1, "TRACK", val, "", VAL(1u), -1, trk_icon(k, 1));
         sl = used ? chain_config.row[row].slot[k] : CHAIN_SILENT;
-        if (used) { val[0] = sl < 4u ? (char)('A' + sl) : '-'; val[1] = 0; }
+        if (used) { val[0] = chain_pat(sl) != CHAIN_OFF ? (char)('A' + chain_pat(sl)) : '-'; val[1] = 0; }
         else str_cpy(val, "--", sizeof val);
         draw_column(2, "PAT", val, "", used ? VAL(2u) : T_DIM, -1, ICON_X_PATTERN);
         if (used) fmt_int(val, chain_config.row[row].repeat);
@@ -1084,7 +1098,9 @@ static void draw_columns(void)
         static const char *const labels[] = {"PAT", "SOUND", "SEC", "SONG"};
         static const uint8_t icons[] = {ICON_AUTO, ICON_AUTO, ICON_X_SONG, ICON_X_SONG};   /* ROW, SONG: the song's */
         for (c = 0; c < 4u; c++)                       /* (1.5.5: KNOB 2 on past INIT, CLEAN) */
-            draw_act_column(c, c == 1u && ui.tl_clean && act_col() == 2u ? "CLEAN" : labels[c], VAL(c), icons[c]);
+            draw_act_column(c, c == 1u && ui.tl_clean && act_col() == 2u ? "CLEAN" :
+                               c == 0u && ui.tl_new && act_col() == 1u ? (ui.tl_new > 1u ? "NEW+S" : "NEW") : labels[c],
+                            VAL(c), icons[c]);
         return;
     }
     if (cur_page()->scope == SC_TRK) {                 /* LEVEL PAN REV MUTE of the selected track */
@@ -1243,6 +1259,149 @@ static void draw_columns(void)
         }
         return;
     }
+#if RONDO_LAYOUT
+    if (cur_page()->graph == GR_MFX) {                /* RONDO: FX > MASTER: the four the FX layer's knobs ride */
+        for (c = 0; c < 4u; c++)
+            draw_column(c, "", MK_NAME[mk_eff(c)], "", VAL(c), -1, MK_ICON[mk_eff(c)]);
+        return;
+    }
+#endif
+#if RONDO_LAYOUT
+    if (cur_page()->graph == GR_MORPH) {              /* RONDO: MORPH: TARGET AMOUNT, then what differs */
+        uint32_t k = song.sel % NTRK, id, nd = 0;
+        char v[8], nb[8];
+        if (mo.tgt[k]) { v[0] = 'P'; fmt_int(v + 1, (int32_t)mo.tgt[k]); }
+        else str_cpy(v, "OFF", sizeof v);
+        draw_column(0, "TARGET", v, "", mo.tgt[k] ? VAL(0u) : T_DIM, morph_npresets(TSEL) ? (int32_t)(mo.tgt[k] * 1000u / morph_npresets(TSEL)) : -1, ICON_LOAD);
+        fmt_int(v, (int32_t)mo.amt[k]);
+        draw_column(1, "AMOUNT", v, "%", mo.tgt[k] ? VAL(1u) : T_DIM, (int32_t)mo.amt[k] * 10, ICON_MIX);
+        for (id = 0; id < P_COUNT; id++)
+            nd += (uint32_t)morph_differs(TSEL, id);
+        fmt_int(nb, (int32_t)nd);
+        draw_column(2, "PARAMS", mo.tgt[k] ? nb : "--", "", mo.tgt[k] ? T_THEME : T_DIM, -1, ICON_GENERIC);
+        draw_column(3, "", "", "", T_THEME, -1, ICON_NONE);
+        return;
+    }
+    if (cur_page()->graph == GR_VARY) {               /* RONDO: VARY: DIE HOLD WILD HIST */
+        uint32_t k = song.sel % NTRK, d = vary.cur[k] % VARY_N;
+        char w[8], h[8];
+        fmt_int(w, (int32_t)vary_wild(k));
+        draw_column(0, "DIE", VARY_NAME[d], "", VAL(0u), -1, ICON_AUTO);
+        draw_column(1, "HOLD", (vary.hold[k] >> d) & 1u ? "ON" : "OFF", "", VAL(1u), -1, ICON_AUTO);
+        draw_column(2, "WILD", w, "%", VAL(2u), (int32_t)vary_wild(k) * 10, ICON_AUTO);
+        if (vary.ok[k] && vary.hn[k] && vary.sig[k] == vary_pat_sig(TSEL)) {
+            if (vary.hpos[k] >= vary.hn[k])
+                str_cpy(h, "ORIG", 8);
+            else if (vary.hpos[k]) {
+                h[0] = '-';
+                fmt_int(h + 1, (int32_t)vary.hpos[k]);
+            } else
+                str_cpy(h, "NOW", 8);
+            draw_column(3, "HIST", h, "", VAL(3u), -1, ICON_AUTO);
+        } else {
+            draw_column(3, "HIST", "--", "", T_DIM, -1, ICON_AUTO);
+        }
+        return;
+    }
+#endif
+    if (cur_page()->graph == GR_DICE && dice_engine_ok(TSEL)) {   /* RONDO: DICE: DIE HOLD WILD HIST */
+        uint32_t k = song.sel % NTRK, n = dice_count(TSEL), d = dice.cur[k] % n;
+        char w[8], h[8];
+        fmt_int(w, (int32_t)dice_wild(k));
+        draw_column(0, "DIE", dice_name(TSEL, d), "", VAL(0u), -1, ICON_AUTO);
+        draw_column(1, "HOLD", (dice.hold[k] >> d) & 1u ? "ON" : "OFF", "", VAL(1u), -1, ICON_AUTO);
+        draw_column(2, "WILD", w, "%", VAL(2u), (int32_t)dice_wild(k) * 10, ICON_AUTO);
+        if (dice.eng[k] == TSEL->eng_req % NENGINES + 1u && dice.hn[k]) {   /* NOW, or how many rolls back */
+            if (dice.hpos[k]) {
+                h[0] = '-';
+                fmt_int(h + 1, (int32_t)dice.hpos[k]);
+            } else {
+                str_cpy(h, "NOW", 8);
+            }
+            draw_column(3, "HIST", h, "", VAL(3u), -1, ICON_AUTO);
+        } else {
+            draw_column(3, "HIST", "--", "", T_DIM, -1, ICON_AUTO);
+        }
+        return;
+    }
+    if (cur_page()->graph == GR_ROLL) {              /* RONDO: the TRACKER: ROW COL, the cell's value, its second */
+        const track_t *t = TSEL;
+        const step_t *st = &seq_steps(t)[ui.cursor % NSTEP];
+        uint32_t kind = tk_col(), on = 1;
+        char sn[8], sl[8], v2[12];
+        const char *l3 = TC_NAME[kind], *l4 = "", *u3 = "", *u4 = "";
+        fmt_int(sn, (int32_t)ui.cursor);
+        str_cpy(sl, "/", 8);
+        fmt_int(sl + 1, t->p[P_SLEN]);
+        draw_column(0, "ROW", sn, sl, VAL(0u), -1, ICON_AUTO);
+        draw_column(1, "COL", TC_NAME[kind], "", VAL(1u), -1, ICON_AUTO);
+        v2[0] = 0;
+        on = tk_cell(t, ui.cursor, kind, val) == 1;
+        if (kind == TC_NOTE) {
+            if (step_on(st)) {
+                note_name(val, st->note[0]);
+                if (st->n > 1) {
+                    str_cpy(sl, "+", 8);
+                    fmt_int(sl + 1, (int32_t)st->n - 1);
+                    u3 = sl;
+                }
+                fmt_int(v2, (int32_t)note_len(t, ui.cursor));
+            }
+            l4 = "LEN";
+        } else if (kind == TC_VEL) {
+            static const char *const F[4] = {"-", "ACC", "SLD", "A+S"};
+            if (step_on(st))
+                fmt_int(val, (st->flags & SF_ACCENT) ? 127 : ev_sval(st, EVK_VEL));
+            l4 = "FLAG";
+            str_cpy(v2, F[(st->flags & SF_ACCENT ? 1u : 0u) | (st->flags & SF_SLIDE ? 2u : 0u)], 12);
+        } else if (kind == TC_CHN && ev_sval(st, EVK_CHANCE) <= 100) {
+            fmt_int(val, ev_sval(st, EVK_CHANCE));
+            u3 = "%";
+        } else if (kind == TC_RAT) {
+            str_cpy(val, "x", 12);
+            fmt_int(val + 1, ev_sval(st, EVK_RATCH));
+        } else if (kind == TC_NDG) {
+            u3 = "/16";
+        } else if (kind == TC_FX) {
+            uint32_t id = tk_fx_id(t);
+            int16_t v;
+            l4 = "PARAM";
+            tk_fx_name(t, id, v2);
+            if (id != 0xFFu) {
+                const param_desc_t *d = track_desc(t, id);
+                const char *unit;
+                on = motion_lock_get(t, ui.cursor, id, &v);
+                if (!on)
+                    v = motion_base_value(t, id);
+                param_format(d, v, val, &unit);
+                u3 = unit;
+            }
+            l3 = "LOCK";
+        } else if (kind >= TC_BD && kind <= TC_PC) {
+            static const char *const PC[5] = {"--", "CLAP", "TOM", "RIM", "BELL"};
+            uint32_t lanes = step_lanes(st), acc = step_accents(st), k, a = 0;
+            if (kind == TC_HH) {
+                str_cpy(val, (lanes >> 4) & 1u ? "OPEN" : (lanes >> 3) & 1u ? "CLSD" : "--", 12);
+                a = (acc >> ((lanes >> 4) & 1u ? 4 : 3)) & 1u;
+            } else if (kind == TC_PC) {
+                str_cpy(val, PC[0], 12);
+                for (k = 0; k < 4u; k++)
+                    if ((lanes >> TK_PC_LANE[k]) & 1u) {
+                        str_cpy(val, PC[k + 1u], 12);
+                        a = (acc >> TK_PC_LANE[k]) & 1u;
+                    }
+            } else {
+                k = kind == TC_BD ? 0u : 1u;
+                str_cpy(val, (lanes >> k) & 1u ? "HIT" : "--", 12);
+                a = (acc >> k) & 1u;
+            }
+            l4 = "ACC";
+            str_cpy(v2, on ? (a ? "ON" : "OFF") : "", 12);
+        }
+        draw_column(2, l3, val, u3, on ? VAL(2u) : T_DIM, -1, ICON_AUTO);
+        draw_column(3, l4, v2, u4, l4[0] && v2[0] ? VAL(3u) : T_DIM, -1, ICON_AUTO);
+        return;
+    }
     if (cur_page()->scope == SC_STEP && drum_track(TSEL)) {   /* the grid: STEP LANE HIT ACC */
         const step_t *st = &seq_steps(TSEL)[ui.cursor];
         uint32_t b = 1u << ui.lane, on = (step_lanes(st) & b) != 0u, ac = (step_accents(st) & b) != 0u;
@@ -1301,7 +1460,8 @@ static void draw_columns(void)
         int16_t *vp;
         const param_desc_t *d = page_desc(cur_page(), c, &vp);
         if (cur_page()->graph == GR_SLOTS && c == 1u) {   /* PROJECT: ERASE (1.5.5, #199) */
-            draw_act_column(1, "ERASE", graph_project_used((uint32_t)song.g[G_SLOT] - 1u) ? T_THEME : T_DIM, ICON_AUTO);
+            draw_act_column(1, "ERASE", !slot_quick() && graph_project_used((uint32_t)song.g[G_SLOT] - 1u) ? T_THEME : T_DIM,
+                            ICON_AUTO);
             continue;
         }
         if (!d || !d->label || d->label[0] == '-') {
@@ -1325,40 +1485,80 @@ static void draw_columns(void)
 }
 
 
-/* The power-on splash (main.c fm1_main, web/emu felucca_web.c; 1.1.5): a RAISE square centred on the screen, square
- * corners (in every style; LINE too: RAISE from the palette's SURF), in it in AF_M, the ink SPL_PAD in from the left:
- * at the top the name and the version, the first line's capitals' top SPL_PAD down; at the bottom the maker and
- * "with community", the last line's capitals' bottom (its baseline) SPL_PAD up from the square's bottom. Both
- * margins are measured to the capitals (the descender of "community" hangs into the bottom one, as off a baseline).
- * The square (176 x 176) is more than the canvas (CV_MAX, 240 x 124): it is filled straight on the screen and its
- * two text bands drawn on it as canvases, the top one from the square's top edge, the bottom one to its bottom edge.
- * In the saved palette (settings_init before it) */
-#define SPL_SQ 176                                  /* the square (even: centred exactly) */
-#define SPL_X0 ((240u - SPL_SQ) / 2u)               /* its top-left on the screen (x and y) */
-#define SPL_PAD 16                                  /* the text's inset: left (its ink), top and bottom (the capitals) */
-#define SPL_PITCH 20                                /* line to line */
-static const char *const SPLASH_LINES[] = {"Felucca", FELUCCA_VERSION, "H\xFCgelton Instruments", "with community"};
-/* a band of two lines, h tall, at y on the screen: the first line's top at ly; the two lines' capitals declared
- * against al0..al1 (mode: AL_V the band centred there, AL_B the last baseline on al1) */
-static void splash_band(uint32_t y, uint32_t h, int32_t ly, const char *const *l, uint32_t mode, int32_t al0,
-                        int32_t al1, const char *tag)
+/* The power-on splash (main.c fm1_main, web/emu felucca_web.c): DUNGEON TRACKER's marquee. The two words centred,
+ * one over the other, in a blocky arcade lettering of its own (SPL_GLYPH: 6 x 7 cells, strokes two cells wide, each
+ * cell SPL_S px), each word two-toned (its top rows one colour, the rest another), a drop shadow and a dark line
+ * under every row of cells (scanlines); a double rule above and below, the version and the fork's credit under it.
+ * Drawn straight on the screen (a run of cells a fill), in the saved palette (settings_init before it): every
+ * colour a palette's own, so GREY and MONO stay neutral */
+#define SPL_S 4                                     /* a cell, px */
+#define SPL_GW 6                                    /* a glyph: 6 x 7 cells, a cell apart */
+#define SPL_GH 7
+static const struct { char c; uint8_t row[SPL_GH]; } SPL_GLYPH[] = {   /* bit 5 the left cell */
+    {'D', {0x3E, 0x33, 0x33, 0x33, 0x33, 0x33, 0x3E}}, {'U', {0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x1E}},
+    {'N', {0x33, 0x3B, 0x3F, 0x37, 0x33, 0x33, 0x33}}, {'G', {0x1F, 0x30, 0x30, 0x37, 0x33, 0x33, 0x1E}},
+    {'E', {0x3F, 0x30, 0x30, 0x3E, 0x30, 0x30, 0x3F}}, {'O', {0x1E, 0x33, 0x33, 0x33, 0x33, 0x33, 0x1E}},
+    {'T', {0x3F, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C}}, {'R', {0x3E, 0x33, 0x33, 0x3E, 0x36, 0x33, 0x33}},
+    {'A', {0x1E, 0x33, 0x33, 0x3F, 0x33, 0x33, 0x33}}, {'C', {0x1F, 0x30, 0x30, 0x30, 0x30, 0x30, 0x1F}},
+    {'K', {0x33, 0x36, 0x3C, 0x38, 0x3C, 0x36, 0x33}},
+};
+static const uint8_t *spl_glyph(char c)
 {
-    cv_begin(SPL_SQ, h, T_RAISE);
-    GFX_HOOK_ALIGN(0, al0, 0, al1, mode | AL_N(2), tag);
-    cv_text_on(SPL_PAD, ly, &AF_M, l[0], T_TEXT, T_RAISE);
-    cv_text_on(SPL_PAD, ly + SPL_PITCH, &AF_M, l[1], T_TEXT, T_RAISE);
-    cv_blit(SPL_X0, y);
+    uint32_t i;
+    for (i = 0; i < NELEM(SPL_GLYPH); i++)
+        if (SPL_GLYPH[i].c == c)
+            return SPL_GLYPH[i].row;
+    return 0;
 }
+/* a word's width, px */
+static int32_t spl_width(const char *w)
+{
+    int32_t n = 0;
+    while (w[n])
+        n++;
+    return n ? (n * (SPL_GW + 1) - 1) * SPL_S : 0;
+}
+/* the word at y, centred: pass 0 the shadow (dx, dy), pass 1 the letters (rows < split: top, the rest: low), the
+ * scanline (a 1 px line in `scan` at the bottom of every cell row) over them */
+static void spl_word(const char *w, int32_t y, uint16_t top, uint16_t low, uint16_t shade, uint16_t scan)
+{
+    int32_t x0 = HALF_UP(240 - spl_width(w)), pass, r, c, i;
+    for (pass = 0; pass < 2; pass++)
+        for (i = 0; w[i]; i++) {
+            const uint8_t *g = spl_glyph(w[i]);
+            int32_t gx = x0 + i * (SPL_GW + 1) * SPL_S + (pass ? 0 : 2), gy = y + (pass ? 0 : 3);
+            if (!g)
+                continue;
+            for (r = 0; r < SPL_GH; r++)
+                for (c = 0; c < SPL_GW; c++) {
+                    int32_t run = 0;
+                    if (!((g[r] >> (SPL_GW - 1 - c)) & 1u) || (c && ((g[r] >> (SPL_GW - c)) & 1u)))
+                        continue;                       /* (a run starts here: set, the cell before it clear) */
+                    while (c + run < SPL_GW && ((g[r] >> (SPL_GW - 1 - c - run)) & 1u))
+                        run++;
+                    if (!pass) {
+                        lcd_fill((uint32_t)(gx + c * SPL_S), (uint32_t)(gy + r * SPL_S), (uint32_t)(run * SPL_S), SPL_S, shade);
+                    } else {
+                        lcd_fill((uint32_t)(gx + c * SPL_S), (uint32_t)(gy + r * SPL_S), (uint32_t)(run * SPL_S), SPL_S - 1,
+                                 r < 3 ? top : low);
+                        lcd_fill((uint32_t)(gx + c * SPL_S), (uint32_t)(gy + r * SPL_S + SPL_S - 1), (uint32_t)(run * SPL_S), 1, scan);
+                    }
+                }
+        }
+}
+#define SPL_W1 60                                   /* DUNGEON's top; TRACKER's 40 px below it */
+#define SPL_W2 (SPL_W1 + 40)
 static void draw_splash(void)
 {
-    int32_t h = SPL_PAD - AF_M_CAP_Y + SPL_PITCH + AF_M.h;     /* a band: its two lines, the descenders in */
-    int32_t lb = h - SPL_PAD - AF_M_CAP_H - AF_M_CAP_Y;         /* the bottom band's last line: its top */
     lcd_fill(0, 0, 240, 240, T_BG);
-    lcd_fill(SPL_X0, SPL_X0, SPL_SQ, SPL_SQ, T_RAISE);
-    splash_band(SPL_X0, (uint32_t)h, SPL_PAD - AF_M_CAP_Y, SPLASH_LINES, AL_V, SPL_PAD,
-                SPL_PAD + SPL_PITCH + AF_M_CAP_H, "splash name + version SPL_PAD from the top");
-    splash_band(SPL_X0 + SPL_SQ - (uint32_t)h, (uint32_t)h, lb - SPL_PITCH, SPLASH_LINES + 2, AL_B, 0, h - SPL_PAD,
-                "splash maker's baseline SPL_PAD from the bottom");
+    lcd_fill(20u, SPL_W1 - 18, 200u, 2, T_THEME);          /* the marquee's rules: double, above and below */
+    lcd_fill(20u, SPL_W1 - 13, 200u, 1, T_DIM);
+    lcd_fill(20u, SPL_W2 + SPL_GH * SPL_S + 14, 200u, 1, T_DIM);
+    lcd_fill(20u, SPL_W2 + SPL_GH * SPL_S + 18, 200u, 2, T_THEME);
+    spl_word("DUNGEON", SPL_W1, T_ACCENT, T_ACCENT != T_THEME ? T_THEME : T_MID, T_RAISE, T_BG);   /* (MONO: one accent) */
+    spl_word("TRACKER", SPL_W2, T_TEXT, T_MID, T_RAISE, T_BG);
+    draw_text_box(0, 186, 240, &AF_S, FELUCCA_VERSION, T_MID, 1);
+    draw_text_box(0, 206, 240, &AF_S, "a Felucca fork", T_DIM, 1);
     lcd_sync();
 }
 
@@ -1452,8 +1652,8 @@ static void confirm_text(char *a, char *b)
         break;
     case CF_OVR_PROJ:
         str_cpy(a, "OVERWRITE PROJECT A?", 24);
-        a[18] = (char)('A' + (k & 3u));
-        if (!project_name(k & 3u, b) || !b[0])          /* the project's name, else what SONG plays from it */
+        a[18] = (char)('A' + k % NPROJ);
+        if (!project_name(k % NPROJ, b) || !b[0])          /* the project's name, else what SONG plays from it */
             str_cpy(b, "SONG PATTERN CHANGES", 24);
         break;
     case CF_DEL_ROW:
@@ -1461,6 +1661,14 @@ static void confirm_text(char *a, char *b)
         break;
     case CF_CLEAR_SONG:
         str_cpy(a, "CLEAR SONG ORDER?", 24);
+        break;
+    case CF_NEW:                                     /* Dungeon Tracker: SAVE > TOOLS, KNOB 1 past CLEAR (project.c) */
+        str_cpy(a, "NEW SONG?", 24);
+        str_cpy(b, "CLEARS ALL 4 TRACKS", 24);
+        break;
+    case CF_NEW_SOUNDS:
+        str_cpy(a, "NEW SONG + SOUNDS?", 24);
+        str_cpy(b, "DEFAULT SOUNDS TOO", 24);
         break;
     case CF_INIT_SOUND:
         str_cpy(a, "INITIALIZE SOUND?", 24);
@@ -1478,10 +1686,15 @@ static void confirm_text(char *a, char *b)
         str_cpy(a + str_len(a), "?", 2);
         up_name(k, b);                               /* the sound stored there */
         break;
+    case CF_LOAD_SONG:                               /* Dungeon Tracker: a song slot's six patterns over the bank's */
+        str_cpy(a, "LOAD SONG A?", 24);
+        a[10] = (char)('A' + k % NPROJ);
+        str_cpy(b, "REPLACES PATTERNS A-F", 24);
+        break;
     case CF_ERASE_PROJ:                              /* 1.5.5 (#199): the project's name under it */
         str_cpy(a, "ERASE PROJECT A?", 24);
-        a[14] = (char)('A' + (k & 3u));
-        (void)project_name(k & 3u, b);
+        a[14] = (char)('A' + k % NPROJ);
+        (void)project_name(k % NPROJ, b);
         break;
     case CF_ERASE_USER:
         str_cpy(a, "ERASE ", 24);
@@ -1566,6 +1779,24 @@ static void ui_draw(void)
     ui_draw_page(counting);
     scr_shown();
 }
+#if RONDO_LAYOUT
+/* 1.1, MENU > LARGE: HOME's dungeon on the whole screen under the header (ui_dungeon.c dg_full_draw), no cards, no
+ * footer; a knob turned (ui.hot_t) brings the tall cards back until 2 s after the last turn. HOME's TRACKS and LEVELS,
+ * a layer, the other pages: LARGE as before */
+#define LG_PEEK_MS 2000u
+static uint32_t lg_peek_ms;                            /* fm1_ms of the last knob turn on HOME */
+static uint8_t lg_peek;                                /* .. there was one (0: none since power-on) */
+static int dg_full_on(void)
+{
+    if (!(ui_prefs & PREF_LARGE) || !ui.home || ui.layer || ui_home_view != HV_SCOPE)
+        return 0;
+    if (ui.hot_t) {
+        lg_peek_ms = fm1_ms;
+        lg_peek = 1;
+    }
+    return !lg_peek || fm1_ms - lg_peek_ms > LG_PEEK_MS;
+}
+#endif
 static void ui_draw_page(uint32_t counting)
 {
     if (ui.uboot) {
@@ -1618,6 +1849,38 @@ static void ui_draw_page(uint32_t counting)
         page_entered();
     }
     cursor_fix();
+#if RONDO_LAYOUT
+    {
+        static uint8_t full_was;
+        static uint32_t full_sig;
+        int full = dg_full_on();
+        if (full != (int)full_was) {                    /* (into or out of it: everything drawn again) */
+            full_was = (uint8_t)full;
+            ui.force = 1;
+        }
+        if (full) {
+            uint32_t sig = graph_signature() ^ 0x5BD1E995u;
+            draw_head();
+            if (ui.force || sig != full_sig) {
+                full_sig = sig;
+                dg_full_draw();
+            }
+            if (ui.msg_t && !--ui.msg_t && ui.msg2[0]) {
+                str_cpy(ui.msg, ui.msg2, sizeof ui.msg);
+                ui.msg2[0] = 0;
+                ui.msg_t = 60;
+            }
+            if (ui.bpm_t)
+                ui.bpm_t--;
+            if (ui.hot_t)
+                ui.hot_t--;
+            if (ui.help_t)
+                ui.help_t--;
+            ui.force = 0;
+            return;
+        }
+    }
+#endif
     if (ui.force)
         draw_frame();
     felucca_dbg.stage = 3;

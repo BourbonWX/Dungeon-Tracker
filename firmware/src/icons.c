@@ -201,7 +201,9 @@ static uint32_t param_icon(const param_desc_t *d, int32_t v)
     if (d == &TP[P_ESYNC])
         return ICON_TEMPO;                    /* ENV SYNC (1.5): as LFO 2's SYNC */
     if (d->names == N_NOISE_MODE)
-        return ICON_NOISE;                    /* NOISE's MODE is the source; its CLK the register clock */
+        return ICON_NOISE;
+    if (d->names == N_CHIP)
+        return ICON_BITS;                     /* RE-1: CHIP's MODE (4BIT .. STEP): the bit depth, not the arp mode */                    /* NOISE's MODE is the source; its CLK the register clock */
     if (d == &NOISE_CLK)
         return ICON_RATE;
 #if FELUCCA_SLICE
@@ -246,7 +248,7 @@ static uint32_t engine_icon(const char *name)
 #if FELUCCA_FM4
         {"DIGITAL", ICON_ALGORITHM},
 #endif
-        {"PHASE", ICON_PHASE}, {"LOFI", ICON_BITS},
+        {"PHASE", ICON_PHASE}, {"CHIP", ICON_CHIP},   /* (RE-1: Felucca's LOFI) */
         {"SAMPLE", ICON_SAMPLE}, {"VOICE", ICON_MOUTH}, {"TRIO", ICON_TRIO}, {"WHEEL", ICON_DRAWBAR},
         {"SLICE", ICON_SLICE},
         {"GRAIN", ICON_GRAIN},
@@ -254,7 +256,9 @@ static uint32_t engine_icon(const char *name)
         {"DRUM", ICON_DRUM},
         {"NOISE", ICON_NOISE},
         {"FM6", ICON_MOD},                    /* (symbol_modular: six operators patched; a glyph of its own wanted) */
-        {"ADPCM", ICON_SAMPLE},               /* (short sampled waves) */
+        {"FMKIT", ICON_DRUM}, {"FMTONE", ICON_ALGORITHM},   /* RONDO */
+        {"WAVES", ICON_W_RTRP},                            /* 1.1 */
+        {"SID", ICON_W_PLS},                               /* 1.3 */
     };
     uint32_t i;
     for (i = 0; i < sizeof M / sizeof M[0]; i++)

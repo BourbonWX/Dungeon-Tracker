@@ -75,7 +75,10 @@ static uint32_t trk_midi_ch(uint32_t i)
     return (b > 0 ? (uint32_t)b : 0u) + i % NTRK;
 }
 
-static int drum_track(const track_t *t) { return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM; }
+static int drum_track(const track_t *t)
+{
+    return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM || ENGINES[eng_idx(t->eng_req)] == &ENG_CKIT;   /* (RONDO) */
+}
 
 /* the 27 keys from F: black or white, and the key's place among the keys of its colour (white 0..15, black
  * 0..10). The DRUM grid: white keys are steps, black keys 1..8 lanes, 9 ACC, 10 / 11 the page */
@@ -98,11 +101,19 @@ static __attribute__((noinline)) uint8_t grid_key_note(uint32_t k)
 /* GLO > SONG (song.grid 3): key k's slot, the white keys A3 B3 C4 D4 (white places 2..5: keys 4 6 7 9 from F) A..D; -1 = a
  * key that plays. A table, not key_place (a loop); the audio ISR's key loop reads SONG_KEYS, the same keys */
 #define SONG_KEYS (1u << 4 | 1u << 6 | 1u << 7 | 1u << 9)
+#if RONDO_LAYOUT
+/* RONDO: SONG's keys are ENV's: the white keys F3..D4 the bank's A..F (the section byte: chain_val) */
+static int32_t song_key(uint32_t k)
+{
+    return !key_black(k) && key_place(k) < CHAIN_PATS ? (int32_t)chain_val(key_place(k)) : -1;
+}
+#else
 static int32_t song_key(uint32_t k)
 {
     static const int8_t S[10] = {-1, -1, -1, -1, 0, -1, 1, 2, -1, 3};
     return k < 10u ? S[k] : -1;
 }
+#endif
 
 static uint32_t scale_mask(const track_t *t)
 {
@@ -230,35 +241,6 @@ static int rec_on(const track_t *t) { return ((song.rec >> trk_index(t)) & 1u) &
  * notes together (the first 4), an octave higher each step through OCT */
 enum { AM_OFF, AM_UP, AM_DN, AM_UPDN, AM_RND, AM_ORD, AM_REPEAT, AM_DNUP, AM_UP8, AM_CONV, AM_DIVG, AM_PINKY,
        AM_THUMB, AM_WALK, AM_CHORD };
-
-/* External clock advances exact quarter notes; sequencer/ARP periods are whole
- * samples. Carry the fractional difference instead of accumulating floor()
- * error each step. Separate carries retain polymeter and each ARP rate. */
-#define MIDI_CLOCK_GRID 24000u                    /* fixed units per quarter, divisible by every DIV denominator */
-typedef struct { uint32_t remainder; } midi_grid_t;
-static midi_grid_t midi_seq_grid[NTRK], midi_arp_grid[NPART], midi_click_grid, midi_beat_grid;
-static __attribute__((noinline)) void midi_grid_reset(void)
-{
-    memset(midi_seq_grid, 0, sizeof midi_seq_grid);
-    memset(midi_arp_grid, 0, sizeof midi_arp_grid);
-    memset(&midi_click_grid, 0, sizeof midi_click_grid);
-    memset(&midi_beat_grid, 0, sizeof midi_beat_grid);
-}
-static __attribute__((noinline)) uint32_t midi_grid_advance(midi_grid_t *g, uint32_t n, uint32_t div)
-{
-    uint32_t quarter = beat_samples();
-    if (div < 6u) quarter = (quarter / DIV_DEN[div]) * DIV_DEN[div];
-    /* n <= GRID/2 and quarter <= 66150: numerator fits uint32_t. */
-    uint32_t numerator = n * quarter + g->remainder;
-    uint32_t samples = numerator / MIDI_CLOCK_GRID;
-    g->remainder = numerator % MIDI_CLOCK_GRID;
-    return samples;
-}
-static __attribute__((noinline)) uint32_t midi_seq_preview(const track_t *t, uint32_t n)
-{
-    midi_grid_t copy = midi_seq_grid[trk_index(t)];
-    return midi_grid_advance(&copy, n, (uint32_t)t->p[P_SDIV]);
-}
 
 static void arp_forget(track_t *t)               /* (its notes ended otherwise: trk_all_off) */
 {
@@ -453,20 +435,6 @@ static __attribute__((noinline)) void arp_fire(track_t *t, uint32_t period)
     }
 }
 
-static __attribute__((noinline)) void arp_external_due(track_t *t, uint32_t period, int32_t sw)
-{
-    uint32_t duration = period + (uint32_t)((t->arp_idx & 1u) ? sw : -sw);
-    while (t->arp_pos >= duration) {
-        t->arp_pos -= duration;
-        arp_fire(t, period);
-        duration = period + (uint32_t)((t->arp_idx & 1u) ? sw : -sw);
-    }
-    if (t->arp_note) {
-        if (t->arp_off <= t->arp_pos) arp_off(t);
-        else t->arp_off -= t->arp_pos;
-    }
-}
-
 static void arp_step(track_t *t, uint32_t n, uint32_t gate_n)
 {
     uint32_t period;
@@ -487,11 +455,6 @@ static void arp_step(track_t *t, uint32_t n, uint32_t gate_n)
     t->arp_pos += n;
     if (t->arp_pos < period + (uint32_t)((t->arp_idx & 1u) ? sw : -sw) && t->arp_pos != 0xFFFFFFF + n)
         return;
-    if (song.g[G_CLOCK] && t->arp_pos != 0xFFFFFFFu + n) {
-        arp_external_due(t, period, sw);
-        return;
-    }
-    if (song.g[G_CLOCK]) midi_arp_grid[trk_index(t)].remainder = 0;
     t->arp_pos = 0;
     arp_fire(t, period);
 }
@@ -787,7 +750,7 @@ static void key_off(uint32_t k, track_t *t)
 }
 
 #ifdef FM1_INPUT_LAT
-/* the press latency stats (bsp/boards/fm1/fm1_input.h fm1_in_stat, console `inp`): from the first scan that saw
+/* the press latency stats (hal/fm1_input.h fm1_in_stat, console `inp`): from the first scan that saw
  * key k closed to its note-on here, and to the note's first sample leaving the DMA (kb_out_tick:
  * audio.c, the TIMER4 tick at which the block being rendered starts to play) */
 static uint32_t kb_out_tick;
@@ -866,12 +829,26 @@ static void keyboard_block(void)
 }
 
 /* -------------------------------------------------------- sequencer --- */
+#if RONDO_LAYOUT
+static void morph_step(track_t *t, uint32_t step);
+static void bank_stop(void);
+static void bank_tick(uint32_t n);
+static void bank_start(void);
+#endif
+#if RONDO_LAYOUT
+static void dgq_start(void);                          /* (below: the dungeon's sixteenths) */
+#endif
 static void seq_start(void)
 {
     uint32_t i;
-    midi_grid_reset();
+#if RONDO_LAYOUT
+    bank_start();                                  /* (a pattern queued while stopped: it now) */
+#endif
     motion_begin();
     chain_start();
+#if RONDO_LAYOUT
+    dgq_start();                                   /* (Dungeon Tracker: the dungeon's sixteenths from here) */
+#endif
     for (i = 0; i < NTRK; i++) {                   /* every track from its step 0, together */
         track_t *t = &trk[i];
         t->seq_idx = (uint16_t)(t->p[P_SLEN] - 1);
@@ -921,6 +898,9 @@ static void seq_stop(void)
         trk[i].nd_fired = 0;
     }
     chain_stop();
+#if RONDO_LAYOUT
+    bank_stop();                                   /* (RONDO: an arrangement being recorded ends) */
+#endif
     motion_end();
 }
 
@@ -961,6 +941,90 @@ static int seq_miss(const track_t *t, const step_t *s, uint32_t idx)
     return step_chance(s) < 100u && rng() % 100u >= step_chance(s);
 }
 #define SEQ_REP (1u << 16)
+#if RONDO_LAYOUT
+/* Dungeon Tracker: what each track played, a sixteenth at a time (the dungeon's turns: ui_dungeon.c dg_sixteenth).
+ * The ISR fills the bucket of the sixteenth playing (dgq.step, counted on the sequencer's own clock: dgq_clock), the
+ * main loop reads the ones before it. A note that plays (its chance or condition passed; a ratchet's repeats are the
+ * same note) is weighed here (dgq_on): its velocity, accent, drums, chord, chance and nudge; a tie that holds counts its
+ * ties since the note; an explicit REST step is a rest. The ring holds DGQ_N sixteenths: the main loop is never that
+ * far behind (it skips ahead if it is) */
+#define DGQ_N 8u
+#define DGQ_ACC 1u                                      /* fl: accented */
+#define DGQ_SLIDE 2u                                    /* .. a slide */
+#define DGQ_RAT_SH 2u                                   /* .. ratchet hits - 1 (bits 2, 3) */
+#define DGQ_CH_SH 4u                                    /* .. the chord's notes - 1 (bits 4, 5) */
+typedef struct {
+    uint8_t on;                                         /* notes that played (a busy sixteenth: 1) */
+    uint8_t fl;                                         /* the strongest one's: DGQ_ACC DGQ_SLIDE, ratchet, chord */
+    uint8_t tie;                                        /* a tie held: ties since its note (1..), 0 none */
+    uint8_t rest;                                       /* an explicit REST step */
+    uint16_t w;                                         /* the strongest one's weight, Q8 (256 = a plain note) */
+} dgq_t;
+static struct {
+    volatile uint32_t step;                             /* the sixteenth playing (its bucket: b[step % DGQ_N]) */
+    uint32_t pos;                                       /* samples into it */
+    uint8_t ties[NTRK];
+    dgq_t b[DGQ_N][NTRK];
+} dgq;
+static void dgq_next(void)                              /* (ISR) the next sixteenth: its bucket empty */
+{
+    memset(dgq.b[(dgq.step + 1u) % DGQ_N], 0, sizeof dgq.b[0]);
+    RING_PUBLISH();
+    dgq.step++;
+}
+static void dgq_clock(uint32_t n)                       /* (ISR) the sequencer's samples this block, before its steps */
+{
+    uint32_t six = div_samples(2);
+    if (!song.playing)
+        return;
+    dgq.pos += n;
+    while (six && dgq.pos >= six) {
+        dgq.pos -= six;
+        dgq_next();
+    }
+}
+static void dgq_start(void) { dgq.pos = 0; dgq_next(); }   /* (ISR) PLAY: the first sixteenth from now */
+/* a drum's weight (Q8): KICK SNARE CLAP HATCL HATOP TOM RIM BELL */
+static const uint16_t DGQ_LANE[NLANE] = {307, 246, 246, 154, 205, 246, 205, 205};
+static void dgq_on(const track_t *t, const step_t *s)    /* (ISR) a step's notes play */
+{
+    uint32_t k = trk_index(t), v = s->vel ? s->vel : 96u, w, acc, i, lw = 0, nl = 0, ch = step_chance(s), r = step_ratchet(s);
+    dgq_t *b = &dgq.b[dgq.step % DGQ_N][k];
+    acc = (s->flags & SF_ACCENT) || (s->acc & s->hit);
+    w = 128u + v * 128u / 127u;
+    if (acc)
+        w = w * 3u / 2u;
+    for (i = 0; i < NLANE; i++)
+        if ((s->hit >> i) & 1u) {
+            lw = DGQ_LANE[i] > lw ? DGQ_LANE[i] : lw;
+            nl++;
+        }
+    if (nl)
+        w = w * (lw + 26u * (nl - 1u)) / 256u;
+    if (s->n > 1u)
+        w = w * (3u + s->n) / 4u;                       /* +25 % a note more */
+    if (ch < 100u && s->probability < COND_FIRST)
+        w = w * (200u - ch) / 100u;                     /* a gamble that played hits harder */
+    if (step_nudge(s))
+        w = w * (k == 0u ? 15u : 11u) / 10u;            /* off the grid: the rogue's sneak attack */
+    dgq.ties[k] = 0;
+    if (b->on < 255u)
+        b->on++;
+    if (w > b->w) {
+        b->w = (uint16_t)(w < 65535u ? w : 65535u);
+        b->fl = (uint8_t)((acc ? DGQ_ACC : 0u) | (s->flags & SF_SLIDE ? DGQ_SLIDE : 0u) | ((r - 1u) << DGQ_RAT_SH) |
+                          ((uint32_t)(s->n > 1u ? (s->n > 4u ? 3u : s->n - 1u) : 0u) << DGQ_CH_SH));
+    }
+}
+static void dgq_tie(const track_t *t)                   /* (ISR) a tie holds the note on */
+{
+    uint32_t k = trk_index(t);
+    if (dgq.ties[k] < 255u)
+        dgq.ties[k]++;
+    dgq.b[dgq.step % DGQ_N][k].tie = dgq.ties[k];
+}
+static void dgq_rest(const track_t *t) { dgq.b[dgq.step % DGQ_N][trk_index(t)].rest = 1; }
+#endif
 #define SEQ_ROLLED (1u << 17)   /* seq_tick rolled the chance already (before the step's parameter locks): it passed */
 #define SEQ_MISS (1u << 18)     /* .. it failed: nothing plays */
 static __attribute__((noinline)) void seq_step(track_t *t, const step_t *s, uint32_t idx, uint32_t period, uint32_t skip)
@@ -988,22 +1052,35 @@ static __attribute__((noinline)) void seq_step(track_t *t, const step_t *s, uint
     }
     if (s->time == ST_TIE) {
         if (t->seq_n) {
+#if RONDO_LAYOUT
+            if (song.playing)
+                dgq_tie(t);
+#endif
             t->seq_off = gate + period / 2u;
             t->seq_hold = (s->flags & SF_SLIDE) != 0 || next_tie;   /* chains hold at any GATE / swing */
         }
         return;
     }
     if (s->time == ST_REST || (!s->n && !s->hit)) {
+#if RONDO_LAYOUT
+        if (song.playing && s->time == ST_REST)
+            dgq_rest(t);
+        dgq.ties[trk_index(t)] = 0;
+#endif
         seq_release(t);
         return;
     }
+#if RONDO_LAYOUT
+    if (song.playing && !(skip & SEQ_REP))
+        dgq_on(t, s);
+#endif
     if (hits > 1u) {                                /* RATCH: the gate of a part, no slide or tie out */
         gate = step_samples(t, period, idx) / hits * (uint32_t)t->p[P_SGATE] / 128u;
         if (!(skip & SEQ_REP))
             t->rat_left = (uint8_t)(hits - 1u);
     }
     for (i = 0; i < s->n && i < 4u; i++) {
-        uint32_t x = s->note[i];
+        uint32_t x = (uint32_t)clamp((int32_t)s->note[i] + t->pr_semi, 0, 127);   /* (RONDO: a LOOP's pitch, else 0) */
         if (qseq) {                                 /* QNT SEQ: onto the scale now; two notes snapping */
             x = (uint32_t)clamp(scale_snap(t, (int32_t)x + qtrn), 0, 127);   /* together play once */
             for (j = 0; j < m && nn[j] != x; j++)
@@ -1071,7 +1148,8 @@ static __attribute__((noinline)) void seq_audition(void)
  * The step is read again: an edit to fewer parts (or another source in a song) ends the repeats */
 static __attribute__((noinline)) void seq_ratchet(track_t *t, uint32_t period)
 {
-    const step_t *s = &seq_steps(t)[t->seq_idx];
+    uint32_t idx = t->pr_on ? t->pr_row : t->seq_idx;   /* (RONDO: the row the TRACKER's commands play) */
+    const step_t *s = &seq_steps(t)[idx];
     uint32_t hits = step_ratchet(s);
     if (t->rat_left >= hits) {
         t->rat_left = 0;
@@ -1080,7 +1158,7 @@ static __attribute__((noinline)) void seq_ratchet(track_t *t, uint32_t period)
     if (t->seq_pos < (hits - t->rat_left) * (step_samples(t, period, t->seq_idx) / hits))
         return;
     t->rat_left--;
-    seq_step(t, s, t->seq_idx, period, SEQ_REP);
+    seq_step(t, s, idx, period, SEQ_REP);
 }
 
 /* the nudge of step s in 1/NUDGE_DIV of the step (NUDGE, core.h) when it plays off its start: the track's QUANTIZE OFF,
@@ -1107,8 +1185,8 @@ static __attribute__((noinline)) uint32_t seq_time(track_t *t, uint32_t idx, uin
 /* the automation a track plays: its slot's while a song plays (song_chain.c lanes; 0: a silent lane, none) */
 static const motion_store_t *chain_motion(const track_t *t)
 {
-    uint32_t s = chain.lane[trk_index(t)];
-    return !chain.running ? &motion : s < 4u ? &chain.source[s].motion : 0;
+    const chain_pattern_t *c = chain_src(chain.lane[trk_index(t)]);
+    return !chain.running ? &motion : c ? &c->motion : 0;
 }
 
 /* step idx plays: its chance (the one roll, as seq_step made it: a step that does not play applies no lock), the
@@ -1203,11 +1281,103 @@ static __attribute__((noinline)) void seq_enter(track_t *t, uint32_t top, uint32
     rec_hold(t, t->seq_idx, len);
 }
 
+#if RONDO_LAYOUT
+/* ------------------------------------------------------------ RONDO: the TRACKER's commands --- */
+/* The step seq_idx keeps the time, as always: the pattern's loop is as long as it ever was, so a track with commands
+ * never drifts from the others, and a SONG's sections count as before. What the commands change is the row that
+ * plays (pr_row): SPEED 1/2 holds each row two steps (its gate twice as long), x2 plays two rows a step (the second at
+ * the step's half, gates halved), LOOP sends the row back N rows M times (LPIT: the notes up or down a pass). When the
+ * step comes round to 0 everything starts over: row 0, x1, no loop, no pitch ("back to the bar"). While SPEED is 1/2
+ * or x2 a row's RATCH plays x1. A track with commands plays every step on its start (no NUDGE, no matrix TIME). Main
+ * loop edits the records; the ISR reads them (a record is published whole: motion.c RING_PUBLISH) */
+static int ph_cmd(const track_t *t, uint32_t row, uint32_t id, int32_t *v)   /* row's command id, from what plays */
+{
+    const motion_store_t *m = chain_motion(t);
+    uint32_t i, place = trk_index(t) << 6 | row;
+    if (!m)
+        return 0;
+    for (i = 0; i < m->count; i++)
+        if (m->event[i].place == place && MOTION_ID(&m->event[i]) == id) {
+            *v = m->event[i].value;
+            return 1;
+        }
+    return 0;
+}
+static int ph_any(const track_t *t)                    /* track t has a command on some step */
+{
+    const motion_store_t *m = chain_motion(t);
+    uint32_t i, k = trk_index(t);
+    if (!m)
+        return 0;
+    for (i = 0; i < m->count; i++)
+        if ((m->event[i].place >> 6) == k && (MOTION_ID(&m->event[i]) == CMD_SPD || MOTION_ID(&m->event[i]) == CMD_LOOP))
+            return 1;
+    return 0;
+}
+static uint32_t ph_next(track_t *t, uint32_t row, uint32_t len)   /* the row after `row`: a LOOP's way back, or on */
+{
+    int32_t v, p;
+    if (ph_cmd(t, row, CMD_LOOP, &v)) {
+        uint32_t n = 1u << (((uint32_t)v >> 3) & 3u), m = ((uint32_t)v & 7u) + 1u;
+        if (t->pr_lp < m) {
+            t->pr_lp++;
+            if (ph_cmd(t, row, CMD_LPIT, &p))
+                t->pr_semi = (int8_t)clamp(t->pr_semi + p, -48, 48);
+            return row + 1u >= n ? row + 1u - n : 0u;
+        }
+        t->pr_lp = 0;
+        t->pr_semi = 0;
+    }
+    return (row + 1u) % len;
+}
+static void ph_play(track_t *t, uint32_t row, uint32_t period)   /* row plays: as step seq_idx would (its locks, chance) */
+{
+    uint32_t at = t->seq_idx;
+    int32_t v;
+    if (ph_cmd(t, row, CMD_SPD, &v) && (uint32_t)v != t->pr_spd) {
+        t->pr_spd = (uint8_t)clamp(v, 0, 2);
+        t->pr_half = 0;
+    }
+    t->pr_row = (uint8_t)row;
+    t->seq_idx = (uint16_t)row;                         /* (the step's condition counts its own loop: seq_cond_miss) */
+    seq_play(t, row, t->pr_spd == 1u ? period * 2u : t->pr_spd == 2u ? period / 2u : period);
+    t->seq_idx = (uint16_t)at;
+    if (t->pr_spd)
+        t->rat_left = 0;
+}
+/* step seq_idx starts (with commands): the row it plays */
+static __attribute__((noinline)) void ph_step(track_t *t, uint32_t len, uint32_t period, uint32_t cur_len)
+{
+    uint32_t row;
+    t->pr_mid = 0;
+    if (!t->pr_on || !t->seq_idx) {                     /* the loop's first step (or the commands just came): from the top */
+        t->pr_on = 1;
+        t->pr_spd = t->pr_half = t->pr_lp = 0;
+        t->pr_semi = 0;
+        row = t->seq_idx % len;                         /* (commands set mid-loop: in step with it) */
+    } else if (t->pr_spd == 1u && !t->pr_half) {
+        t->pr_half = 1;                                 /* 1/2: the row's second step, it sounds on */
+        return;
+    } else {
+        t->pr_half = 0;
+        row = ph_next(t, t->pr_row, len);
+    }
+    ph_play(t, row, period);
+    if (t->pr_spd == 2u) {                              /* x2: the next row at the step's half */
+        t->pr_mid = 1;
+        t->pr_mid_at = cur_len / 2u;
+    }
+}
+static __attribute__((noinline)) void ph_mid(track_t *t, uint32_t len, uint32_t period)   /* x2's second row */
+{
+    t->pr_mid = 0;
+    ph_play(t, ph_next(t, t->pr_row, len), period);
+}
+#endif
+
 static void seq_tick(track_t *t, uint32_t n)
 {
     uint32_t period, len, top;
-    if (song.g[G_CLOCK])
-        n = midi_grid_advance(&midi_seq_grid[trk_index(t)], n, (uint32_t)t->p[P_SDIV]);
     if (t->seq_n && !t->seq_hold) {
         if (t->seq_off <= n)
             seq_release(t);
@@ -1224,12 +1394,29 @@ static void seq_tick(track_t *t, uint32_t n)
         uint32_t cur_len = step_samples(t, period, t->seq_idx);
         if (t->nd_late | t->nd_early)
             seq_nd_due(t, period, len, cur_len, n);
+#if RONDO_LAYOUT
+        if (t->pr_mid && t->seq_pos >= t->pr_mid_at && t->seq_pos < cur_len)
+            ph_mid(t, len, period);                     /* (SPEED x2: the step's second row) */
+#endif
         if (t->seq_pos < cur_len && t->seq_pos != 0x7FFFFFFFu + n)
             break;
         top = t->seq_pos >= 0x7FFFFFFFu;            /* (PLAY, a SONG section: its first step) */
+#if RONDO_LAYOUT
+        t->seq_pos = top ? (chain.running ? chain.carry : bank.carry) : t->seq_pos - cur_len;   /* (RONDO: a pattern switch) */
+#else
         t->seq_pos = top ? (chain.running ? chain.carry : 0u) : t->seq_pos - cur_len;
+#endif
         t->seq_idx = (uint16_t)((t->seq_idx + 1u) % len);
         seq_enter(t, top, len);
+#if RONDO_LAYOUT
+        morph_step(t, t->seq_idx);                      /* RONDO: a MORPH command on the step (morph.c) */
+        if (ph_any(t)) {                                /* RONDO: the TRACKER's commands play the rows */
+            ph_step(t, len, period, step_samples(t, period, t->seq_idx));
+            continue;
+        }
+        t->pr_on = t->pr_mid = 0;
+        t->pr_semi = 0;
+#endif
         if (t->p[P_SQNT] && !t->nd_fired)
             seq_play_on(t, period);                 /* QUANTIZE ON: every step on its start, as before 1.2 */
         else
@@ -1314,7 +1501,6 @@ static __attribute__((noinline)) void cin_record(void)
 /* the metronome's beat: adv samples on while the transport runs (click.c sounds it in this block) */
 static void click_tick(uint32_t adv)
 {
-    if (song.g[G_CLOCK]) adv = midi_grid_advance(&midi_click_grid, adv, 2u);
     uint32_t p = div_samples(2), beat = 0;
     if (clk_pos == CLK_START) {
         clk_pos = 0;
@@ -1450,18 +1636,22 @@ static void events_block(uint32_t n)
     }
     if (aud_req)
         seq_audition();                               /* (STEP PREVIEW: a step sounds, stopped) */
-    chain_tick(clock_mode && chain.running ? midi_seq_preview(&trk[chain.clk], seq_n) : seq_n);
+    chain_tick(seq_n);
+#if RONDO_LAYOUT
+    bank_tick(seq_n);                                 /* RONDO: the next pattern of the bank at this one's end */
+#endif
+#if RONDO_LAYOUT
+    dgq_clock(seq_n);                                 /* Dungeon Tracker: the dungeon's sixteenths (its turns) */
+#endif
     for (i = 0; i < NTRK; i++)
         seq_tick(&trk[i], seq_n);
     if (cin_flush)
         cin_record();
     if (song.playing)
         click_tick(seq_n);
-    for (i = 0; i < NPART; i++) {
-        uint32_t arp_n = clock_mode ? midi_grid_advance(&midi_arp_grid[i], seq_n, (uint32_t)trk[i].p[P_ARATE]) : n;
-        arp_step(&trk[i], arp_n, clock_mode && song.playing ? arp_n : n);
-    }
-    beat_pos += clock_mode ? midi_grid_advance(&midi_beat_grid, seq_n, 0u) : n; /* ARP LED beat */
+    for (i = 0; i < NPART; i++)
+        arp_step(&trk[i], clock_mode ? seq_n : n, clock_mode && song.playing ? seq_n : n);
+    beat_pos += clock_mode ? seq_n : n;               /* the beat the ARP LED flashes on (ui_leds) */
     if (beat_pos >= beat_samples()) {
         beat_pos -= beat_samples();
         beat_pos = beat_pos < beat_samples() ? beat_pos : 0u;

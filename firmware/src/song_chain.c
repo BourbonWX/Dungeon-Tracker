@@ -21,13 +21,30 @@ typedef struct {
     motion_store_t motion;
 } chain_pattern_t;
 static chain_config_t chain_config;
+#if RONDO_LAYOUT
+/* RONDO: the PATTERN BANK (song_bank.c): six patterns A..F in RAM (the pool), the flash's copies (project.c bank_*).
+ * The one being played and edited is the tracks' own (cur); its copy here is as of its last store. A song plays
+ * these (song_chain.c chain_src), the current one stored first (chain_prepare) */
+#define NBANK 6u
+static chain_pattern_t bank_pat[NBANK] __attribute__((section(".pool")));
 static struct {
+    volatile uint8_t cur, queue;             /* the pattern played and edited; the one next (at the pattern's end), CHAIN_OFF none */
+    volatile uint8_t gen;                    /* + 1 each switch (the main loop: an undo of the steps goes) */
+    volatile uint8_t dirty;                  /* bit p: pattern p not yet in the flash */
+    uint8_t used;                            /* bit p: pattern p holds a pattern (the current one always) */
+    uint8_t clk;                             /* the track whose loop ends the pattern (bank_clock) */
+    uint32_t carry;                          /* a switch: where the new pattern's first step is in the block */
+} bank;
+#endif
+static struct {
+#if !RONDO_LAYOUT
     chain_pattern_t source[4];
+#endif
     chain_config_t config;
     int16_t timing[NTRK][4];                 /* the editable LEN DIV SWING GATE and QUANTIZE, back on STOP */
     uint8_t qnt[NTRK];
     volatile uint8_t armed, running, row, remaining;
-    uint8_t lane[NTRK];                      /* the slot each track plays in this section, CHAIN_SILENT none */
+    uint8_t lane[NTRK];                      /* the pattern each track plays in this section (chain_pat), CHAIN_OFF none */
     uint8_t clk;                             /* the track whose loop counts the section (chain_clock) */
     uint8_t rec;
     uint32_t carry;
@@ -64,7 +81,7 @@ static int chain_valid(const chain_config_t *c)
         return 0;
     for (i = 0; i < c->count; i++) {
         for (k = 0; k < NTRK; k++)
-            if (c->row[i].slot[k] > CHAIN_SILENT)
+            if (c->row[i].slot[k] > CHAIN_MAXV)
                 return 0;
         if (!c->row[i].repeat || c->row[i].repeat > 16u)
             return 0;
@@ -87,6 +104,38 @@ static int chain_from_v9(chain_config_t *c, const chain_v9_t *o)
     c->count = o->count;
     return 1;
 }
+/* a pattern of a song (the lane's chain_pat): its copy; 0 none (silent) */
+static const chain_pattern_t *chain_src(uint32_t p)
+{
+#if RONDO_LAYOUT
+    return p < NBANK ? &bank_pat[p] : 0;
+#else
+    return p < 4u ? &chain.source[p] : 0;
+#endif
+}
+#if RONDO_LAYOUT
+static uint32_t div_samples(uint32_t div);
+/* RONDO: one loop of a track's pattern (LEN x DIV, its swing evened out over pairs), in samples */
+static uint32_t pat_loop(int32_t len, int32_t div) { return (uint32_t)(len > 0 ? len : 1) * div_samples((uint32_t)div); }
+/* RONDO: the track whose loops count section r's length: the one not silent with the longest loop (the first of a
+ * tie), so a section of a 2-bar bass under a 1-bar beat lasts the 2 bars; every track silent: track 1 (a bar) */
+static uint32_t chain_clock(const chain_row_t *r)
+{
+    uint32_t k, best = 0, most = 0;
+    for (k = 0; k < NTRK; k++) {
+        const chain_pattern_t *c = chain_src(chain_pat(r->slot[k]));
+        uint32_t n;
+        if (!c)
+            continue;
+        n = pat_loop(c->timing[k][0], c->timing[k][1]);
+        if (n > most) {
+            most = n;
+            best = k;
+        }
+    }
+    return best;
+}
+#else
 /* the track whose loops count section r's length: the first one not silent; every track silent: track 1 (a bar) */
 static uint32_t chain_clock(const chain_row_t *r)
 {
@@ -96,15 +145,17 @@ static uint32_t chain_clock(const chain_row_t *r)
             return k;
     return 0;
 }
+#endif
 /* a track parameter a playing song sets from its slots (the editor and the pages leave it alone meanwhile) */
 static int chain_owns(uint32_t id) { return (id >= P_SLEN && id <= P_SGATE) || id == P_SQNT; }
 static const step_t *seq_steps(const track_t *t)
 {
-    uint32_t k = (uint32_t)(t - trk), s;
+    uint32_t k = (uint32_t)(t - trk);
+    const chain_pattern_t *c;
     if (!chain.running)
         return t->step;
-    s = chain.lane[k];
-    return s < 4u ? chain.source[s].step[k] : chain_silent;
+    c = chain_src(chain.lane[k]);
+    return c ? c->step[k] : chain_silent;
 }
 static void motion_restore(track_t *t);
 /* a section starts (chain_start, chain_tick: once a section, not per block; not inlined: off the audio ISR's loop) */
@@ -115,13 +166,13 @@ static __attribute__((noinline)) void chain_apply(void)
     chain.clk = (uint8_t)chain_clock(r);
     for (i = 0; i < NTRK; i++) {
         track_t *t = &trk[i];
-        uint32_t s = r->slot[i];
-        chain.lane[i] = (uint8_t)(s < 4u ? s : CHAIN_SILENT);
+        const chain_pattern_t *c = chain_src(chain_pat(r->slot[i]));
+        chain.lane[i] = (uint8_t)chain_pat(r->slot[i]);
         seq_release(t);
         motion_restore(t);
-        if (s < 4u) {
-            memcpy(&t->p[P_SLEN], chain.source[s].timing[i], sizeof chain.timing[i]);
-            t->p[P_SQNT] = chain.source[s].qnt[i];
+        if (c) {
+            memcpy(&t->p[P_SLEN], c->timing[i], sizeof chain.timing[i]);
+            t->p[P_SQNT] = c->qnt[i];
         } else {
             t->p[P_SLEN] = CHAIN_SIL_LEN;
             t->p[P_SDIV] = CHAIN_SIL_DIV;

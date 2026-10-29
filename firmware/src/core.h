@@ -8,13 +8,32 @@
 #include <stdint.h>
 
 /* ------------------------------------------------------------ sizes --- */
-#define NVOICE 8                 /* voices per part, and the budget shared by all parts */
+#define NVOICE 8                 /* voices per part (each part's array) */
+/* RONDO: a fixed voice layout. Each track has its own cap and the budget is their sum, so no track ever takes a voice from
+ * another: by default T1 DRUMS 4 (KICK SNARE HAT PERC), T2 CHORDS / PADS 4, T3 BASS 1 (mono), T4 LEAD 3 (TRK_CAP);
+ * Dungeon Tracker: each track's class sets its cap (trk_cap, THE PARTY below), the sum still at most the budget */
+#ifndef RONDO_LAYOUT
+#define RONDO_LAYOUT 1           /* 0: Felucca's shared budget of 8 and its power-on sounds (the upstream tests) */
+#endif
+/* RONDO: Program Change in is ignored by default. A sequencer such as the QY70 sends its own (GM / XG) program numbers
+ * at the start of a song, which would load other sounds onto the tracks; RONDO_PC_IN=1 builds Felucca's behaviour */
+#ifndef RONDO_PC_IN
+#define RONDO_PC_IN (!RONDO_LAYOUT)
+#endif
+#if RONDO_LAYOUT
+#define NBUDGET 12               /* voices sounding at once, all tracks */
+static const uint8_t TRK_CAP[4] = {4, 4, 1, 3};
+#else
+#define NBUDGET NVOICE
+static const uint8_t TRK_CAP[4] = {NVOICE, NVOICE, NVOICE, NVOICE};
+#endif
 #define NPART 4                  /* synth parts: tracks 1..4 */
 #define NTRK NPART               /* tracks (the formats and the protocol count these): every track is a part */
 #define NSTEP 64
 #define HALF_FRAMES 128          /* I2S half buffer: 2.9 ms at 44.1 kHz (a key waits 0..1 half, then plays 1 half later) */
 #ifndef FELUCCA_SLICE
-#define FELUCCA_SLICE 1          /* the SLICE engine (eng_slice.c), engine 13; FELUCCA_SLICE=0 builds without it */
+#define FELUCCA_SLICE (!RONDO_LAYOUT)   /* the SLICE engine (eng_slice.c), engine 13; FELUCCA_SLICE=0 builds without it
+                                         * (Dungeon Tracker: without, engine 13 reserved: engines.c ENG_SLICE_GONE) */
 #endif
 #ifndef FELUCCA_FM4
 #define FELUCCA_FM4 0            /* the DIGITAL engine (eng_digital.c, four-operator FM): kept in the tree, not built
@@ -28,19 +47,17 @@
                                             * second core (mod.c, voice.c SPREAD, eng_formant.c): one each with two cores,
                                             * one for all with one, as up to 1.6 */
 #define C1_PI(t) ((uint32_t)((t) - trk) % C1_NP)   /* a part's copy */
-#ifndef FELUCCA_ADPCM
-#define FELUCCA_ADPCM 0          /* the ADPCM engine (eng_adpcm.c), engine 14: not built by default (FELUCCA_ADPCM=1 builds
-                                  * it): on the FM-1 it costs about three ANALOG voices a voice (eng_adpcm.c, the figures) */
-#endif
-#if FELUCCA_ADPCM && !FELUCCA_SLICE
-#error "FELUCCA_ADPCM needs FELUCCA_SLICE (ADPCM is engine 14, after SLICE)"
-#endif
-#define NENGINES (13 + FELUCCA_SLICE + FELUCCA_ADPCM)   /* SLICE (13), then ADPCM (14): the other engines keep their
-                                                         * numbers */
-#define ENGI_ADPCM 14u
+#define ENGI_SLICE 13u           /* SLICE; Dungeon Tracker builds without it: 13 stays reserved (its sounds load as
+                                  * SAMPLE, project.c proj_slice), so 14.. keep their numbers */
+#define NENGINES 18              /* RONDO: SLICE (13), then CYCLE KIT (14) and CYCLE TONE (15), eng_cycle.c; 1.1: WAVES (16);
+                                  * 1.3: SID (17) */
 #define ENGI_DIGITAL 1u          /* reserved without FELUCCA_FM4: never selectable (eng_ok), its sounds load as FM6 */
-#define NENG_SHOWN (NENGINES - !FELUCCA_FM4)   /* the engines one can pick: PRESETS, the EDIT layer, the editor,
-                                                * in the display order of engines.c ENGINE_ORDER */
+/* the engines one can pick (PRESETS, the EDIT layer, the editor), in the display order of engines.c ENGINE_ORDER.
+ * RONDO: all but two, so the EDIT layer's 16 white keys still hold every engine, INIT and CLEAN (ui_layer.c LY_INIT):
+ * SLICE (13) is not offered (its sounds in projects and user presets still play), and in FELUCCA_FM4 builds (tests only)
+ * DIGITAL is offered instead of NOISE */
+#define NENG_SHOWN (NENGINES - 2)
+#define NENG_KEYS 14u            /* 1.1: the EDIT layer's 16 white keys: the first 14 engines, INIT, CLEAN (NOISE: PRESETS only) */
 #define UP_SLOTS 32u             /* user presets (upreset.c) */
 
 /* ------------------------------------------------------- parameters --- */
@@ -100,6 +117,7 @@ enum {                          /* global parameters */
                                  * the import of an old project reads them: proj_drums_to_part) */
     G_COUNT
 };
+#define NPROJ (RONDO_LAYOUT ? 11u : 4u)         /* SAVE > PROJECT's slots (Dungeon Tracker: A..H; 1.3: A..K, project.c song_store.c) */
 
 /* stored parameters of an older layout -> today's P_* order. A store keeps np = the P_COUNT it was
  * written with; common parameters are only ever added just before P_E0, so the first np - 8 are
@@ -115,8 +133,13 @@ static void params_by_count(int16_t *out, const int16_t *in, uint32_t np, const 
 }
 
 /* engine indices the stores name (engines.c ENGINES[]: append-only) */
+#define ENGI_LOFI 3u                     /* RE-1: CHIP (Felucca's LOFI); the DICE roll it too (ui_dice.c) */
 #define ENGI_PHYS 9u
 #define ENGI_DRUM 10u
+#define ENGI_CKIT 14u                    /* RONDO: CYCLE KIT (eng_cycle.c) */
+#define ENGI_CTONE 15u                   /* RONDO: CYCLE TONE */
+#define ENGI_WAVES 16u                   /* 1.1: WAVES (Ambika's oscillators, mutable/eng_waves.c) */
+#define ENGI_SID 17u                     /* 1.3: SID (the C64's chip, eng_sid.c) */
 /* PHYS MODEL DRUM (MODEL 4, before 1.0) -> the DRUM engine, its E values in place: {MODEL, TUNE, TONE, DECY,
  * SNAP, ACC, KICK 0..127, PERC 0..127} -> {KIT, TUNE, TONE, DECY, SNAP, ACC, KICK 0..1, DRV 0}. 1 = it was one
  * (its engine is ENGI_DRUM now); projects (project.c) and user presets (upreset.c) */
@@ -235,6 +258,18 @@ static void step_set_nudge(step_t *s, int32_t v)
  * value holds until another one changes it. One record per (track, step, id), of either kind */
 #define MOTION_LOCK 0x80u
 #define MOTION_ID(e) ((uint32_t)(e)->param & 0x7Fu)
+/* RONDO: the TRACKER's commands (ui_tracker.c, seq.c ph_*): step records (MOTION_LOCK) on ids past the parameters, so
+ * they are saved and undone as the FX column's locks are; never a parameter (motion.c skips them as it plays):
+ *   CMD_SPD   SPEED x1 / 1/2 / x2 from this row on (until another, or the pattern's loop comes round)
+ *   CMD_LOOP  after this row, back N rows (1 2 4 8), M times (1..8): N rows played M + 1 times (value N index x 8 + M - 1)
+ *   CMD_LPIT  the LOOP's pitch step a pass, -12..+12 semitones (notes only: a kit's hits stay)
+ *   CMD_MORPH the track's SOUND MORPH amount from this step on, 0..100 % (morph.c) */
+#define CMD_SPD (P_COUNT + 0u)
+#define CMD_LOOP (P_COUNT + 1u)
+#define CMD_LPIT (P_COUNT + 2u)
+#define CMD_MORPH (P_COUNT + 3u)
+#define NCMD 4u
+static inline int cmd_id(uint32_t id) { return RONDO_LAYOUT && id >= P_COUNT && id < P_COUNT + NCMD; }
 typedef struct { uint8_t place, param; int8_t value; } motion_event_t;
 typedef struct { uint8_t count, on, rsv[2]; motion_event_t event[MOTION_MAX]; } motion_store_t;
 _Static_assert(sizeof(motion_store_t) == 388u, "motion disk layout (FUN10)");
@@ -243,6 +278,15 @@ _Static_assert(sizeof(motion_store_t) == 388u, "motion disk layout (FUN10)");
  * nothing there) and its repeats (1..16). Up to 1.1 a row was {slot, repeat}, all four tracks on that slot
  * (chain_v9_t, FUN6..FUN9): it loads as a section with the four on it (song_chain.c chain_from_v9) */
 #define CHAIN_SILENT 4u
+/* RONDO: a section plays the PATTERN BANK's A..F (song_bank.c), not the four project slots. Its byte keeps FUN10's
+ * meaning for A..D and "-" (0..3, 4) and takes 5, 6 for E, F (a Felucca build reads those as not valid: no song) */
+#define CHAIN_PATS (RONDO_LAYOUT ? 6u : 4u)       /* the patterns a section can name */
+#define CHAIN_OFF 0xFFu
+#define CHAIN_MAXV (RONDO_LAYOUT ? 6u : CHAIN_SILENT)   /* the largest byte a section's track holds */
+static inline uint32_t chain_pat(uint32_t v) { return v < 4u ? v : RONDO_LAYOUT && v >= 5u && v <= 6u ? v - 1u : CHAIN_OFF; }
+static inline uint32_t chain_val(uint32_t p) { return p < 4u ? p : p < CHAIN_PATS ? p + 1u : CHAIN_SILENT; }
+/* the order SONG's KNOB 3 turns through: A .. (D / F), then "-" */
+static inline uint32_t chain_ord(uint32_t v) { return chain_pat(v) != CHAIN_OFF ? chain_pat(v) : CHAIN_PATS; }
 typedef struct { uint8_t slot[NTRK], repeat; } chain_row_t;
 typedef struct {
     uint8_t count, rsv[3];
@@ -335,6 +379,14 @@ typedef struct track {
     uint8_t sp_alt;              /* SPREAD: the side the next voice starts on (alternating, voice.c voice_start) */
     int16_t m_rnd;               /* .. its RAND */
     int32_t m_env;               /* the amp envelope of voice m_vi, last block (Q15) */
+    /* RONDO: the TRACKER's commands (seq.c ph_*): the row playing (the step seq_idx keeps the time), SPEED (0 x1,
+     * 1 1/2, 2 x2), the second half of a 1/2 row, the LOOP's passes and pitch, x2's second row due at pr_mid_at. 16
+     * bytes after an int32 (the size stays a multiple of 16) */
+    uint8_t pr_on, pr_row, pr_spd, pr_half, pr_lp, pr_mid;
+    int8_t pr_semi;
+    uint8_t pr_rsv;
+    uint32_t pr_mid_at;
+    uint8_t pr_rsv2[4];
 } track_t;
 /* the audio ISR indexes trk[] with a multiply by a small immediate and a shift while the size is a multiple of 16; 1.5's
  * new track parameters (the INSERT, the filter TYPE, ENV SYNC) and state would make it no multiple (the constant
@@ -358,6 +410,9 @@ typedef struct {
                                   * zeroed default, is T1..T4 on channels 1..4), MCH_OMNI (any channel no track has), MCH_OFF
                                   * (none); mch_get / mch_set. The project's, in FUN10's spare bytes (project.c PROJ_MIDI_OFF);
                                   * MENU > MIDI > T1..T4 CHANNEL */
+    uint8_t clsx[NTRK];          /* Dungeon Tracker: each track's CLASS XOR the track's number (0, the zeroed default: T1
+                                  * ROGUE, T2 CLERIC, T3 FIGHTER, T4 MAGE); trk_cls. The project's (project.c PROJ_CLASS_OFF);
+                                  * MENU > GAME > T1..T4 */
 } song_t;
 #define ROUTE_SEL 1
 #define ROUTE_TRACK 5                /* G_ROUTE: TRACK, each track on its own channel (song.mch) */
@@ -367,6 +422,24 @@ typedef struct {
 
 static track_t trk[NTRK];        /* the instrument: four parts */
 static song_t song;
+#if RONDO_LAYOUT
+/* Dungeon Tracker: THE PARTY. Each track is an adventurer of a class, and its class is its voices and its role: ROGUE
+ * the drums (4), CLERIC chords and pads (4), FIGHTER the bass (1: mono), MAGE the lead (3). A party is any four, two of
+ * a class too, as long as their voices come to CLS_POINTS at most (the 12 the FM-1 plays at once: NBUDGET). The
+ * dungeon's game fights with them (ui_dungeon.c), PRESETS > LIST CLASS offers each its own kind of sound (ui.c) */
+enum { CLS_ROGUE, CLS_CLERIC, CLS_FIGHTER, CLS_MAGE, NCLS };
+static const uint8_t CLS_VOICES[NCLS] = {4, 4, 1, 3};
+static const char *const CLS_NAME[NCLS] = {"ROGUE", "CLERIC", "FIGHTER", "MAGE"};
+#define CLS_POINTS NBUDGET
+static inline uint32_t trk_cls(uint32_t k) { return (song.clsx[k % NTRK] ^ k) & 3u; }
+static inline uint32_t trk_cap(uint32_t k) { return CLS_VOICES[trk_cls(k)]; }
+static inline uint32_t party_points(const uint8_t *cls)   /* the voices of a party (4 classes) */
+{
+    return (uint32_t)CLS_VOICES[cls[0] & 3u] + CLS_VOICES[cls[1] & 3u] + CLS_VOICES[cls[2] & 3u] + CLS_VOICES[cls[3] & 3u];
+}
+#else
+static inline uint32_t trk_cap(uint32_t k) { (void)k; return NVOICE; }
+#endif
 #define TSEL (&trk[song.sel])    /* the selected track */
 /* MIDI IN TRACK: track i's channel 0..15, MCH_OMNI or MCH_OFF (song.mch), and set */
 static inline uint32_t mch_get(uint32_t i)
@@ -390,6 +463,20 @@ static inline uint32_t swing_step_len(const track_t *t, uint32_t base, uint32_t 
 {
     int32_t sw = track_swing(t) * (int32_t)base / 250;
     return base + (uint32_t)((idx & 1u) ? -sw : sw);
+}
+
+/* RONDO: the INSERT's DUCK (fx.c ins_duck). rondo_clock counts the mix's samples (fx.c mix_block, after the block's
+ * events); a kick of track 1 (eng_cycle.c ck_note_on's KICK lane, voice.c for other engines) stamps duck_at with it, so
+ * every DUCK insert knows how long ago the last kick was, sounding or not since */
+static volatile uint32_t rondo_clock, duck_at;
+/* RONDO: the FX layer's four new master effects' values (perform.c MK_ISO ..): ISOLATOR -100..100, WASH PUMP RIDE 0..100;
+ * RIDE (mk_x[3]) is the FM engines' (eng_cycle.c: COLOR and FDBK up) */
+static volatile int8_t mk_x[4];
+static volatile uint8_t duck_seen;                       /* a kick since power-on (before it: nothing ducks) */
+static inline void duck_kick(void)
+{
+    duck_at = rondo_clock;
+    duck_seen = 1;
 }
 
 /* ----------------------------------------------------------- system --- */

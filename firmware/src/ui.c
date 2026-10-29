@@ -8,6 +8,12 @@ static int project_save(uint32_t slot);
 static void panel_setup(void);
 static void project_load(uint32_t slot);
 static int project_used(uint32_t slot);
+static uint32_t project_pats(uint32_t slot);     /* (project.c) 1.2: the song slot's patterns (bit p: A..F), 0 none */
+static int quick_save(void);                     /* 1.0.1: SAVE > PROJECT's QUICK slot (project.c: the autosave) */
+static void quick_load(void);
+static int quick_used(void);
+static int autosave_pending(void);               /* .. the music not in it yet (the header's mark) */
+static int slot_quick(void) { return song.g[G_SLOT] == 0; }   /* the QUICK slot picked (SLOT 0, above A-D) */
 static uint32_t chain_prepare(void);
 static int up_used(uint32_t k);              /* user presets: upreset.c */
 static int up_load(uint32_t k);
@@ -84,13 +90,18 @@ static uint32_t up_gen;                      /* bumped on every user bank change
 #define PREF_CPU2_ON (0x80u << 16)              /* MENU > SYSTEM > 2ND CORE ON (BETA): the second core from the next
                                                  * power-on (main.c); clear = OFF, one core as 1.6 (every older setting:
                                                  * 1.6 never set bit 7). It turns itself OFF when core 1 misreads
-                                                 * (bsp/chip/fm1_cpu1.h). (The 1.6.1 dual-core beta build had it the other
+                                                 * (hal/fm1_cpu1.h). (The 1.6.1 dual-core beta build had it the other
                                                  * way round, 0 AUTO / 1 OFF) */
 /* MENU > CONTROL > SELECT: 0 BPM, 1 PAGE (1.5.5, #188), 2 MODW, 3 VEL (1.5.6, #84: ui_input.c sel_play), bit 4 and bit 6 of
  * ui_prefs2 (0 in every older setting = BPM; 1.5.5's PAGE keeps its bit; firmware before 1.5.6 reads MODW as BPM and
  * VEL as PAGE (its bit 4), before 1.5.5 both as BPM) */
 enum { SEL_BPM, SEL_PAGE, SEL_MODW, SEL_VEL, SEL_N };
-static uint32_t sel_mode(void) { return ((ui_prefs2 >> 4) & 1u) | ((ui_prefs2 >> 5) & 2u); }
+/* Dungeon Tracker: SELECT navigates by default. The stored BPM and PAGE are swapped (0, every blank or older setting,
+ * reads PAGE; MODW, VEL as they were): SELECT steps the pages, the MENU's rows; the tempo is GLO + SELECT, CLOCK's
+ * KNOB 1 and TAP, or MENU > CONTROL > SELECT BPM as before. sel_stored / sel_mode: the stored bits <-> the mode */
+#define SEL_SWAP (RONDO_LAYOUT ? 1u : 0u)              /* (RONDO_LAYOUT=0: Felucca's, BPM the default) */
+static uint32_t sel_swap(uint32_t m) { return m < 2u ? m ^ SEL_SWAP : m; }
+static uint32_t sel_mode(void) { return sel_swap(((ui_prefs2 >> 4) & 1u) | ((ui_prefs2 >> 5) & 2u)); }
 /* 1.3 (Discussions #112, #134): MENU > DISPLAY > HOME, what the HOME page shows under its four cards: 0 SCOPE (the
  * oscilloscope, as before), 1 TRACKS (the four tracks as rows: ui_graph.c draw_home_tracks), 2 LEVELS (1.5, #134: the
  * rows of TRACKS, and KNOB 1..4 the LEVEL of T1..T4 in place of the engine's four: home_param). A byte of its own no
@@ -103,6 +114,7 @@ static uint32_t sel_mode(void) { return ((ui_prefs2 >> 4) & 1u) | ((ui_prefs2 >>
  * Saved with the settings; read only while LEDS is INV (menu_items.c leds_row) */
 #define ui_leds_inv (favorites.factory[15][25])
 static uint32_t leds_inv(void) { return settings_leds == LEDS_INV && ui_leds_inv - 1u < 2u ? ui_leds_inv : 0u; }
+/* RONDO: HV_SCOPE draws the DUNGEON's corridor (ui_dungeon.c; its game: MENU > GAME) */
 enum { HV_SCOPE, HV_TRACKS, HV_LEVELS, HV_COUNT };
 static int home_tracks(void) { return ui_home_view == HV_TRACKS || ui_home_view == HV_LEVELS; }
 static int home_levels(void) { return ui_home_view == HV_LEVELS; }
@@ -171,7 +183,7 @@ static struct {
     uint8_t hot_col, hot_t;      /* column whose knob was just turned (drawn white) */
     uint8_t menu;                /* 0 off, 1 list, 2 about + credits, 3 info (1.2) (HOME held) */
     uint8_t menu_sel;            /* MENU: the row (menu_items.c MI_*; its tab MI_TAB), kept while the device runs */
-    uint8_t menu_row[5];         /* MENU: the row last picked in each tab, from its first (ALGORITHM comes back to it) */
+    uint8_t menu_row[6];         /* MENU: the row last picked in each tab, from its first (ALGORITHM comes back to it) */
     uint16_t menu_scroll;        /* continuous ABOUT + CREDITS position, pixels */
     uint32_t menu_sig, home_t0;  /* HOME press time (btn_hold) */
     uint8_t force;               /* full redraw pending */
@@ -180,6 +192,7 @@ static struct {
     uint8_t bpm_t;               /* frames the BPM stays highlighted after a SELECT turn */
     uint8_t act;                 /* action pages: the column whose action OCT+ does, + 1; 0 = none (act_col) */
     uint8_t tl_clean;            /* SAVE > TOOLS: KNOB 2 turned on past INIT, CLEAN INIT picked (1.5.5, #190) */
+    uint8_t tl_new;              /* SAVE > TOOLS: KNOB 1 turned on past CLEAR: 1 NEW, 2 NEW + DEFAULT SOUNDS (project.c) */
     uint32_t rec_t0;             /* REC press time: a tap arms (btn_hold, no hold: held, REC opens its layer) */
     uint32_t save_t0;           /* SAVE press time (btn_hold: held = UNDO) */
     uint8_t confirm;             /* the OCT- / OCT+ dialog: CF_*, 0 = none */
@@ -226,7 +239,10 @@ static struct {
 } ui;
 
 enum { CF_NONE, CF_CLEAR_SEQ, CF_CLEAR_TRK, CF_OVR_PROJ, CF_OVR_USER, CF_LOAD_PAT,
-       CF_DEL_ROW, CF_CLEAR_SONG, CF_INIT_SOUND, CF_CLEAR_MOTION, CF_ERASE_USER, CF_ERASE_PROJ, CF_CLEAN_SOUND };
+       CF_DEL_ROW, CF_CLEAR_SONG, CF_INIT_SOUND, CF_CLEAR_MOTION, CF_ERASE_USER, CF_ERASE_PROJ, CF_CLEAN_SOUND,
+       CF_NEW, CF_NEW_SOUNDS, CF_LOAD_SONG };
+static void new_song(uint32_t sounds);           /* (project.c) SAVE > TOOLS: NEW, NEW + DEFAULT SOUNDS */
+static int new_undo(void);                       /* (project.c) SAVE held right after: 1 = undone */
                                   /* ui.confirm: TOOLS' clears; SAVE over a used slot; a pattern over the user's steps;
                                    * USER ERASE; PROJECT ERASE (1.5.5, #199); CLEAN INIT (1.5.5, #190) */
 
@@ -413,7 +429,12 @@ static int32_t ink_w(const aafont_t *f, const char *s)
 }
 
 /* the quick layers (ui_layer.c): a button held, the keys and KNOB 1..4 are its shortcuts, its map over the page */
-enum { LAYER_NONE, LAYER_FX, LAYER_GLO, LAYER_SCL, LAYER_EDIT, LAYER_SEQ, LAYER_REC, LAYER_N };
+enum { LAYER_NONE, LAYER_FX, LAYER_GLO, LAYER_SCL, LAYER_EDIT, LAYER_SEQ, LAYER_REC,
+#if RONDO_LAYOUT
+       LAYER_ARP,                       /* RONDO: ARP held, the track's effect to ride (ui_layer.c) */
+       LAYER_ENV,                       /* RONDO: ENV held, the PATTERN BANK A..F (song_bank.c) */
+#endif
+       LAYER_N };
 static void draw_layer(void);
 static const char *layer_head(void);
 static int layer_locked(void);
@@ -425,8 +446,18 @@ static uint32_t layer_btn(void);
  * track's (its patch's operators, ui_fm6op.c) */
 static int page_visible(uint32_t i)
 {
+    uint32_t ckit = TSEL->eng_req % NENGINES == ENGI_CKIT;   /* RONDO: FMKIT's pages */
+    if (PAGES[i].graph == GR_DICE)                    /* RONDO: DICE, the FM engines' (RE-1: and CHIP's) */
+        return ckit || TSEL->eng_req % NENGINES == ENGI_CTONE || TSEL->eng_req % NENGINES == ENGI_LOFI;
+#if RONDO_LAYOUT
+    if (PAGES[i].graph == GR_MORPH)                   /* RONDO: MORPH, an engine with presets to morph to */
+        return morph_npresets(TSEL) != 0u;
+#endif
+    if (PAGES[i].scope == SC_TRACK && PAGES[i].graph == GR_NONE && PAGES[i].fam == FAM_EDIT &&
+        PAGES[i].id[0] >= P_FM1_ATK && PAGES[i].id[0] <= P_FM4_LEVEL && PAGES[i].title[0] != 'O')
+        return ckit;                                  /* KICK SNARE HAT PERC SHAPE (not DIGITAL's OP pages) */
     if (PAGES[i].scope == SC_TRACK && PAGES[i].id[0] >= P_LN0 && PAGES[i].id[0] <= P_LN7)
-        return TSEL->eng_req % NENGINES == ENGI_DRUM;
+        return TSEL->eng_req % NENGINES == ENGI_DRUM || (ckit && PAGES[i].id[0] == P_LN0);   /* (FMKIT: LANES) */
     if (PAGES[i].id[0] == P_FTYPE)                    /* FILTER (1.5, #104): ANALOG's */
         return ENGINES[TSEL->eng_req % NENGINES] == &ENG_ANALOG;
     if (PAGES[i].graph >= GR_FMOP && PAGES[i].graph <= GR_FMENV)
@@ -482,7 +513,14 @@ static int transport_busy(void)
 }
 static void chain_play_ui(void)
 {
-    uint32_t rc = chain_prepare();
+    uint32_t rc;
+#if RONDO_LAYOUT
+    if (arr.armed) {                                    /* RONDO: ARRANGE REC armed: PLAY plays the patterns, recorded */
+        transport_req = 1;
+        return;
+    }
+#endif
+    rc = chain_prepare();
     if (!rc) {
         ui.force = 1;
     } else if (rc >= 3u) {
@@ -537,6 +575,7 @@ static void page_entered(void)
     ui.hot_t = 0;                                /* clear the previous page's emphasis */
     ui.act = pg->graph == GR_USER ? 4u : 0u;     /* the save screen is ready for OCT+ */
     ui.tl_clean = 0;
+    ui.tl_new = 0;
     help_start();
     ui.force = 1;
 }
@@ -590,7 +629,7 @@ static uint32_t note_set_len(track_t *t, uint32_t i, uint32_t want)
  * down / up. KNOB 1 STEP, 2 LANE, 3 HIT, 4 ACC edit the cursor step. A sound load never converts the
  * steps: the grid shows a step's notes on their lanes (eng_drum.c step_lanes) and an edit makes the lane its
  * own (grid_own). Live recording on a DRUM track writes hits (seq.c rec_note) */
-static int grid_on(void) { return !ui.home && !ui.menu && !ui.confirm && cur_page()->graph == GR_ROLL && drum_track(TSEL); }
+static int grid_on(void) { return 0; }   /* RONDO: no DRUM grid (the tracker shows a kit's steps; its keys play) */
 /* SEQ > DETAIL (1.5.1, Discussion #199; params.c, between STEP and AUTOMATION): a step page as STEP (the cursor, the
  * roll's keys, the grid's lane and page keys), its knobs the cursor step's CHANCE RATCH NUDGE VEL (ui_input.c sd_turn),
  * its panel their lanes (ui_graph.c graph_detail). No state of its own: the page is what says so */
@@ -728,12 +767,10 @@ static void follow_hold(void)
 static void follow_poll(void)
 {
     uint32_t len = (uint32_t)TSEL->p[P_SLEN], want;
-    if (!song.playing || ui.home || ui.menu || ui.confirm || cur_page()->graph != GR_ROLL || drum_track(TSEL)) {
+    if (!song.playing || ui.home || ui.menu || ui.confirm || cur_page()->graph != GR_ROLL) {
         follow.hold = 0;
         return;
     }
-    if (len <= 16u)
-        return;
     if (ui.entry_open)                                 /* step entry has the keys: stay at the cursor */
         follow_hold();
     if (follow.hold) {
@@ -922,6 +959,16 @@ static uint32_t pat_from_sig(const track_t *t)
     uint32_t h = fnv(fnv(steps_sig(t), &t->p[P_SLEN], 4u * sizeof t->p[0]), &q, sizeof q);
     return h ^ motion_sig(t);
 }
+#if RONDO_LAYOUT
+/* RONDO: the PATTERN BANK switched (project.c bank_poll): an undo copy of the steps or automation was the pattern
+ * before's, so it goes (a sound's stays) */
+static void bank_dropped(void)
+{
+    if (undo.what & (UNDO_PAT | UNDO_MOT))
+        undo.trk = 0;
+    ui.force = 1;
+}
+#endif
 static void pat_from_set(uint32_t slot)             /* every track's pattern is slot's now (1..4), 0 none */
 {
     for (uint32_t k = 0; k < NTRK; k++) {
@@ -1377,6 +1424,8 @@ static void apply_preset_to(track_t *t, uint32_t pi)
             t->p[P_DIST + i] = (int16_t)(pr->fx[i] ? pr->fx[i] - 1 : FX_DEF[i]);
     }
     fm6_track_loaded(t);                              /* FM6: the preset's patch (its SLOT) */
+    if (t->eng_req % NENGINES == ENGI_CKIT)           /* RONDO: the kit's four voices */
+        ck_kit_load(t, pi);
     load_end(t);
 }
 
@@ -1441,6 +1490,8 @@ static void clean_engine_of(track_t *t)
         t->p[P_REL] = CLEAN_REL;
     }
     fm1_irq_on();
+    if (ei == ENGI_CKIT)                              /* RONDO: FMKIT's clean sound: its first kit's voices */
+        ck_kit_load(t, 0);
     if (ei == ENGI_FM6) {                             /* the init voice as the track's own patch (SLOT: OWN) */
         uint8_t v[FP_SIZE + 1u];
         fm6_unpack(FM6_INIT, v);
@@ -1502,8 +1553,54 @@ static void track_defaults(track_t *t)
 }
 
 /* switch engine (its defaults + first preset) and say so */
+static void apply_preset(uint32_t pi);
+#if RONDO_LAYOUT
+#define LIST_CLASS (2u + CAT_N - 1u)                     /* (PRESETS > LIST CLASS: list_mode below) */
+static uint32_t list_mode(void);
+static int cls_allows(uint32_t c, uint32_t cat);
+#endif
+/* the engine `steps` from e (eng_step) that has a sound the list keeps: LIST CLASS skips the engines with none of the
+ * track's class (a ROGUE's PRESETS > ENG goes FMKIT SID CHIP SAMPLE PHYS DRUM) */
+static uint32_t eng_step_listed(uint32_t e, int32_t steps)
+{
+#if RONDO_LAYOUT
+    if (list_mode() == LIST_CLASS) {
+        uint32_t c = trk_cls(song.sel), n, i, k;
+        int32_t dir = steps < 0 ? -1 : 1, left = steps < 0 ? -steps : steps;
+        for (n = 0, i = e; left && n < NENGINES; n++) {
+            const engine_t *en;
+            i = eng_step(i, dir);
+            en = ENGINES[i];
+            for (k = 0; k < en->npresets && (preset_orig(en, k) != k || !cls_allows(c, preset_cat(i, k))); k++)
+                ;
+            if (k < en->npresets && !--left)
+                return i;
+        }
+        return e;
+    }
+#endif
+    return eng_step(e, steps);
+}
 static void select_engine(uint32_t e)
 {
+#if RONDO_LAYOUT
+    if (list_mode() == LIST_CLASS) {                    /* (THE PARTY: the engine's first sound of the track's class) */
+        const engine_t *en = ENGINES[e % NENGINES];
+        uint32_t k, c = trk_cls(song.sel);
+        for (k = 0; k < en->npresets && (preset_orig(en, k) != k || !cls_allows(c, preset_cat(e % NENGINES, k))); k++)
+            ;
+        if (k >= en->npresets) {
+            ui_say(CLS_NAME[c], ": NOT ON THIS ENGINE");
+            return;
+        }
+        set_engine(e);
+        if (k)
+            apply_preset(k);
+        ui_say("ENGINE ", ENGINES[TSEL->eng_req]->name);
+        ui.force = 1;
+        return;
+    }
+#endif
     set_engine(e);
     ui_say("ENGINE ", ENGINES[TSEL->eng_req]->name);
     ui.force = 1;
@@ -1549,18 +1646,54 @@ static uint32_t preset_all_at(uint32_t n, uint32_t *k)
  * editor and backups); the PRESETS knob and page browse that list */
 #define ui_lcat (favorites.factory[15][11])
 #define LIST_N (1u + CAT_N)                              /* ALL FAV BASS LEAD PAD PLUCK KEYS DRUM FX OTHER */
+#if RONDO_LAYOUT
+/* Dungeon Tracker: LIST's first value, CLASS (the default): the sounds the selected track's class plays (cls_allows:
+ * a ROGUE drums, a FIGHTER basses, a CLERIC pads keys and plucks, a MAGE leads plucks and FX); ALL is the way out. Its
+ * mode LIST_CLASS; kept as ui_lcat 0 (ALL is 0xFF now), so a fresh unit, and one of before, starts on CLASS */
+#define LIST_ALL_MARK 0xFFu                              /* (LIST_CLASS: LIST_N, above) */
+static uint32_t list_mode(void)
+{
+    return favorites.filter ? 1u : ui_lcat == LIST_ALL_MARK ? 0u : ui_lcat && ui_lcat < CAT_N ? 1u + ui_lcat : LIST_CLASS;
+}
+static void list_set(uint32_t m)
+{
+    favorites.filter = m == 1u;
+    ui_lcat = (uint8_t)(m == 0u ? LIST_ALL_MARK : m >= 2u && m < LIST_N ? m - 1u : 0u);
+}
+static uint32_t list_pos(uint32_t m) { return m == LIST_CLASS ? 0u : m + 1u; }   /* (the knob: CLASS ALL FAV BASS ..) */
+static uint32_t list_of(uint32_t pos) { return pos ? pos - 1u : LIST_CLASS; }
+#define LIST_POSN (LIST_N + 1u)
+static const char *list_name(uint32_t m)
+{
+    return m == LIST_CLASS ? "CLASS" : m == 0u ? "ALL" : m == 1u ? "FAV" : CAT_NAME[(m - 1u) % CAT_N];
+}
+static int cls_allows(uint32_t c, uint32_t cat)
+{
+    static const uint16_t A[NCLS] = {1u << CAT_DRUM, 1u << CAT_PAD | 1u << CAT_KEYS | 1u << CAT_PLUCK | 1u << CAT_OTHER,
+                                     1u << CAT_BASS, 1u << CAT_LEAD | 1u << CAT_PLUCK | 1u << CAT_FX | 1u << CAT_OTHER};
+    return cat == CAT_NONE || ((A[c & 3u] >> cat) & 1u);   /* (an untagged sound of yours: any class) */
+}
+#else
 static uint32_t list_mode(void) { return favorites.filter ? 1u : ui_lcat && ui_lcat < CAT_N ? 1u + ui_lcat : 0u; }
 static void list_set(uint32_t m)
 {
     favorites.filter = m == 1u;
     ui_lcat = (uint8_t)(m >= 2u && m < LIST_N ? m - 1u : 0u);
 }
+static uint32_t list_pos(uint32_t m) { return m; }
+static uint32_t list_of(uint32_t pos) { return pos; }
+#define LIST_POSN LIST_N
 static const char *list_name(uint32_t m) { return m == 0u ? "ALL" : m == 1u ? "FAV" : CAT_NAME[(m - 1u) % CAT_N]; }
+#endif
 /* the category of list entry e, k (preset_all_at: NENGINES = user preset k) */
 static uint32_t sound_cat(uint32_t e, uint32_t k) { return e == NENGINES ? up_cat(k) : preset_cat(e, k); }
 static int list_keep(uint32_t e, uint32_t k)
 {
     uint32_t m = list_mode();
+#if RONDO_LAYOUT
+    if (m == LIST_CLASS)
+        return cls_allows(trk_cls(song.sel), sound_cat(e, k));
+#endif
     return m == 1u ? favorite_has(e, k) : m ? sound_cat(e, k) == m - 1u : 1;
 }
 /* the category of the sound track t plays: its user preset's, else its factory preset's (the NAME screen's default) */
@@ -1687,10 +1820,32 @@ static uint32_t eng_list_pos(uint32_t *total)
 
 static void eng_list_step(int32_t direction)         /* the next / previous sound of the engine (wraps) */
 {
-    uint32_t total, cur = eng_list_pos(&total), e = TSEL->eng_req % NENGINES, np = preset_shown(e), k, n;
+    uint32_t total, cur = eng_list_pos(&total), e = TSEL->eng_req % NENGINES, np = preset_shown(e), k, n, tries;
     if (total < 2u)
         return;
     n = (cur + (direction > 0 ? 1u : total - 1u)) % total;
+#if RONDO_LAYOUT
+    for (tries = 0; list_mode() == LIST_CLASS && tries < total; tries++) {   /* (LIST CLASS: the track's class only) */
+        uint32_t m = n, kk, ok;
+        if (m < np) {
+            for (kk = 0; preset_orig(ENGINES[e], kk) != kk || m--; kk++)
+                ;
+            ok = list_keep(e, kk);
+        } else {
+            m -= np;
+            for (kk = 0; kk < UP_SLOTS && !(up_used(kk) && up_engine(kk) == e && !m--); kk++)
+                ;
+            ok = kk < UP_SLOTS && list_keep(NENGINES, kk);
+        }
+        if (ok)
+            break;
+        n = (n + (direction > 0 ? 1u : total - 1u)) % total;
+    }
+    if (n == cur)
+        return;
+#else
+    (void)tries;
+#endif
     if (n < np) {
         for (k = 0; preset_orig(ENGINES[e], k) != k || n--; k++)   /* the n-th shown preset */
             ;
@@ -1739,15 +1894,18 @@ static const param_desc_t *home_param(uint32_t k, int16_t **vp)
 }
 
 /* select track i (KNOB 1 on TRACKS, the editor): its sound, pages and pattern from now on */
+/* RONDO's TRACKER (ui_tracker.c): each track's column, cursor row and FX parameter, the SEQ-held track picker */
+static struct { uint8_t col[NTRK], cur[NTRK], fx[NTRK], pick; } tk;
 static void track_select(uint32_t i)
 {
     if (i >= NTRK || i == song.sel)
         return;
+    tk.cur[song.sel % NTRK] = ui.cursor;         /* (RONDO: each track's tracker keeps its row) */
     song.sel = (uint8_t)i;
     ui.entry_open = 0;
     ui.hot_t = 0;
     ui.ev_keep = 0;                              /* (AUTOMATION: a row kept at its default was the other track's) */
-    ui.cursor = 0;
+    ui.cursor = (uint8_t)(tk.cur[i] < (uint32_t)clamp(trk[i].p[P_SLEN], 1, NSTEP) ? tk.cur[i] : 0u);
     ui.bank = 0;
     follow.hold = 0;                             /* (1.6, #242: the roll follows the new track's playhead) */
     sync_reload = 1;
@@ -1756,6 +1914,12 @@ static void track_select(uint32_t i)
 
 #include "ui_slice.c"                             /* EDIT > SLICES: SLICE's slices by hand (an action page too) */
 #include "ui_events.c"                            /* SEQ > AUTOMATION: locks, events, CHANCE, RATCH as a list (an action page) */
+static void cursor_move(int32_t c);                /* (ui_input.c) */
+#include "ui_tracker.c"                           /* RONDO: SEQ > TRACKER, the track picker */
+#include "ui_dice.c"                              /* RONDO: EDIT > DICE */
+#if RONDO_LAYOUT
+#include "ui_vary.c"                              /* RONDO: SEQ > VARY */
+#endif
 #include "midi_learn.c"                           /* MIDI LEARN (1.5): GLO + D4, a knob, a CC */
 
 /* ---------------------------------------------------- action pages --- */
@@ -1771,6 +1935,10 @@ static uint32_t act_cols(void)                   /* the columns that are actions
     if (ui.home)
         return 0;
     if (pg->graph == GR_EVENTS) return 16u;     /* AUTOMATION: no knob is an action; OCT+ by the row (ev_oct) */
+    if (pg->graph == GR_DICE) return 16u;       /* RONDO: DICE: OCT+ ROLL, OCT- back in HIST */
+#if RONDO_LAYOUT
+    if (pg->graph == GR_VARY) return 16u;       /* RONDO: VARY: the same */
+#endif
     if (pg->graph == GR_TOOLS) return 15u;
     if (pg->graph == GR_SONG)
         return 1u;                               /* PLAY / STOP (also the PLAY button) */
@@ -1794,6 +1962,10 @@ static uint32_t act_col(void)
 {
     if (!ui.home && cur_page()->graph == GR_SONG) return 1u;
     if (!ui.home && cur_page()->graph == GR_EVENTS) return 5u;
+    if (!ui.home && cur_page()->graph == GR_DICE) return 5u;
+#if RONDO_LAYOUT
+    if (!ui.home && cur_page()->graph == GR_VARY) return 5u;
+#endif
     return !ui.home && cur_page()->graph == GR_PATS ? 2u : ui.act;
 }
 
@@ -1802,8 +1974,13 @@ static const char *act_name(uint32_t c)          /* column c's action (the foote
     static const char *const UP_GO[3] = {"LOAD", "ERASE", "SAVE"};
     uint32_t id = cur_page()->id[c & 3u];
     if (cur_page()->graph == GR_EVENTS) return ev_act_name();
+    if (cur_page()->graph == GR_DICE) return "ROLL";
+#if RONDO_LAYOUT
+    if (cur_page()->graph == GR_VARY) return "ROLL";
+#endif
     if (cur_page()->graph == GR_TOOLS) {
         static const char *const actions[] = {"CLEAR", "INIT", "DELETE", "CLEAR"};
+        if ((c & 3u) == 0u && ui.tl_new) return "NEW";                   /* (KNOB 1 on: NEW, NEW + SOUNDS) */
         return (c & 3u) == 1u && ui.tl_clean ? "CLEAN" : actions[c & 3u];   /* (1.5.5: KNOB 2 on: CLEAN INIT) */
     }
     if (cur_page()->graph == GR_SONG)
@@ -1827,8 +2004,12 @@ static int act_ready(void)
     if (!c--)
         return 0;
     if (cur_page()->graph == GR_EVENTS) return ev_act_ready();
+    if (cur_page()->graph == GR_DICE) return 1;
+#if RONDO_LAYOUT
+    if (cur_page()->graph == GR_VARY) return !chain_busy() && !seq_is_empty(TSEL);
+#endif
     if (cur_page()->graph == GR_TOOLS)                  /* one case per column: CLEAR PAT, INIT, DELETE ROW, CLEAR SONG */
-        return !chain_busy() && (c == 0u ? !seq_is_empty(TSEL) || motion_count(TSEL) : c == 1u ? 1 :
+        return !chain_busy() && (c == 0u ? ui.tl_new || !seq_is_empty(TSEL) || motion_count(TSEL) : c == 1u ? 1 :
                                  c == 2u ? ui.song_row < chain_config.count : chain_config.count != 0u);
     if (cur_page()->graph == GR_SONG)
         return song.playing || chain_busy() || chain_config.count;
@@ -1840,9 +2021,11 @@ static int act_ready(void)
     if (cur_page()->graph == GR_SLICES)
         return slice_act_ready(c);
 #endif
-    if (cur_page()->graph == GR_SLOTS && c == 1u)       /* PROJECT ERASE: a used slot, stopped */
-        return !song.playing && project_used((uint32_t)song.g[G_SLOT] - 1u);
+    if (cur_page()->graph == GR_SLOTS && c == 1u)       /* PROJECT ERASE: a used slot, stopped (QUICK: never) */
+        return !slot_quick() && !song.playing && project_used((uint32_t)song.g[G_SLOT] - 1u);
     id = cur_page()->id[c & 3u];
+    if (id == G_LOAD && cur_page()->graph == GR_SLOTS && slot_quick())
+        return quick_used();
     if (id == G_LOAD)
         return project_used((uint32_t)song.g[G_SLOT] - 1u);
     if (id == G_SAVE)

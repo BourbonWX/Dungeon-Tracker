@@ -55,10 +55,23 @@ static const char *const N_NOTE[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", 
 static const char *const N_DASH[] = {"--"};
 static const char *const N_RTYPE[] = {"ROOM", "SPRING", "HALL"};   /* G_RTYPE: the reverb bus's model (fx.c) */
 static const char *const N_GO[] = {"--", "GO"};
+#if RONDO_LAYOUT                                 /* SAVE > PROJECT's SLOT (1.0.1: QUICK first; Dungeon Tracker: A..K) */
+static const char *const N_PSLOT[] = {"Q", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"};
+#else
+static const char *const N_PSLOT[] = {"Q", "A", "B", "C", "D"};   /* SAVE > PROJECT's SLOT (1.0.1: QUICK first) */
+#endif
 static const char *const N_SLCR[] = {"OFF", "GATE", "STUT"};             /* SL_OFF .. SL_STUT (slicer.c) */
 static const char *const N_SLDIV[] = {"1/8", "1/16", "1/32", "8T", "16T", "32T"};   /* SL_DEN */
 /* the INSERT's types (1.5, fx.c IT_*; append-only: stored). Its three values A B C mean what the type says (ins_desc) */
-static const char *const N_ITYPE[] = {"OFF", "SOFT", "HARD", "FOLD", "FUZZ", "CRUSH", "PHASR", "FLANG", "CHOR"};
+static const char *const N_ITYPE[] = {"OFF", "SOFT", "HARD", "FOLD", "FUZZ", "CRUSH", "PHASR", "FLANG", "CHOR",
+#if RONDO_LAYOUT
+                                     "FILTR", "DUCK", "REPT",   /* RONDO: the last three (fx.c ins_filter ..) */
+#endif
+                                     };
+/* RONDO: FILTR's MODE (the outputs blended LP -> BP -> HP), REPT's RATE and PITCH (a pass), over the range in even parts */
+static const char *const N_IMODE[] = {"LP", "LP+BP", "BP", "BP+HP", "HP", 0};
+static const char *const N_IREP[] = {"1/8", "1/8T", "1/16", "1/16T", "1/32", "1/64", 0};
+static const char *const N_IPIT[] = {"-4", "-3", "-2", "-1", "0", "+1", "+2", "+3", "+4", 0};
 /* CRUSH: BITS 1..16 and RATE (the held sample's rate, fx.c INS_HOLD) over the range in 16 even parts (0-terminated) */
 static const char *const N_IBITS[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
                                       "16", 0};
@@ -70,14 +83,12 @@ static const char *const N_IRATE[] = {"689", "919", "1.1k", "1.4k", "1.8k", "2.2
 static const char *const N_MSRC[] = {"OFF", "LFO", "ENV", "VEL", "KEY", "RAND", "MODW", "AT", "EXPR", "S&H", "SLEW"};
 static const char *const N_MDST[] = {"OFF", "PITCH", "CUT", "SHP", "AMP", "PAN", "DIST", "CHO", "DLY", "REV", "RATE",
                                      "VIB", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "DEPTH", "VEL", "TIME"};
-static const char *const N_ENGNAME[] = {"ANALOG", FELUCCA_FM4 ? "DIGITAL" : "-", "PHASE", "LOFI", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN", "PHYS",
+static const char *const N_ENGNAME[] = {"ANALOG", FELUCCA_FM4 ? "DIGITAL" : "-", "PHASE", "CHIP", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN", "PHYS",
                                              "DRUM", "NOISE", "FM6",
-#if FELUCCA_SLICE
-                                             "SLICE",
-#endif
-#if FELUCCA_ADPCM
-                                             "ADPCM",
-#endif
+                                             FELUCCA_SLICE ? "SLICE" : "-",
+                                             "FMKIT", "FMTONE",   /* RE-1: 14, 15 (the editor picks engines by these) */
+                                             "WAVES",             /* Dungeon Tracker: 16 */
+                                             "SID",               /* 1.3: 17 */
 };
 
 #define PD(l, f, mn, mx, df) {l, f, mn, mx, df, 0, 0}
@@ -173,17 +184,21 @@ static const param_desc_t TP[P_COUNT] = {
 /* the INSERT's A B C as its TYPE means them (TP's ranges and defaults): the drives DRIVE TONE LEVEL, CRUSH BITS RATE
  * LPF, the swept ones RATE DEPTH FDBK; OFF TP's own */
 #define PU(l, f, df, n, u) {l, f, 0, 127, df, n, u}
-static const param_desc_t INS_DESC[3][3] = {
+static const param_desc_t INS_DESC[6][3] = {
     {PU("DRIVE", F_PCT, 64, 0, 0), PU("TONE", F_CUTOFF, 96, 0, 0), PU("LEVEL", F_DB, 96, 0, 0)},
     {PU("BITS", F_INT, 64, N_IBITS, 0), PU("RATE", F_INT, 96, N_IRATE, "Hz"), PU("LPF", F_CUTOFF, 96, 0, 0)},
     {PU("RATE", F_LFOHZ, 64, 0, 0), PU("DEPTH", F_PCT, 96, 0, 0), PU("FDBK", F_PCT, 96, 0, 0)},
+    {PU("CUT", F_CUTOFF, 80, 0, 0), PU("RES", F_PCT, 40, 0, 0), PU("MODE", F_INT, 0, N_IMODE, 0)},       /* RONDO FILTR */
+    {PU("DEPTH", F_PCT, 100, 0, 0), PU("REL", F_TIME, 50, 0, 0), PU("SHAPE", F_PCT, 40, 0, 0)},       /* DUCK */
+    {PU("RATE", F_INT, 53, N_IREP, 0), PU("DECAY", F_PCT, 0, 0, 0), PU("PITCH", F_INT, 64, N_IPIT, "st")},   /* REPT */
 };
 #undef PU
 static const param_desc_t *ins_desc(int32_t type, uint32_t k)
 {
     if (type <= 0 || type >= (int32_t)NELEM(N_ITYPE))
         return &TP[P_IA + k];
-    return &INS_DESC[type < 5 ? 0 : type == 5 ? 1 : 2][k];   /* (IT_SOFT .. IT_FUZZ, IT_CRUSH, the swept ones) */
+    return &INS_DESC[type < 5 ? 0 : type == 5 ? 1 : type < 9 ? 2 : type - 6][k];   /* (IT_SOFT .. IT_FUZZ, IT_CRUSH, the
+                                                                               * swept ones; RONDO: FILTR DUCK REPT) */
 }
 
 static const param_desc_t GP[G_COUNT] = {
@@ -208,12 +223,16 @@ static const param_desc_t GP[G_COUNT] = {
      * stored with the project as before. (was "--": stored 0 = CH1-4, as MIDI IN always was) */
     [G_ROUTE] = PE("ROUT", N_ROUTE, 0),
     [G_INFO] = PD("CPU", F_INT, 0, 0, 0),
-    [G_SLOT] = PD("SLOT", F_INT, 1, 4, 1),
+    [G_SLOT] = PE("SLOT", N_PSLOT, 1),            /* 1.0.1: Q (QUICK: the autosave), then A-D */
     [G_NAME] = PE("NAME", N_DASH, 0),
     [G_LOAD] = PE("LOAD", N_GO, 0),
     [G_SAVE] = PE("SAVE", N_GO, 0),
     [G_ENGSEL] = PE("ENG", N_ENGNAME, 0),
+#if RONDO_LAYOUT
+    [G_ENGGO] = PD("MFX", F_INT, 0, 4095, 0),     /* RONDO: the FX layer's KNOB 1..4 effects (perform.c mk_eff), 3 bits each */
+#else
     [G_ENGGO] = PE("SET", N_GO, 0),
+#endif
     [G_CLRSEQ] = PE("CLRSQ", N_GO, 0),
     [G_INITSND] = PE("INIT", N_GO, 0),
     /* the reverb's model on the REVERB page: the id of the old GM drum channel (G_DRCH, inert since 1.0) */
@@ -225,8 +244,26 @@ static const param_desc_t GP[G_COUNT] = {
     [G_DRREV] = PD("-", F_INT, 0, 0, 0),
 };
 
+/* RONDO: the TRACKER's commands (core.h CMD_*) as the FX column and AUTOMATION name and step them */
+static const char *const N_CSPD[] = {"x1", "1/2", "x2"};
+static const char *const N_CLOOP[] = {"1x1", "1x2", "1x3", "1x4", "1x5", "1x6", "1x7", "1x8", "2x1", "2x2", "2x3", "2x4",
+                                      "2x5", "2x6", "2x7", "2x8", "4x1", "4x2", "4x3", "4x4", "4x5", "4x6", "4x7", "4x8",
+                                      "8x1", "8x2", "8x3", "8x4", "8x5", "8x6", "8x7", "8x8"};
+static const param_desc_t CMD_DESC[NCMD] = {
+    {"SPEED", F_ENUM, 0, 2, 0, N_CSPD, 0},
+    {"LOOP", F_ENUM, 0, 31, 0, N_CLOOP, 0},
+    {"PITCH", F_SEMI, -12, 12, 0, 0, 0},
+    {"MORPH", F_PCT, 0, 100, 0, 0, 0},
+};
 static const param_desc_t *track_desc(const track_t *t, uint32_t id)
 {
+    if (cmd_id(id))
+        return &CMD_DESC[id - P_COUNT];
+    if (t->eng_req % NENGINES == ENGI_CKIT && id < P_E0) {   /* RONDO: FMKIT's voice values (eng_cycle.c) */
+        const param_desc_t *d = ck_param_desc(id);
+        if (d)
+            return d;
+    }
     if (id >= P_E0 && id <= P_E7) {                   /* the engine asked for (t->engine follows after a fade) */
         const engine_t *e = ENGINES[eng_idx(t->eng_req)];
         const param_desc_t *d = e->desc ? e->desc(t, id - P_E0) : 0;   /* a mode-dependent label / names */
@@ -243,6 +280,8 @@ static const param_desc_t *track_desc(const track_t *t, uint32_t id)
  * only; range and default are the same): what the editor protocol, user presets and projects use */
 static const param_desc_t *param_desc_of(uint32_t e, uint32_t id)
 {
+    if (cmd_id(id))
+        return &CMD_DESC[id - P_COUNT];                /* (RONDO: a TRACKER command, core.h) */
     return id >= P_E0 ? &ENGINES[e]->edit[id - P_E0] : &TP[id];
 }
 
@@ -437,7 +476,7 @@ enum { FAM_HOME, FAM_ENV, FAM_LFO, FAM_FX, FAM_SCL, FAM_EDIT, FAM_GLO, FAM_SAVE,
 enum { SC_TRACK, SC_GLOBAL, SC_ENGINE, SC_STEP, SC_TRK };   /* SC_TRK: the TRACKS page (ui_input.c tracks_edit) */
 enum { GR_NONE, GR_ADSR, GR_LFO, GR_STEPS, GR_ARP, GR_SCALE, GR_FX, GR_ROLL, GR_BROWSE, GR_SLOTS, GR_USER, GR_TRK,
        GR_SLCR, GR_MOD, GR_PATS, GR_SONG, GR_TOOLS, GR_CHORD, GR_SLICES, GR_EVENTS,
-       GR_FMOP, GR_FMOP2, GR_FMENV, GR_INS };   /* (GR_STEPS: SEQ TOOLS' knobs; GR_FMOP..: FM6's operator pages, ui_fm6op.c) */
+       GR_FMOP, GR_FMOP2, GR_FMENV, GR_INS, GR_DICE, GR_MFX, GR_VARY, GR_MORPH };   /* (GR_DICE: RONDO's EDIT > DICE, ui_dice.c) */   /* (GR_STEPS: SEQ TOOLS' knobs; GR_FMOP..: FM6's operator pages, ui_fm6op.c) */
 
 typedef struct {
     const char *title;
@@ -456,7 +495,14 @@ static const page_t PAGES[] = {
     {"FX", FAM_FX, SC_TRACK, GR_FX, {P_DIST, P_CHOR, P_DLY, P_REV}},
     {"SLICER", FAM_FX, SC_TRACK, GR_SLCR, {P_SLCR, P_SLPAT, P_SLRATE, P_SLDEPTH}},
     {"INSERT", FAM_FX, SC_TRACK, GR_INS, {P_ITYPE, P_IA, P_IB, P_IC}},   /* 1.5: the track's INSERT (fx.c) */
+#if RONDO_LAYOUT
+    {"INSERT 2", FAM_FX, SC_TRACK, GR_INS, {P_IA, P_IB, P_IC, P_IMIX}},  /* RONDO: the four to ride (hold ARP: the same) */
+#else
     {"INSERT 2", FAM_FX, SC_TRACK, GR_INS, {P_IMIX, 0xFF, 0xFF, 0xFF}},  /* .. its dry / wet */
+#endif
+#if RONDO_LAYOUT
+    {"MASTER", FAM_FX, SC_GLOBAL, GR_MFX, {0xFF, 0xFF, 0xFF, 0xFF}},   /* RONDO: KNOB k the effect FX + KNOB k rides (perform.c) */
+#endif
     {"DLY", FAM_FX, SC_GLOBAL, GR_NONE, {G_DTIME, G_DFDBK, G_DCOLOR, G_DMIX}},
     {"REVERB", FAM_FX, SC_GLOBAL, GR_NONE, {G_RTYPE, G_RSIZE, G_RDAMP, 0xFF}},   /* TYPE: ROOM / SPRING / HALL */
     {"CHORUS", FAM_FX, SC_GLOBAL, GR_NONE, {G_CRATE, G_CDEPTH, 0xFF, 0xFF}},
@@ -464,7 +510,17 @@ static const page_t PAGES[] = {
     {"CHORD", FAM_SCL, SC_TRACK, GR_CHORD, {P_CHRD, P_VOIC, 0xFF, 0xFF}},   /* SCL again: the chord keys (chord.c) */
     {"EDIT 1", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E0, P_E1, P_E2, P_E3}},
     {"EDIT 2", FAM_EDIT, SC_ENGINE, GR_NONE, {P_E4, P_E5, P_E6, P_E7}},
+    {"DICE", FAM_EDIT, SC_TRACK, GR_DICE, {0xFF, 0xFF, 0xFF, 0xFF}},   /* RONDO: FMTONE / FMKIT / CHIP only (ui_dice.c) */
+#if RONDO_LAYOUT
+    {"MORPH", FAM_EDIT, SC_TRACK, GR_MORPH, {0xFF, 0xFF, 0xFF, 0xFF}},  /* RONDO: SOUND MORPH: TARGET AMOUNT (morph.c) */
+#endif
     {"FILTER", FAM_EDIT, SC_TRACK, GR_NONE, {P_FTYPE, P_E4, P_E5, P_E7}},   /* ANALOG only (1.5, #104): TYPE CUT RES KTR */
+    /* RONDO: FMKIT's voices (eng_cycle.c), each PITCH DECAY COLOR SWEEP, then the four SHAPEs (FMKIT only: ui.c) */
+    {"KICK", FAM_EDIT, SC_TRACK, GR_NONE, {P_FM1_ATK, P_FM1_DEC, P_FM1_SUS, P_FM1_REL}},
+    {"SNARE", FAM_EDIT, SC_TRACK, GR_NONE, {P_FM2_ATK, P_FM2_DEC, P_FM2_SUS, P_FM2_REL}},
+    {"HAT", FAM_EDIT, SC_TRACK, GR_NONE, {P_FM3_ATK, P_FM3_DEC, P_FM3_SUS, P_FM3_REL}},
+    {"PERC", FAM_EDIT, SC_TRACK, GR_NONE, {P_FM4_ATK, P_FM4_DEC, P_FM4_SUS, P_FM4_REL}},
+    {"SHAPE", FAM_EDIT, SC_TRACK, GR_NONE, {P_FM1_LEVEL, P_FM2_LEVEL, P_FM3_LEVEL, P_FM4_LEVEL}},
     {"LANES", FAM_EDIT, SC_TRACK, GR_NONE, {P_LN0, P_LN1, P_LN2, P_LN3}},   /* DRUM only: the lane levels */
     {"LANES 2", FAM_EDIT, SC_TRACK, GR_NONE, {P_LN4, P_LN5, P_LN6, P_LN7}},
     {"SLICES", FAM_EDIT, SC_TRACK, GR_SLICES, {0xFF, 0xFF, 0xFF, 0xFF}},   /* SLICE only: the slices by hand (ui_slice.c) */
@@ -491,11 +547,12 @@ static const page_t PAGES[] = {
     {"TOOLS", FAM_SAVE, SC_GLOBAL, GR_TOOLS, {G_CLRSEQ, G_INITSND, 0xFF, 0xFF}},
     {"ARP", FAM_ARP, SC_TRACK, GR_ARP, {P_AMODE, P_ARATE, P_AOCT, P_AGATE}},
     {"ARP 2", FAM_ARP, SC_TRACK, GR_NONE, {P_ASWING, P_APROB, P_AHOLD, P_AORDER}},
-    {"STEP", FAM_SEQ, SC_STEP, GR_ROLL, {0, 1, 2, 3}},
-    {"DETAIL", FAM_SEQ, SC_STEP, GR_ROLL, {0, 1, 2, 3}},   /* 1.5.1 (#199): the cursor step's CHANCE RATCH NUDGE VEL
-                                                             * (ui.c detail_on, ui_input.c sd_turn) */
+    {"TRACKER", FAM_SEQ, SC_STEP, GR_ROLL, {0, 1, 2, 3}},   /* RONDO (ui_tracker.c): in place of Felucca's STEP and DETAIL */
     {"AUTOMATION", FAM_SEQ, SC_TRACK, GR_EVENTS, {0xFF, 0xFF, 0xFF, 0xFF}},  /* the locks, events, CHANCE and RATCH as a
                                                                              * list, PLAY and CLEAR (ui_events.c) */
+#if RONDO_LAYOUT
+    {"VARY", FAM_SEQ, SC_TRACK, GR_VARY, {0xFF, 0xFF, 0xFF, 0xFF}},        /* RONDO: sequence dice (ui_vary.c) */
+#endif
     /* HOME's pages (1.2): HOME tapped on HOME the MIXER (up to 1.1.5 GLO's; LEVEL PAN REV MUTE), again CLOCK (up to 1.1.5
      * GLO > GLOBAL; its TUNE is MENU > AUDIO's now), again HOME (ui.c home_tap) */
     {"MIXER", FAM_TRK, SC_TRK, GR_TRK, {0, 1, 2, 3}},

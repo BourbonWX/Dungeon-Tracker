@@ -38,25 +38,19 @@ typedef struct { const char *text; uint8_t kind; } menu_credit_t;
 static const menu_credit_t MENU_CREDITS[] = {
     {"H\xFCgelton Instruments", MC_TITLE},  /* Felucca's own: above; these are ours too */
     {"Leo Kuroshita", MC_TEXT},
-    {"The DRUM engine: GPL-3.0", MC_TEXT},
+    {"The PHASE and DRUM engines: GPL-3.0", MC_TEXT},
     {"The Sample Pack: CC0", MC_TEXT},
-    {"Felucca-Engines (ANALOG LOFI TRIO WHEEL NOISE PHASE): MIT", MC_TEXT},
     {"Fukiai icon font: MIT", MC_TEXT},
     {"https://github.com/hugelton", MC_URL},
     {"", MC_TEXT},
-    {"FELUCCA-BSP", MC_TITLE},
-    {"The hardware layer: Leo Kuroshita, Charles Vestal, Kerem Kilic and others (its NOTICE) / MPL-2.0", MC_TEXT},
-    {"https://github.com/hugelton/felucca-bsp", MC_URL},
+    {"AMBIKA", MC_TITLE},                     /* 1.1: WAVES */
+    {"Emilie Gillet / GPL-3.0", MC_TEXT},
+    {"https://github.com/pichenettes/ambika", MC_URL},
     {"", MC_TEXT},
     {"KLATTSCH", MC_TITLE},
     {"Tony Gies / MIT", MC_TEXT},
     {"https://github.com/tgies/klattsch", MC_URL},
     {"", MC_TEXT},
-#if FELUCCA_ADPCM
-    {"ADPCM DSP", MC_TITLE},
-    {"Shay Green, ported by ugotworms / LGPL-2.1+", MC_TEXT},
-    {"", MC_TEXT},
-#endif
     {"DAISYSP", MC_TITLE},
     {"Electrosmith, Emilie Gillet", MC_TEXT},
     {"MIT", MC_TEXT},
@@ -122,8 +116,8 @@ static int32_t menu_document(int32_t y, int draw)
 {
     uint32_t i;
     if (draw) {
-        cv_text(6, y + 2, &AF_L, "FELUCCA", T_THEME);
-        cv_text(6, y + 38, &AF_S, "Multi-engine synthesizer", T_TEXT);
+        cv_text(6, y + 2, &AF_L, "DUNGEON", T_THEME);   /* (Dungeon Tracker: a fork of Felucca, credited below) */
+        cv_text(6, y + 38, &AF_S, "TRACKER, a Felucca fork", T_TEXT);
         cv_text(6, y + 58, &AF_M, FELUCCA_VERSION, T_THEME);
         cv_text_r(232, y + 61, &AF_S, __DATE__, T_MID, T_BG);
         cv_text(6, y + 82, &AF_S, "(C) 2026 Leo Kuroshita", T_TEXT);
@@ -145,7 +139,7 @@ static int32_t menu_document(int32_t y, int draw)
         else y = menu_text(text, y, c->kind == MC_TITLE ? T_THEME : c->kind == MC_URL ? T_MID : T_TEXT, draw);
     }
     y = menu_text("LICENSES + SOURCE", y + 12, T_THEME, draw);
-    y = menu_text("Felucca: GPL-3.0-only; Felucca-Engines MIT; felucca-bsp MPL-2.0; the Sample Pack CC0", y, T_TEXT, draw);
+    y = menu_text("DRUM + own samples: GPL-3.0-only", y, T_TEXT, draw);
     y = menu_text("Fonts and icons: their licences travel with the source and the release files.", y, T_TEXT, draw);
     y = menu_text("NO WARRANTY", y, T_TEXT, draw);
     y = menu_text("Full notices in source:", y + 8, T_TEXT, draw);
@@ -197,7 +191,11 @@ static void menu_head(void)
  *                   CLOSE is in the header: the four would not fit in S (cv_key_row drops words, from the last)
  * Drawn in two bands (the canvas holds 124 rows) split in a gap between two rows; while the tabs slide only their
  * strip (24..58) is drawn again */
-static const uint16_t MTAB_ICON[MTAB_COUNT] = {ICON_X_EYE, ICON_X_KNOB, ICON_X_SPEAKER, ICON_MIDI, ICON_X_COG};
+static const uint16_t MTAB_ICON[MTAB_COUNT] = {ICON_X_EYE, ICON_X_KNOB, ICON_X_SPEAKER, ICON_MIDI, ICON_X_COG,
+#if RONDO_LAYOUT
+                                                ICON_PROB,     /* RONDO: GAME, the dice of the dungeon */
+#endif
+                                                };
 #define MT_Y 29                                        /* the tab bar */
 #define MT_H 24
 #define MT_IW 26                                       /* a cushion with its icon alone (the icon centred in it; 1.2, five
@@ -253,10 +251,15 @@ static void mt_layout(int32_t *a, int32_t *x, int32_t *w)
         w[k] = MT_IW + (MT_NX - MT_IW + text_w(mt_font(), MTAB_NAME[k]) + 10) * a[k] / MT_ONE;
         tot += w[k];
     }
-    cum = MT_X0 + HALF_UP(MT_X1 - MT_X0 - tot - (int32_t)(MTAB_COUNT - 1u) * MT_GAP);   /* (the bar centred) */
-    for (k = 0; k < MTAB_COUNT; k++) {                 /* the same gap between every two, sliding too */
-        x[k] = cum;
-        cum += w[k] + MT_GAP;
+    {   /* RONDO: six tabs (GAME): the gaps narrow where the bar would not fit (MENU > LARGE, CONTROL shown), never below 2 */
+        int32_t gap = MT_GAP, room = MT_X1 - MT_X0 - tot;
+        if (room < gap * (int32_t)(MTAB_COUNT - 1u))
+            gap = room / (int32_t)(MTAB_COUNT - 1u) < 2 ? 2 : room / (int32_t)(MTAB_COUNT - 1u);
+        cum = MT_X0 + HALF_UP(MT_X1 - MT_X0 - tot - (int32_t)(MTAB_COUNT - 1u) * gap);   /* (the bar centred) */
+        for (k = 0; k < MTAB_COUNT; k++) {             /* the same gap between every two, sliding too */
+            x[k] = cum;
+            cum += w[k] + gap;
+        }
     }
 }
 static void menu_tabs(void)                            /* (in screen rows: cv_oy set by the caller) */
@@ -326,7 +329,7 @@ static void menu_row(uint32_t k, uint32_t row)
         cv_text_r(MR_VR, vy, &AF_M, b, val, bg);
         return;
     }
-    if (row >= MI_VALUES) {                            /* CALIBRATION, ABOUT: OCT+ opens them */
+    if (MI_ACTION(row)) {                              /* CALIBRATION, ABOUT: OCT+ opens them */
         GFX_HOOK_ALIGN(0, y, 0, y + h, AL_V, "menu row chevron centred up/down");
         cv_icon_in(MR_VR - 12, y, 0, h, 12, ICON_X_RIGHT, sel ? T_INK : T_MID, bg);
         return;
@@ -417,9 +420,14 @@ static uint32_t menu_split(uint32_t n)
 }
 static void draw_menu(void)
 {
-    static const khint_t KEYS[3][3] = {{{KC_ALGO, "TAB"}, {KC_PRESETS, "ROW"}, {KC_OCTPM, "VALUE"}},
-                                       {{KC_ALGO, "TAB"}, {KC_PRESETS, "ROW"}, {KC_OCTUP, "OPEN"}},
-                                       {{KC_ALGO, "TAB"}, {KC_PRESETS, "ROW"}, {KC_OCTUP, "CLEAR"}}};
+#if RONDO_LAYOUT
+#define MKC_ROW KC_SELECT                              /* (Dungeon Tracker: SELECT walks the rows; PRESETS still does) */
+#else
+#define MKC_ROW KC_PRESETS
+#endif
+    static const khint_t KEYS[3][3] = {{{KC_ALGO, "TAB"}, {MKC_ROW, "ROW"}, {KC_OCTPM, "VALUE"}},
+                                       {{KC_ALGO, "TAB"}, {MKC_ROW, "ROW"}, {KC_OCTUP, "OPEN"}},
+                                       {{KC_ALGO, "TAB"}, {MKC_ROW, "ROW"}, {KC_OCTUP, "CLEAR"}}};
     uint32_t pass, k, first, n, split, sig;
     int32_t pos0 = mt.pos;
     if (ui.menu == 1)
@@ -473,7 +481,7 @@ static void draw_menu(void)
             cv_blit(0, H_HEAD + pass * 124u);
         }
         cv_begin(240, 240 - (H_HEAD + MENU_DOC_H), T_BG);
-        cv_key_hint(8, 4, KC_PRESETS, "SCROLL", 1, T_BG);
+        cv_key_hint(8, 4, MKC_ROW, "SCROLL", 1, T_BG);
         cv_blit(0, H_HEAD + MENU_DOC_H);
         return;
     }
@@ -506,6 +514,9 @@ static void enc_drop(void)                             /* knob turns nobody take
 
 static void menu_close(void)
 {
+#if RONDO_LAYOUT
+    party_menu_closed();                               /* (THE PARTY over its points: as it was) */
+#endif
     settings_save();                                   /* palette / panel table, if changed */
     ui.menu = 0;
     ui.force = 1;
@@ -516,6 +527,26 @@ static void menu_close(void)
  * last picked in it), any of KNOB 1..4 or OCT+ / OCT- change a value (menu_items.c menu_step), OCT+ opens CALIBRATION /
  * INFO / ABOUT (OCT- nothing there); OCT- in INFO and ABOUT goes back to the tabs. HOME closes it, from them too
  * (ui_input.c) */
+/* SELECT (Dungeon Tracker): one knob through the whole menu, a row a detent, from a tab's last row on to the next
+ * tab's first (and back), round */
+static void menu_walk(int32_t s)
+{
+    uint32_t t = menu_tab(), f = mtab_first(t), n = mtab_rows(t), r = ui.menu_sel - f;
+    if (s > 0) {
+        if (r + 1u < n) {
+            ui.menu_sel++;
+        } else {
+            t = (t + 1u) % MTAB_COUNT;
+            ui.menu_sel = (uint8_t)mtab_first(t);
+        }
+    } else if (r) {
+        ui.menu_sel--;
+    } else {
+        t = (t + MTAB_COUNT - 1u) % MTAB_COUNT;
+        ui.menu_sel = (uint8_t)(mtab_first(t) + mtab_rows(t) - 1u);
+    }
+    ui.menu_row[menu_tab()] = (uint8_t)(ui.menu_sel - mtab_first(menu_tab()));
+}
 static void menu_move(int32_t s)                       /* PRESETS: the next / previous row of the tab */
 {
     uint32_t t = menu_tab(), f = mtab_first(t), n = mtab_rows(t), k = (ui.menu_sel - f + (s > 0 ? 1u : n - 1u)) % n;
@@ -538,7 +569,8 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
                                                         * the tabs */
         if (dn)
             ui.menu = 1, ui.force = 1;
-        else if (ui.menu == 2 && (s = panel_enc(EN_PRESET)) != 0)
+        else if (ui.menu == 2 && (s = panel_enc(EN_PRESET) + (RONDO_LAYOUT ? panel_enc(EN_SELECT) : 0)) != 0)   /* (Dungeon
+                                                         * Tracker: SELECT too) */
             ui.menu_scroll = (uint16_t)clamp((int32_t)ui.menu_scroll + clamp(s, -128, 128) * 18, 0, menu_scroll_max());
         enc_drop();
         return;
@@ -547,6 +579,11 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         menu_move(s);
     if ((s = panel_enc(EN_ALGO)) != 0)
         menu_tab_go(s);
+#if RONDO_LAYOUT
+    if ((s = panel_enc(EN_SELECT)) != 0)              /* Dungeon Tracker: SELECT walks every row, tab to tab */
+        for (k = (uint32_t)(s > 0 ? s : -s); k; k--)
+            menu_walk(s);
+#endif
     for (s = 0, k = 0; k < 4u; k++)                    /* KNOB 1..4, any of them */
         s += panel_enc(EN_K1 + k);
     if (menu_valued(ui.menu_sel)) {

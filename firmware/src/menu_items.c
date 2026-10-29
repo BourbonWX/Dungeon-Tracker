@@ -19,7 +19,14 @@ enum { MI_COLOR, MI_STYLE, MI_LARGE, MI_ANIM, MI_LEDS, MI_SCROFF, MI_SCOPE, MI_H
 #if FELUCCA_CPU2
        MI_CPU2,                                        /* (not in a FELUCCA_CPU2=0 build: core.h) */
 #endif
-       MI_PANEL, MI_INFO, MI_ABOUT, MI_COUNT };
+       MI_PANEL, MI_INFO, MI_ABOUT,
+#if RONDO_LAYOUT
+       MI_GAME,                                        /* RONDO: GAME > DUNGEON OFF / ON (ui_dungeon.c), in a tab of its own
+                                                        * after SYSTEM (the action rows before it keep their places) */
+       MI_CLS1, MI_CLS2, MI_CLS3, MI_CLS4,             /* Dungeon Tracker: THE PARTY, T1..T4's classes (core.h) */
+       MI_PARTY,                                       /* .. and its points (shown only) */
+#endif
+       MI_COUNT };
                                                        /* (1.1: the metronome's rows in AUDIO; 1.2: RESTORE LAST in
                                                         * SYSTEM, SCALE LEDS STEP PREVIEW CHORD ENTRY in CONTROL, SCOPE in
                                                         * DISPLAY, TUNE in AUDIO, MIDI IN in MIDI, INFO in SYSTEM;
@@ -32,7 +39,14 @@ enum { MI_COLOR, MI_STYLE, MI_LARGE, MI_ANIM, MI_LEDS, MI_SCROFF, MI_SCOPE, MI_H
 #else
 #define MI_TEXT(row) 0
 #endif
-static int menu_valued(uint32_t row) { return row < MI_VALUES && row != MI_LCLEAR; }   /* (a row with a value) */
+#if RONDO_LAYOUT
+#define MI_IS_GAME(row) ((row) >= MI_GAME)
+#define MI_CLS(row) ((row) >= MI_CLS1 && (row) <= MI_CLS4)
+#else
+#define MI_IS_GAME(row) 0
+#endif
+#define MI_ACTION(row) ((row) >= MI_VALUES && !MI_IS_GAME(row))   /* CALIBRATION, INFO, ABOUT: OCT+ opens them */
+static int menu_valued(uint32_t row) { return (row < MI_VALUES && row != MI_LCLEAR) || MI_IS_GAME(row); }   /* (a row with a value) */
 #define MI_PROJECT(row) ((row) == MI_TUNE || ((row) >= MI_MIDIIN && (row) <= MI_TCH4))   /* the project's values (song.g,
                                                                                          * song.mch), not settings */
 #define MI_TCH(row) ((row) >= MI_TCH1 && (row) <= MI_TCH4)   /* 1.5.5 (#202): T1..T4 CHANNEL, MIDI IN TRACK's */
@@ -45,16 +59,28 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "STYLE", "LARGE", "ANIM",
                                               "2ND CORE",
 #endif
                                               "CALIBRATION", "INFO",
-                                              "ABOUT"};
+                                              "ABOUT",
+#if RONDO_LAYOUT
+                                              "DUNGEON", "T1", "T2", "T3", "T4", "PARTY",
+#endif
+                                              };
 /* 1.0.5: the MENU's tabs (ui_menu.c: ALGORITHM steps between them, PRESETS among one tab's rows; the editor gets a
  * row's tab after its MENU_DESC reply). A tab's rows follow each other in MI order (tests/ui_test.c checks it); at
  * most MTAB_ROWS each (the page does not scroll: ui_menu.c fits them; 1.2: 7, the rows of such a tab 21 px; 1.3: 8,
  * 18 px). A new row
  * joins a tab here. Tabs are in the order the device shows them; a tab's index is what the editor is told, not an id
  * (1.2: MIDI came in before SYSTEM, SYSTEM's index 3 -> 4) */
-enum { MTAB_DISPLAY, MTAB_CONTROL, MTAB_AUDIO, MTAB_MIDI, MTAB_SYSTEM, MTAB_COUNT };
+enum { MTAB_DISPLAY, MTAB_CONTROL, MTAB_AUDIO, MTAB_MIDI, MTAB_SYSTEM,
+#if RONDO_LAYOUT
+       MTAB_GAME,                                      /* RONDO: the dungeon's game (MI_GAME) */
+#endif
+       MTAB_COUNT };
 #define MTAB_ROWS 8u
-static const char *const MTAB_NAME[MTAB_COUNT] = {"DISPLAY", "CONTROL", "AUDIO", "MIDI", "SYSTEM"};
+static const char *const MTAB_NAME[MTAB_COUNT] = {"DISPLAY", "CONTROL", "AUDIO", "MIDI", "SYSTEM",
+#if RONDO_LAYOUT
+                                                  "GAME",
+#endif
+                                                  };
 static const uint8_t MI_TAB[MI_COUNT] = {
     MTAB_DISPLAY, MTAB_DISPLAY, MTAB_DISPLAY, MTAB_DISPLAY, MTAB_DISPLAY,   /* COLOR STYLE LARGE ANIM LEDS */
     MTAB_DISPLAY,                                                           /* SCREEN OFF (1.1.5) */
@@ -77,6 +103,10 @@ static const uint8_t MI_TAB[MI_COUNT] = {
     MTAB_SYSTEM,                                                            /* 2ND CORE (1.6.1) */
 #endif
     MTAB_SYSTEM, MTAB_SYSTEM, MTAB_SYSTEM,                                  /* CALIBRATION, INFO (1.2), ABOUT */
+#if RONDO_LAYOUT
+    MTAB_GAME,                                                              /* RONDO: DUNGEON */
+    MTAB_GAME, MTAB_GAME, MTAB_GAME, MTAB_GAME, MTAB_GAME,                  /* Dungeon Tracker: T1..T4, PARTY */
+#endif
 };
 /* TUNE: the project's tuning in cents (G_TUNE, -50..+50); as a row its values 0..TUNE_N - 1 (value - TUNE_MIN). The
  * editor gets it as a number (EDM_INT: the cents, min..max, its unit) */
@@ -142,7 +172,7 @@ static const char *const SCROFF_N[5] = {"NEVER", "5 MIN", "15 MIN", "30 MIN", "6
 static const char *const ANIM_N[3] = {"ON", "OFF", "IDLE"};
 static const uint8_t ANIM_ORD[3] = {1, 0, 2};          /* (a value's place in the menu's order, and back: its own inverse) */
 /* 1.3 (Discussions #112, #134): what HOME shows under its cards (ui.c ui_home_view): the scope, or the four tracks */
-static const char *const HOME_N[HV_COUNT] = {"SCOPE", "TRACKS", "LEVELS"};   /* (1.5, #134: LEVELS) */
+static const char *const HOME_N[HV_COUNT] = {"DUNGEON", "TRACKS", "LEVELS"};   /* (1.5, #134: LEVELS) */
 
 /* MENU > USB SERIAL (#67). The serial console is a developer tool (README: FELUCCA_CDC). ON (the default) presents it,
  * the descriptors byte for byte as before; OFF re-enumerates as audio + MIDI only, device class 0 (the bytes of a
@@ -178,6 +208,65 @@ static const char *const LEDS_ROW_N[LEDS_ROWS] = {"OFF", "DIM LO", "DIM HI", "IN
 
 /* MENU > CONTROL > SELECT (ui.c sel_mode): BPM, PAGE (1.5.5, #188), MODW, VEL (1.5.6, #84), append-only */
 static const char *const SELECT_N[SEL_N] = {"BPM", "PAGE", "MODW", "VEL"};
+#if RONDO_LAYOUT
+static void dg_game_set(uint32_t on);                  /* (ui_dungeon.c: a new run, or the run ended and its cuts lifted) */
+/* THE PARTY on MENU > GAME (core.h): T1..T4 a class each, PARTY its points. A class turned takes at once while the
+ * party stays within CLS_POINTS; one that puts it over waits (party_pend: shown, the PARTY row and a message say how
+ * far over), and the moment a change brings it back within the points every class waiting takes together. The MENU
+ * closed with the party still over: nothing changes. A track whose class changed: its notes let go (its voices), and a
+ * sound its new class does not play (cls_allows) gives way to the class's own (the default track's: TRK_DEF); its
+ * steps stay */
+static uint8_t party_pend[NTRK], party_waiting;
+static uint32_t party_cls(uint32_t k) { return party_waiting ? party_pend[k % NTRK] : trk_cls(k); }
+static void party_apply(void)
+{
+    uint32_t k;
+    for (k = 0; k < NTRK; k++) {
+        track_t *t = &trk[k];
+        uint32_t c = party_pend[k] & 3u;
+        if (c == trk_cls(k))
+            continue;
+        fm1_irq_off();
+        song.clsx[k] = (uint8_t)(c ^ k);
+        panic_req |= (uint8_t)(1u << k);              /* (its voices, a new cap: what sounds lets go) */
+        fm1_irq_on();
+        if (!cls_allows(c, track_cat(t))) {
+            undo_depth++;                              /* (a part of the party change: no sound undo of its own) */
+            set_engine_of(t, TRK_DEF[c][0]);
+            apply_preset_to(t, TRK_DEF[c][1]);
+            undo_depth--;
+        }
+    }
+    party_waiting = 0;
+    ui.force = 1;
+}
+static void party_stage(uint32_t k, uint32_t c)
+{
+    uint32_t i, pts;
+    if (!party_waiting)
+        for (i = 0; i < NTRK; i++)
+            party_pend[i] = (uint8_t)trk_cls(i);
+    party_pend[k % NTRK] = (uint8_t)(c & 3u);
+    party_waiting = 1;
+    pts = party_points(party_pend);
+    if (pts <= CLS_POINTS) {
+        party_apply();
+        ui_message("PARTY SET");
+    } else {
+        char b[24] = "PARTY 00/12: TOO BIG";
+        b[6] = (char)('0' + pts / 10u);
+        b[7] = (char)('0' + pts % 10u);
+        ui_message(b);
+    }
+}
+static void party_menu_closed(void)                    /* (ui_menu.c menu_close) */
+{
+    if (party_waiting) {
+        party_waiting = 0;
+        ui_message("PARTY NOT CHANGED");          /* (over its points: as it was) */
+    }
+}
+#endif
 
 /* a row's value as 0..menu_n(row) - 1 in the order the menu steps it (LEDS: OFF DIM LO DIM HI INV INV LO INV HI) */
 static uint32_t menu_n(uint32_t row)
@@ -185,7 +274,11 @@ static uint32_t menu_n(uint32_t row)
     return row == MI_COLOR ? palette_n() : row == MI_LOWCUT || (row >= MI_CLICK && row <= MI_COUNTIN) ? 3u :
            row == MI_HOLD ? 4u : row == MI_LEDS ? LEDS_ROWS : row == MI_SCROFF ? NELEM(SCROFF_N) :
            row == MI_TUNE ? TUNE_N : row == MI_MIDIIN ? NELEM(N_ROUTE) : MI_TCH(row) ? MCH_N : row == MI_ANIM ? 3u : row == MI_HOME ? HV_COUNT :
-           row == MI_SELECT ? SEL_N : 2u;
+           row == MI_SELECT ? SEL_N :
+#if RONDO_LAYOUT
+           MI_CLS(row) ? NCLS : row == MI_PARTY ? 1u :
+#endif
+           2u;
 }
 static uint32_t menu_get(uint32_t row)
 {
@@ -202,6 +295,11 @@ static uint32_t menu_get(uint32_t row)
     case MI_ANIM: return ui_prefs & PREF_ANIM_OFF ? 1u : (ui_idle & 1u) ? 2u : 0u;
     case MI_HOME: return ui_home_view < HV_COUNT ? ui_home_view : HV_SCOPE;
     case MI_SELECT: return sel_mode();
+#if RONDO_LAYOUT
+    case MI_GAME: return dg_game != 0;
+    case MI_CLS1: case MI_CLS2: case MI_CLS3: case MI_CLS4: return party_cls(row - MI_CLS1);
+    case MI_PARTY: return 0;
+#endif
     case MI_CLICK: case MI_CLKLVL: case MI_COUNTIN: return rp_get(row - MI_CLICK);
     case MI_TUNE: return (uint32_t)(clamp(song.g[G_TUNE], TUNE_MIN, TUNE_MIN + (int32_t)TUNE_N - 1) - TUNE_MIN);
     case MI_MIDIIN: return (uint32_t)clamp(song.g[G_ROUTE], 0, (int32_t)NELEM(N_ROUTE) - 1);
@@ -230,6 +328,21 @@ static const char *menu_vname(uint32_t row, uint32_t v)
     case MI_ANIM: return ANIM_N[v % 3u];
     case MI_HOME: return HOME_N[v % HV_COUNT];
     case MI_SELECT: return SELECT_N[v % SEL_N];
+#if RONDO_LAYOUT
+    case MI_GAME: return v & 1u ? "ON" : "OFF";
+    case MI_CLS1: case MI_CLS2: case MI_CLS3: case MI_CLS4: return CLS_NAME[v & 3u];
+    case MI_PARTY: {                                   /* its points: "12/12" (over: "15/12 !") */
+        static char b[12];
+        uint8_t c[NTRK];
+        uint32_t i, p;
+        for (i = 0; i < NTRK; i++) c[i] = (uint8_t)party_cls(i);
+        p = party_points(c);
+        b[0] = (char)('0' + p / 10u); b[1] = (char)('0' + p % 10u); b[2] = '/';
+        b[3] = (char)('0' + CLS_POINTS / 10u); b[4] = (char)('0' + CLS_POINTS % 10u);
+        b[5] = p > CLS_POINTS ? ' ' : 0; b[6] = '!'; b[7] = 0;
+        return b;
+    }
+#endif
     case MI_LEDS: return LEDS_ROW_N[v % LEDS_ROWS];
     case MI_MIDIIN: return N_ROUTE[v % NELEM(N_ROUTE)];
     case MI_TCH1: case MI_TCH2: case MI_TCH3: case MI_TCH4: {   /* "1".."16", OMNI, OFF */
@@ -289,7 +402,9 @@ static void menu_put(uint32_t row, uint32_t v)
         ui_home_view = (uint8_t)(v < HV_COUNT ? v : HV_SCOPE);
         ui.force = 1;
         break;
-    case MI_SELECT:                                    /* (1.5.5 PAGE bit 4; 1.5.6 MODW VEL bit 6 too: ui.c sel_mode) */
+    case MI_SELECT:                                    /* (1.5.5 PAGE bit 4; 1.5.6 MODW VEL bit 6 too: ui.c sel_mode;
+                                                         * Dungeon Tracker: BPM and PAGE stored swapped, sel_swap) */
+        v = sel_swap(v);
         ui_prefs2 = (uint8_t)((ui_prefs2 & ~((PREF_SEL_PAGE | PREF_SEL_HI) >> 16)) | (v & 1u) << 4 | (v & 2u) << 5);
         break;
     case MI_LEDS:                                      /* (INV LO / INV HI: INV and its level, ui.c ui_leds_inv) */
@@ -297,6 +412,13 @@ static void menu_put(uint32_t row, uint32_t v)
         ui_leds_inv = (uint8_t)(v < LEDS_COUNT ? 0u : v - (LEDS_COUNT - 1u));
         break;
     case MI_CLICK: case MI_CLKLVL: case MI_COUNTIN: rp_put(row - MI_CLICK, v); break;   /* (at once: click.c, seq.c) */
+#if RONDO_LAYOUT
+    case MI_GAME: dg_game_set(v & 1u); break;          /* (RAM only: not in the settings, off at power-on) */
+    case MI_CLS1: case MI_CLS2: case MI_CLS3: case MI_CLS4:   /* (the project's: saved with the song) */
+        if ((v & 3u) != party_cls(row - MI_CLS1))
+            party_stage(row - MI_CLS1, v);
+        break;
+#endif
     case MI_TUNE: song.g[G_TUNE] = (int16_t)((int32_t)v + TUNE_MIN); break;
     case MI_MIDIIN: song.g[G_ROUTE] = (int16_t)v; break;
     case MI_TCH1: case MI_TCH2: case MI_TCH3: case MI_TCH4:   /* (MIDI IN TRACK: what the channel no longer hears let */

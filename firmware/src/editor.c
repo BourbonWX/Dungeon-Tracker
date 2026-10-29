@@ -80,17 +80,19 @@ static uint32_t ed_smp_slot(uint32_t k) { return SMP_USER_BASE + k * SMP_USER_SI
 static void ed_smp_inval(uint32_t k)
 {
     fm1_irq_off();
-    fl_inval(ed_smp_slot(k), SMP_USER_SIZE);
+    fl_inval(ed_smp_slot(k), smp_user_size(k));
     fm1_irq_on();
 }
 static int ed_smp_erase(uint32_t k, uint32_t all)  /* header sector, or the whole slot */
 {
     uint32_t i, took;
     int rc = 0;
+    if (!smp_user_ok(k))                          /* (1.2: USR2 retired, its flash the song slots': never erased here) */
+        return 0;
     usr_nz[k] = 0;
     for (i = 0; i < 16u; i++)
         usr_zone[k][i].n = 0;                     /* a sounding voice ends instead of reading 0xFF */
-    for (i = 0; i < (all ? SMP_USER_SIZE / 0x1000u : 1u) && !rc; i++) {
+    for (i = 0; i < (all ? smp_user_size(k) / 0x1000u : 1u) && !rc; i++) {
         audio_silence();
         rc = fl_erase4k(ed_smp_slot(k) + i * 0x1000u, &took);
         fm1_wdt_feed();
@@ -102,10 +104,12 @@ static int ed_flash_stop(void);
 static int ed_smp_end(uint32_t k, const uint8_t *a, uint32_t na)
 {
     const smp_user_hdr_t *h = (const smp_user_hdr_t *)ed_smp_buf;
+    if (!smp_user_ok(k))                               /* (1.2: USR2 retired) */
+        return 6;
     if (ed_unpack7(a, na, ed_smp_buf, sizeof(smp_user_hdr_t)) != sizeof(smp_user_hdr_t))
         return 1;
     if (h->magic != SMP_USER_MAGIC || h->version != 1 || !h->nz || h->nz > 16u ||
-        h->data_len > SMP_USER_SIZE - SMP_USER_DATA)
+        h->data_len > smp_user_size(k) - SMP_USER_DATA)
         return 2;
     if (usr_nz[k])                                     /* published zones may still be read by live voices */
         return memcmp(h, smp_user_xip(k), sizeof *h) ? 2 : 0;
@@ -578,18 +582,18 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         ed_b(TSEL->preset);
         break;
     }
-    case ED_PROJECT:                                       /* 0 = load, 1 = save, 2 = query; slot 0..3 */
-        if (na < 2u || a[0] > 2u || a[1] >= 4u)
+    case ED_PROJECT:                                       /* 0 = load, 1 = save, 2 = query; slot 0..NPROJ - 1 */
+        if (na < 2u || a[0] > 2u || a[1] >= NPROJ)
             return;
         if (a[0] == 1u) {
             if (ed_flash_stop() || project_save(a[1]))
                 return;                              /* the legacy reply has no failure bit: do not confirm a failed save */
         }
         else if (a[0] == 0u)
-            project_load(a[1] & 3u);
+            project_load(a[1]);
         ed_b(a[0]);
-        ed_b(a[1] & 3u);
-        ed_b(project_used(a[1] & 3u));
+        ed_b(a[1]);
+        ed_b(project_used(a[1]));
         break;
     case ED_NAMES:                                         /* preset names of an engine */
         if (na < 1u || a[0] >= NENGINES)
@@ -606,6 +610,10 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         if (na < 1u || a[0] >= SMP_USER_SLOTS || !flash_ok)
             return;
         ed_b(a[0]);
+        if (!smp_user_ok(a[0]) && cmd == ED_SMP_BEGIN) {   /* (1.2: USR2 retired: 6, nothing erased; ERASE: 0, empty) */
+            ed_b(6);
+            break;
+        }
         ed_b(ed_flash_stop() || ed_smp_erase(a[0], cmd == ED_SMP_ERASE) ? 1u : 0u);
         break;
     case ED_SMP_WRITE: {                                   /* slot, off (3 x 7 bit), pack7 data -> slot, off, rc */
@@ -614,7 +622,7 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
             return;
         off = (uint32_t)a[1] | (uint32_t)a[2] << 7 | (uint32_t)a[3] << 14;
         len = ed_unpack7(a + 4, na - 4u, ed_smp_buf, 256u);
-        if (off < SMP_USER_DATA || (off & 0xFFu) || !len || off + len > SMP_USER_SIZE)
+        if (off < SMP_USER_DATA || (off & 0xFFu) || !len || off + len > smp_user_size(a[0]))
             rc = 1;
         else if (usr_nz[a[0]])
             rc = 4;                                        /* slot in use: SMP_BEGIN first (voices read it) */

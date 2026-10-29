@@ -143,8 +143,8 @@ static int32_t lc_l1, lc_l2, lc_r1, lc_r2, dc_l, dc_r, dce_l, dce_r;
  * to +-31 at the output after silence.) */
 static inline int32_t dc_block(int32_t x, int32_t *dc, int32_t *err)
 {
-    int32_t e = x * 64 - *dc + *err, d = e >> 12;
-    *err = e - d * 4096;
+    int32_t e = (x << 6) - *dc + *err, d = e >> 12;
+    *err = e - (d << 12);
     *dc += d;
     return x - ((*dc + 32) >> 6);
 }
@@ -153,7 +153,7 @@ static int32_t lce[4];
 static inline int32_t lowcut1(int32_t x, int32_t *lc, int32_t *err, uint32_t sh)   /* x minus its one-pole low-pass */
 {
     int32_t e = x - *lc + *err, d = e >> sh;
-    *err = e - d * (int32_t)(1u << sh);
+    *err = e - (d << sh);
     *lc += d;
     return x - *lc;
 }
@@ -218,8 +218,7 @@ static const uint8_t DIV_DEN[6] = {1, 2, 4, 8, 3, 6};    /* original IDs stay fi
 static uint32_t midi_beat_samples;                    /* zero until an external clock has a measured tempo */
 static uint32_t beat_samples(void)
 {
-    uint32_t bpm = song.g[G_BPM] >= 40 ? (uint32_t)song.g[G_BPM] : 120u;   /* (BPM 0 for a moment, #282: no divide by 0) */
-    return song.g[G_CLOCK] && midi_beat_samples ? midi_beat_samples : (uint32_t)FS * 60u / bpm;
+    return song.g[G_CLOCK] && midi_beat_samples ? midi_beat_samples : (uint32_t)FS * 60u / (uint32_t)song.g[G_BPM];
 }
 static uint32_t div_samples(uint32_t div)
 {
@@ -228,6 +227,8 @@ static uint32_t div_samples(uint32_t div)
 }
 
 #include "perform.c"                                 /* the FX hold layer's effects (the master) */
+/* RONDO: the reverb's SIZE as it plays: the project's, raised by the FX layer's WASH (perform.c MK_WASH, up to +38) */
+static int32_t rev_size(void) { return clamp(song.g[G_RSIZE] + mk_x[1] * 38 / 100, 0, 127); }
 #include "click.c"                                   /* the metronome's click (after the master: audio.c) */
 
 /* the delay's TIME (params.c N_DTIME): N_DIV's ten (div_samples), then 1.5.1's dotted 1/8D 1/16D 1/4D (10, 11, 12: 3/4,
@@ -244,7 +245,7 @@ static uint32_t delay_samples(void)
 static __attribute__((noinline)) void rev_room(const int32_t *rev_in, int32_t *out, uint32_t n)
 {
     uint32_t i, k;
-    int32_t size = 25000 + song.g[G_RSIZE] * 50, damp = 32767 - song.g[G_RDAMP] * 200;
+    int32_t size = 25000 + rev_size() * 50, damp = 32767 - song.g[G_RDAMP] * 200;
     for (i = 0; i < n; i++) {
         int32_t a = 0;
         int16_t *c = rev_comb;
@@ -275,7 +276,7 @@ static __attribute__((noinline)) void rev_room(const int32_t *rev_in, int32_t *o
 /* SPRING (see the top), added to out */
 static __attribute__((noinline)) void rev_spring(const int32_t *rev_in, int32_t *out, uint32_t n)
 {
-    uint32_t i, k, s = (uint32_t)song.g[G_RSIZE];
+    uint32_t i, k, s = (uint32_t)rev_size();
     int32_t g = 19661 + (int32_t)s * 85;                /* the loop's gain: 0.6 .. 0.93 */
     int32_t kl = 26000 - song.g[G_RDAMP] * 160;         /* its low-pass: ~9 kHz .. ~1.3 kHz */
     int32_t len = (int32_t)(1323u + ((s * 1323u) >> 7)) << 8, L, L2, L3, f, w;
@@ -408,8 +409,8 @@ static __attribute__((noinline)) void rev_hall(const int32_t *rev_in, int32_t *o
     int32_t kd = HL_KD(song.g[G_RDAMP]);
     int32_t xp = hl.x, hp = hl.hp, he = hl.he, mp = hl.m, sp = hl.s;
     (void)n;
-    if (hl.sz != song.g[G_RSIZE] + 1)
-        hall_gains(song.g[G_RSIZE]);
+    if (hl.sz != rev_size() + 1)
+        hall_gains(rev_size());
     for (i = 0; i < HL_NC; i++) {
         int32_t x = (xp + 2 * rev_in[2u * i] + rev_in[2u * i + 1u]) >> 2, v;   /* every other sample, 1 2 1 */
         xp = rev_in[2u * i + 1u];
@@ -635,8 +636,25 @@ static __attribute__((noinline)) void rev_side_mix(int32_t *l, int32_t *r, uint3
  * Order: DIST -> INSERT -> SLICER: the insert colours the sound as DIST does; the SLICER's gate (and its STUT
  * recordings) comes after, so its edges stay sharp (no flanger feedback or phaser ringing smears them) and a STUT
  * repeats the processed sound. State in the pool, per track (ins[], 580 B each); noinline, its own loops: the audio
- * ISR's inlined path gains one test per part (track_t ins_run) */
-enum { IT_OFF, IT_SOFT, IT_HARD, IT_FOLD, IT_FUZZ, IT_CRUSH, IT_PHASER, IT_FLANGER, IT_CHORUS, IT_N };
+ * ISR's inlined path gains one test per part (track_t ins_run).
+ * RONDO adds three (appended, stored): the track's effect to ride live (hold ARP: ui_layer.c, KNOB 1..4 A B C MIX):
+ *   FILTR  CUT (F_CUTOFF; 0 is the table's index 10), RES, MODE: the TPT state-variable filter (dsp.c tsvf, as ANALOG's), its outputs blended
+ *          LP -> BP -> HP along MODE (0 LP, 64 BP, 127 HP), coefficients a block at a time (between table points);
+ *   DUCK   DEPTH, REL (F_TIME), SHAPE: the gain drops by DEPTH at each kick of track 1 (core.h duck_kick: FMKIT's KICK
+ *          lane, a DRUM kit's 35 / 36, any note of another engine) and comes back over REL, linearly at SHAPE 0, held
+ *          longer before it comes back towards 127 (the pump). Timed from the kick (rondo_clock), not from blocks, so a
+ *          track that was silent at the kick still starts ducked; a 2 ms glide into the dip (no click);
+ *   REPT   RATE (1/8 1/8T 1/16 1/16T 1/32 1/64), DECAY, PITCH (-4 .. +4 semitones a pass): a beat repeat. MIX from 0
+ *          arms it: at the next RATE boundary of the transport's grid (perform.c pf.ph) it records one RATE of the
+ *          track (the SLICER's buffer sl_buf, 22.05 kHz; a step longer than it is looped in halves), then plays that
+ *          slice again at every boundary, each pass DECAY quieter and PITCH higher or lower (read faster or slower),
+ *          cross-faded over the live sound by MIX. MIX back to 0 lets the live sound back (the 2.9 ms glide). With the
+ *          track's SLICER on STUT, or an FX key's buffer effect running (the buffer is theirs), REPT passes the sound by
+ *          and arms afresh after */
+enum { IT_OFF, IT_SOFT, IT_HARD, IT_FOLD, IT_FUZZ, IT_CRUSH, IT_PHASER, IT_FLANGER, IT_CHORUS,
+       IT_FILTER, IT_DUCK, IT_REPEAT,                   /* RONDO (a RONDO_LAYOUT=0 build: Felucca's nine only) */
+       IT_ALL };
+#define IT_N (RONDO_LAYOUT ? IT_ALL : IT_FILTER)
 #define IL_LEN 256u                     /* FLANG / CHOR: the line, samples (a power of 2: masked) */
 static const uint8_t INS_HOLD[16] = {64, 48, 40, 32, 24, 20, 16, 12, 10, 8, 6, 5, 4, 3, 2, 1};   /* CRUSH RATE */
 typedef struct {
@@ -648,6 +666,12 @@ typedef struct {
     int32_t hp, lp1, lp2, dc, hold;     /* low cut (Q8), the two low-passes, DC blocker (Q8), CRUSH's held sample */
     int32_t px[PH_ST], py[PH_ST], fb;   /* PHASR: each stage's last input and output, the fed back */
     int16_t line[IL_LEN];               /* FLANG / CHOR, at a quarter (headroom) */
+    /* RONDO: FILTR its two integrators (lp1 lp2 above); DUCK the gain now (Q15, glides into the dip); REPT: */
+    int32_t dg;
+    uint8_t rst;                        /* REPT: 0 waiting for a boundary, 1 recording, 2 repeating */
+    uint32_t rlen, rec, loop, rp, spd;  /* .. the step (44.1 kHz samples), recorded (22.05 kHz), loop, read (Q8), speed (Q16) */
+    int32_t rg, rw;                     /* .. the pass's gain (Q15), the repeat's share now (Q15) */
+    int32_t half;                       /* .. the 2:1 recording's first sample of a pair */
 } ins_t;
 static ins_t ins[NTRK] __attribute__((section(".pool")));
 
@@ -774,6 +798,130 @@ static __attribute__((noinline)) void ins_swept(ins_t *s, const track_t *t, int3
     }
 }
 
+/* RONDO: FILTR. MODE blends the SVF's outputs: LP (v2) -> BP (v1) -> HP (in - k v1 - v2); x >> 2 into it (its
+ * signals stay inside +-150000), back << 2 */
+static __attribute__((noinline)) void ins_filter(ins_t *s, const track_t *t, int32_t *b, uint32_t n, int32_t tw)
+{
+    tsvf_t c;
+    uint32_t i;
+    int32_t k = 8192 - clamp(t->p[P_IB], 0, 127) * 7600 / 127, mo = clamp(t->p[P_IC], 0, 127);
+    int32_t wl = mo < 64 ? (64 - mo) * 512 : 0, wb = mo < 64 ? mo * 512 : (127 - mo) * 520, wh = mo < 64 ? 0 : (mo - 64) * 520;
+    tsvf_coef_k(&c, (10 << 8) + clamp(t->p[P_IA], 0, 127) * (117 << 8) / 127, k);   /* (CUT 0: index 10, above the
+                                                                                     * table's coarse bottom) */
+    for (i = 0; i < n; i++) {
+        int32_t x = b[i], in = clamp(x >> 1, -140000, 140000), v3 = in - s->lp2, v1, v2, y;
+        s->w += clamp(tw - s->w, -SL_SLOPE, SL_SLOPE);
+        v1 = (c.a1 * s->lp1 + c.a2 * v3) >> 13;
+        v2 = s->lp2 + ((c.a2 * s->lp1 + c.a3 * v3) >> 13);
+        s->lp1 = clamp(2 * v1 - s->lp1, -150000, 150000);
+        s->lp2 = clamp(2 * v2 - s->lp2, -150000, 150000);
+        y = (int32_t)(((int64_t)v2 * wl + (int64_t)v1 * wb + (int64_t)(in - ((k * v1) >> 12) - v2) * wh) >> 15);
+        b[i] = pf_mix(x, clamp(y, -150000, 150000) << 1, s->w);
+    }
+}
+
+/* RONDO: DUCK. The gain over the time since track 1's last kick: 1 - DEPTH x the dip, the dip 1 at the kick and 0 after
+ * REL (TIME_MS_X10, as the envelopes' times), SHAPE bending it to stay down longer */
+static __attribute__((noinline)) void ins_duck(ins_t *s, const track_t *t, int32_t *b, uint32_t n, int32_t tw)
+{
+    uint32_t i, rel = TIME_MS_X10[clamp(t->p[P_IB], 0, 127)] * 441u / 100u + 64u, t0 = rondo_clock - duck_at;
+    uint32_t slope = (32767u << 16) / rel;              /* (the dip's fall a sample, Q16: one divide a block) */
+    int32_t dep = clamp(t->p[P_IA], 0, 127) * 258, sh = clamp(t->p[P_IC], 0, 127) * 258;
+    for (i = 0; i < n; i++) {
+        uint32_t e = t0 + i;
+        int32_t d = !duck_seen || e >= rel ? 0 : 32767 - (int32_t)(((uint64_t)e * slope) >> 16), g;
+        d = d < 0 ? 0 : d;
+        d += (((d * (32767 - d)) >> 15) * sh) >> 15;    /* SHAPE: held up longer */
+        g = 32768 - mulq16(dep, (uint32_t)d << 1);
+        s->dg += g < s->dg ? clamp(g - s->dg, -372, 0) : g - s->dg;   /* down in ~2 ms, up as the curve */
+        s->w += clamp(tw - s->w, -SL_SLOPE, SL_SLOPE);
+        b[i] = pf_mix(b[i], mulq16(b[i], (uint32_t)s->dg << 1), s->w);
+    }
+}
+
+/* RONDO: REPT. The pass's read speed for PITCH (semitones a pass, Q16: 2^(s/12)) */
+static const uint32_t REP_SEMI[9] = {52016, 55109, 58386, 61858, 65536, 69433, 73562, 77936, 82570};
+static const uint8_t REP_DEN[6] = {2, 3, 4, 6, 8, 16};          /* RATE: a step = 1 / DEN beats */
+static int ins_rep_free(const track_t *t)               /* the buffer is not the SLICER's STUT's, nor the FX keys' */
+{
+    return t->p[P_SLCR] != SL_STUT && pf.mode == BM_NONE;
+}
+static __attribute__((noinline)) void ins_repeat(ins_t *s, const track_t *t, int32_t *b, uint32_t n, int32_t tw)
+{
+    uint32_t k = (uint32_t)(t - trk) % NTRK, i, den = REP_DEN[clamp(t->p[P_IA], 0, 127) * 6 / 128];
+    uint32_t len = beat_samples() / den, at = pf.ph - n;          /* (pf.ph: perform.c's clock, this block in it) */
+    int16_t *buf = sl_buf[k];
+    int32_t dec = 32768 - clamp(t->p[P_IB], 0, 127) * 129, rt;    /* a pass: x 1 .. x 0.5 */
+    uint32_t semi = REP_SEMI[clamp(t->p[P_IC], 0, 127) * 9 / 128];
+    if (!ins_rep_free(t)) {                                       /* (the SLICER's STUT has the buffer: dry) */
+        s->rst = 0;
+        tw = 0;
+    }
+    if (len < 2u * SL_RAMP)
+        len = 2u * SL_RAMP;
+    at %= len;                                                    /* (one divide a block: then it counts) */
+    for (i = 0; i < n; i++) {
+        uint32_t pos = at + i < len ? at + i : at + i - len;
+        int32_t x = b[i], y = x;
+        s->w += clamp(tw - s->w, -SL_SLOPE, SL_SLOPE);
+        if (pos == 0u && tw) {                                    /* a boundary */
+            if (s->rst == 0u) {
+                s->rst = 1;
+                s->rec = 0;
+                s->rlen = len;
+            } else if (s->rst == 1u || s->rst == 2u) {
+                if (s->rst == 1u) {
+                    uint32_t l = s->rlen;
+                    while (l > 2u * SL_LEN)
+                        l >>= 1;                                  /* (a long step: a half, a quarter .. of it) */
+                    s->loop = l < 2u * s->rec ? l : 2u * s->rec;
+                    s->rg = 32768;
+                    s->spd = 65536;
+                    s->rst = s->loop >= 2u * SL_RAMP ? 2u : 0u;
+                } else {
+                    s->rg = (s->rg * dec) >> 15;
+                    s->spd = (uint32_t)(((uint64_t)s->spd * semi) >> 16);
+                    s->spd = s->spd < 16384u ? 16384u : s->spd > 262144u ? 262144u : s->spd;
+                }
+                s->rp = 0;
+            }
+        }
+        if (s->rst == 1u && s->rec < SL_LEN) {                     /* 2:1, the pair's mean (slicer.c's way) */
+            if (pos & 1u)
+                buf[s->rec++] = (int16_t)clamp((s->half + x) >> 3, -32768, 32767);
+            else
+                s->half = x;
+        }
+        rt = s->rst == 2u ? s->w : 0;
+        s->rw += clamp(rt - s->rw, -SL_SLOPE, SL_SLOPE);
+        if (s->rst == 2u) {                                       /* the slice, read at the pass's speed, windowed */
+            uint32_t q = s->rp >> 8, e, left = len - pos;
+            if (q >= s->loop) {                                   /* (a faster pass wraps inside its slice) */
+                s->rp -= s->loop << 8;
+                q -= s->loop;
+            }
+            e = s->loop - 1u - q;
+            int32_t r = buf[(q >> 1) & (SL_LEN - 1u)];
+            if (q & 1u)
+                r = (r + buf[((q >> 1) + 1u) & (SL_LEN - 1u)]) >> 1;
+            r <<= 2;
+            if (q < e)
+                e = q;
+            if (left - 1u < e)
+                e = left - 1u;
+            if (e < (uint32_t)SL_RAMP)
+                r = (r * (int32_t)e) >> SL_RAMP_LOG2;
+            s->rp += s->spd >> 8;
+            y = mulq15(r, s->rg);
+        }
+        b[i] = s->rw ? x + mulq16(y - x, (uint32_t)s->rw << 1) : x;
+    }
+    if (!tw && !s->rw)
+        s->rst = 0;                                               /* (let go: armed afresh next time) */
+}
+/* a silent part still runs while its REPT plays (fx.c mix_part) */
+static int ins_busy(const track_t *t) { const ins_t *s = &ins[(uint32_t)(t - trk) % NTRK]; return s->type == IT_REPEAT && (s->rw || s->rst); }
+
 /* the INSERT at rest at once (mix_part: TYPE turned OFF while the part was silent, its fade never ran) */
 static __attribute__((noinline)) void ins_rest(track_t *t)
 {
@@ -796,12 +944,19 @@ static __attribute__((noinline)) void track_insert(track_t *t, int32_t *b, uint3
         }
         memset(s, 0, sizeof *s);                        /* starting: no stale line or filter */
         s->type = (uint8_t)ty;
+        s->dg = 32768;                                  /* (DUCK: at full) */
     }
-    if (s->type >= IT_PHASER)
+    if (s->type == IT_FILTER)
+        ins_filter(s, t, b, n, tw);
+    else if (s->type == IT_DUCK)
+        ins_duck(s, t, b, n, tw);
+    else if (s->type == IT_REPEAT)
+        ins_repeat(s, t, b, n, tw);
+    else if (s->type >= IT_PHASER)
         ins_swept(s, t, b, n, tw);
     else
         ins_drive(s, t, b, n, tw);
-    t->ins_run = s->w != 0;                             /* (mix_part calls again while it fades) */
+    t->ins_run = s->w != 0 || (s->type == IT_REPEAT && s->rw);   /* (mix_part calls again while it fades) */
 }
 
 /* one block of the whole mix (shared with hostsim.c): events -> each part (with its modulation matrix)
@@ -869,10 +1024,12 @@ static const uint16_t ENG_VCOST[NENGINES] = {163, FELUCCA_FM4 ? 181 : 0, 162, 67
                                              181,
 #if FELUCCA_SLICE
                                              129,
+#elif RONDO_LAYOUT
+                                             0,                     /* (13: SLICE retired, reserved: never plays) */
 #endif
-#if FELUCCA_ADPCM
-                                             168,      /* ADPCM (ORGAN, 1693 instructions / sample at 8 notes) */
-#endif
+                                             170, 150,              /* RONDO: FMKIT, FMTONE (FM6 x their host cost: rondo_test.c) */
+                                             235,                   /* 1.1: WAVES (host: ~1.4 x ANALOG, two waves a sample) */
+                                             190                    /* 1.3: SID (two oscillators at twice the rate, the filter) */
 };
 #endif
 
@@ -896,7 +1053,7 @@ static void mix_part(track_t *t, uint32_t n SM_DECL)
 #endif
         t->tail = t->p[P_ITYPE] ? 64 : 16;              /* blocks of DIST / INSERT state to run out after the last
                                                          * voice (the INSERT's: 46 ms, a flanger's feedback) */
-    else if ((!t->tail || !(t->p[P_DIST] | t->p[P_ITYPE]) || !--t->tail) && !slicer_busy(t)) {
+    else if ((!t->tail || !(t->p[P_DIST] | t->p[P_ITYPE]) || !--t->tail) && !slicer_busy(t) && !ins_busy(t)) {
         slicer_track(t, 0, n);                          /* (the SLICER's step clock runs on) */
         if (t->ins_run && !t->p[P_ITYPE])
             ins_rest(t);                                /* TYPE OFF while silent: no fade-out left for the next note */
@@ -976,7 +1133,7 @@ static __attribute__((noinline)) void perf_master(int32_t *out, uint32_t n)
     }
 }
 
-/* ---- the second core (bsp/chip/fm1_cpu1.h; after Jangada's, github.com/zednaked/jangada, GPL-3.0) renders some of
+/* ---- the second core (hal/fm1_cpu1.h; after Jangada's, github.com/zednaked/jangada, GPL-3.0) renders some of
  * the parts of each block into its own sums (mx[1]) while this core renders the others; then this core adds them in
  * and goes on (the LFOs' blocks, the FX layer, the buses, the master) as with one core. The sums are integers, so the
  * order they add up in changes nothing: the output is bit for bit one core's. A part's render touches its own state
@@ -1039,6 +1196,9 @@ static void mix_block(int32_t *out, uint32_t n)
     int32_t mg = fx_usb_fixed ? MASTER_FULL : (int32_t)song.master_q12;   /* (USB LEVEL FIXED: MASTER after) */
     for (i = 0; i < n; i++)
         send_c[i] = send_d[i] = send_r[i] = mix_l[i] = mix_r[i] = 0;
+    static uint32_t rondo_n;
+    rondo_clock += rondo_n;                             /* RONDO: the DUCK's clock at this block's start (core.h): a */
+    rondo_n = n;                                        /* kick in its events is 0 samples ago */
     events_block(n);
     perf = perf_begin(n);                               /* the FX hold layer at work (perform.c) */
 #if FELUCCA_CPU2

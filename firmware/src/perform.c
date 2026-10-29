@@ -90,10 +90,46 @@ static volatile uint32_t perf_mask;   /* main: the FX button's bit while its lay
 static volatile uint32_t kb_mask;     /* main: the button bits whose hold makes keys a layer's (ui_layer.c), 0 = none */
 static volatile uint8_t kb_lock;      /* main: a layer locked open (#83, no button held): 1 keys are the layer's, 2 FX's */
 static volatile uint8_t perf_solo;    /* main: tracks soloed in the GLO layer (the others muted as by a black key) */
+static uint8_t dg_game;               /* main: RONDO, MENU > GAME > DUNGEON ON: the dungeon's game runs (ui_dungeon.c);
+                                       * off at power-on (not saved): HOME's corridor is then only scenery */
+static volatile uint8_t dg_cut;       /* main: RONDO, tracks whose adventurer has fallen (ui_dungeon.c), muted as by a
+                                       * black key (never P_MUTE, never saved) */
 static volatile uint8_t perf_kill;    /* main: every effect off (the menu, a dialog, UBOOT) */
 static volatile int8_t perf_k[4];     /* main: the knob macros, 0 = untouched: FILTER -100..100 (- LPF, + HPF),
                                        * CRUSH 0..100, THROW 0..100, DEPTH cut 0..100 (the buffer effects' level) */
 static volatile uint32_t kb_layer;    /* ISR: the keys held that are the layer's, a bit per key */
+
+/* RONDO: the FX layer's KNOB 1..4 are master effects picked from a pool of eight (FX > MASTER, ui_graph.c graph_mfx),
+ * per project: slot k's effect in 3 bits of G_ENGGO (a global no page used: saved with the project, (effect - k) & 7 so
+ * every older project, 0, has FILTER CRUSH THROW DEPTH, Felucca's four). The first four are perf_k's (above), the new
+ * ones mk_x's (core.h):
+ *   ISOLATOR -100..100  left the lows (below ~250 Hz) down to nothing, right the highs (above ~2.5 kHz): one-pole
+ *                       splits, the band taken away (the rest untouched); a DJ mixer's kill;
+ *   WASH     0..100     the dry mix into the reverb's send (THROW's way, the reverb only) and the reverb's SIZE up to
+ *                       +38 (fx.c rev_size): a wash;
+ *   PUMP     0..100     the master ducked on every beat of the tempo (perform's clock: in time from the top), down in
+ *                       2 ms, back over 55 % of the beat, bent to stay down (85 % deep at 100);
+ *   RIDE     0..100     the FM engines brighter (eng_cycle.c: COLOR +40, FDBK +25 at 100), every FMKIT / FMTONE track.
+ * Values stay where they are left (RONDO: no snap back when FX is let go); FX + OCT- sets them all back (ui_layer.c). */
+enum { MK_FILTER, MK_CRUSH, MK_THROW, MK_DEPTH, MK_ISO, MK_WASH, MK_PUMP, MK_RIDE, MK_N };
+static const char *const MK_NAME[MK_N] = {"FILTER", "CRUSH", "THROW", "DEPTH", "ISOLATR", "WASH", "PUMP", "RIDE"};
+static uint32_t mk_eff(uint32_t k) { return (((uint32_t)song.g[G_ENGGO] >> (3u * (k & 3u))) + k) & 7u; }   /* slot k's */
+static void mk_assign(uint32_t k, uint32_t e)
+{
+    uint32_t g = (uint32_t)song.g[G_ENGGO] & 0xFFFu, sh = 3u * (k & 3u);
+    song.g[G_ENGGO] = (int16_t)((g & ~(7u << sh)) | ((e - k) & 7u) << sh);
+}
+static volatile int8_t *mk_val(uint32_t e) { return e < 4u ? &perf_k[e] : &mk_x[(e - 4u) & 3u]; }
+static int32_t mk_min(uint32_t e) { return e == MK_FILTER || e == MK_ISO ? -100 : 0; }
+static void mk_reset(void)                       /* every value back: FX + OCT- (and FX LATCH's ALL OFF) */
+{
+    uint32_t e;
+    for (e = 0; e < MK_N; e++)
+        *mk_val(e) = 0;
+}
+static int mk_on(void) { return perf_k[0] || perf_k[1] || perf_k[2] || perf_k[3] || mk_x[0] || mk_x[1] || mk_x[2] || mk_x[3]; }
+static struct { int32_t lo[2], hi[2], gl, gh, wg; } mk = {{0, 0}, {0, 0}, 32768, 32768, 0};   /* ISOLATOR's splits and
+                                                           * gains (Q15, 1 = untouched), WASH's share */
 static volatile uint32_t perf_held;   /* ISR: the effects held (PF_*) */
 static volatile uint8_t perf_latch_on;   /* main: MENU > FX LATCH ON (#40): a key with FX toggles its effect */
 static volatile uint32_t perf_latched;   /* ISR: the effects latched (FX LATCH; main clears it: OCT-, the menu) */
@@ -298,10 +334,11 @@ static void perf_buf_select(uint32_t e)
  * Returns 1 when a stage has something to do */
 static __attribute__((noinline)) int perf_begin(uint32_t n)
 {
-    uint32_t held = perf_kill ? 0u : (perf_held | perf_latched | (perf_solo ? (~(uint32_t)perf_solo & 15u) << PF_M1 : 0u)) & perf_avail();
+    uint32_t held = (perf_kill ? 0u : (perf_held | perf_latched | (perf_solo ? (~(uint32_t)perf_solo & 15u) << PF_M1 : 0u)) & perf_avail()) |
+                    (uint32_t)(dg_cut & 15u) << PF_M1;
     uint32_t q, k, ph0, bnd;
     int32_t m;
-    if (!held && !pf.busy && !(perf_k[0] | perf_k[1] | perf_k[2])) {   /* idle: the clock only */
+    if (!held && !pf.busy && !(perf_k[0] | perf_k[1] | perf_k[2] | mk_x[0] | mk_x[1] | mk_x[2])) {   /* idle: the clock only */
         pf.ph += n;
         pf.sync = 0;
         perf_act = 0;
@@ -397,14 +434,17 @@ static __attribute__((noinline)) void perf_pre(const int32_t *ml, const int32_t 
                                                uint32_t n)
 {
     uint32_t i;
-    int32_t m = perf_k[2] * 327;
+    int32_t m = perf_k[2] * 327, wm = mk_x[1] * 327;
     for (i = 0; i < n; i++) {
         pf.td += clamp(m - pf.td, -SL_SLOPE, SL_SLOPE);
+        mk.wg += clamp(wm - mk.wg, -SL_SLOPE, SL_SLOPE);   /* (RONDO: WASH, the reverb only) */
         if (pf.td) {
             int32_t x = mulq16((ml[i] + mr[i]) >> 1, (uint32_t)pf.td << 1);
             sd[i] += x;
             sr[i] += x;
         }
+        if (mk.wg)
+            sr[i] += mulq16((ml[i] + mr[i]) >> 1, (uint32_t)mk.wg << 1);
     }
 }
 
@@ -741,7 +781,7 @@ static __attribute__((noinline)) void perf_phaser(int32_t *bl, int32_t *br, uint
 /* after the master level: the buffer effect, LPF, HPF, CRUSH on l / r (stereo, Q15) */
 static __attribute__((noinline)) void perf_block(int32_t *bl, int32_t *br, uint32_t n)
 {
-    uint32_t i, a = pf.act0, sh, hold;
+    uint32_t i, a = pf.act0, sh, hold, pp, mrel, mslope;
     int32_t c = perf_k[1], lt, ht, ct;
     if (c)
         pf.cc = c;
@@ -751,6 +791,9 @@ static __attribute__((noinline)) void perf_block(int32_t *bl, int32_t *br, uint3
     if (pf.split)
         perf_switch(a);
     pf.hfb += clamp(perf_k[3] * HB_FB - pf.hfb, -512, 512);   /* OCT UP / DN's shimmer glides (~40 ms) */
+    pp = (pf.P << 2) ? (pf.ph - n) % (pf.P << 2) : 0u;     /* (RONDO: PUMP's place in the beat, how long it comes */
+    mrel = (pf.P << 2) * 55u / 100u + 1u;                    /* back, its slope a sample, Q16: the divides a block) */
+    mslope = (32767u << 16) / mrel;
     for (i = 0; i < n; i++) {
         int32_t l = bl[i], r = br[i];
         if (i == pf.split) {
@@ -791,6 +834,40 @@ static __attribute__((noinline)) void perf_block(int32_t *bl, int32_t *br, uint3
                 r = pf_mix(r, pf.chr, pf.cw);
             }
         }
+        {   /* RONDO: ISOLATOR, the band taken away (the gains glide: no click) */
+            int32_t v = mk_x[0], tl = v < 0 ? 32768 + v * 327 : 32768, th = v > 0 ? 32768 - v * 327 : 32768;
+            mk.gl += clamp(tl - mk.gl, -SL_SLOPE, SL_SLOPE);
+            mk.gh += clamp(th - mk.gh, -SL_SLOPE, SL_SLOPE);
+            if (mk.gl != 32768 || mk.gh != 32768) {
+                int32_t *ch[2] = {&l, &r};
+                uint32_t c;
+                for (c = 0; c < 2u; c++) {
+                    int32_t x = *ch[c], lo, hi;
+                    mk.lo[c] += mulq16(x - mk.lo[c], 2294u);           /* ~250 Hz */
+                    mk.hi[c] += mulq16(x - mk.hi[c], 19687u);          /* ~2.5 kHz */
+                    lo = mk.lo[c];
+                    hi = x - mk.hi[c];
+                    *ch[c] = x - mulq16(lo, (uint32_t)(32768 - mk.gl) << 1) - mulq16(hi, (uint32_t)(32768 - mk.gh) << 1);
+                }
+            } else {
+                mk.lo[0] = mk.lo[1] = mk.hi[0] = mk.hi[1] = 0;
+            }
+        }
+        if (mk_x[2]) {   /* RONDO: PUMP, on the beat (pp: this block's start in it) */
+            uint32_t beat = pf.P << 2, pos = pp + i;
+            int32_t d;
+            while (pos >= beat)
+                pos -= beat;
+            if (pos < 88u)
+                d = (int32_t)(pos * 372u);                  /* (2 ms down: 32767 / 88) */
+            else
+                d = pos - 88u >= mrel ? 0 : 32767 - (int32_t)(((uint64_t)(pos - 88u) * mslope) >> 16);
+            d = d < 0 ? 0 : d;
+            d += ((d * (32767 - d)) >> 15) * 7 / 10;
+            d = mulq16(d, (uint32_t)(mk_x[2] * 285) << 1);    /* 0 .. 0.87 */
+            l -= mulq16(l, (uint32_t)d << 1);
+            r -= mulq16(r, (uint32_t)d << 1);
+        }
         bl[i] = l;
         br[i] = r;
     }
@@ -799,5 +876,5 @@ static __attribute__((noinline)) void perf_block(int32_t *bl, int32_t *br, uint3
     if ((pf.act & PF_BIT(PF_PHS)) || pf.pw)
         perf_phaser(bl, br, n);
     pf.busy = pf.act || pf.mode != BM_NONE || pf.w || pf.la || pf.ha || pf.cw || pf.td || pf.mute || pf.fw || pf.pw || pf.thr ||
-              pf.fn || perf_k[0] || perf_k[1] || perf_k[2];
+              pf.fn || perf_k[0] || perf_k[1] || perf_k[2] || mk_x[0] || mk_x[1] || mk_x[2] || mk.gl != 32768 || mk.gh != 32768 || mk.wg;
 }

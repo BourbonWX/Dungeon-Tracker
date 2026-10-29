@@ -224,10 +224,12 @@ static const uint8_t MIDI_CC_ENG[NENGINES] = {
     0x80, 0x30, 0x30, 0x34, 0x30,                     /* GRAIN TONE, PHYS BRIT, DRUM TONE, NOISE FREQ RES, FM6 MLVL */
 #if FELUCCA_SLICE
     0x80,                                             /* SLICE TONE */
+#elif RONDO_LAYOUT
+    0x00,                                             /* (13: SLICE retired, reserved) */
 #endif
-#if FELUCCA_ADPCM
-    0x00,                                             /* ADPCM - (no filter) */
-#endif
+    0x32, 0x25,                                       /* RONDO: FMKIT COLOR DECAY, FMTONE COLOR FDBK */
+    0x56,                                             /* 1.1: WAVES CUT RES */
+    0x78,                                             /* 1.3: SID CUT RES */
 };
 /* a CC sets parameter id of track t as a knob would: 0..127 over its range */
 static void midi_cc_set(track_t *t, uint32_t id, uint32_t value)
@@ -395,8 +397,17 @@ static volatile uint8_t *const mpc_io;
  * (realtime and clock are handled in events_block, SysEx never reaches here). With ROUT CH1-4 channels
  * 5..16 are ignored entirely (with CH5-8 .. CH13-16 every channel outside the block): notes, bend, CCs (CC1/11/64, RPN, and the CC120/121/123 panic and reset),
  * channel aftertouch, Program Change, so they stay free for other instruments. */
+#if RONDO_LAYOUT
+static void bank_midi_pc(uint32_t ch, uint32_t prog);
+#endif
 static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
 {
+#if RONDO_LAYOUT
+    if (st == 0xC0u && ch == 15u) {                 /* RONDO: channel 16's Program Change picks the PATTERN BANK's */
+        bank_midi_pc(ch, d1);                       /* A..F (song_bank.c), whatever ROUT says */
+        return;
+    }
+#endif
     if (song.g[G_ROUTE] != 1 && !midi_in_block(ch))
         return;
     if (st == 0x90u || st == 0x80u)
@@ -409,6 +420,7 @@ static void __attribute__((noinline)) midi_event(uint32_t st, uint32_t ch, uint3
         midi_control(ch, d1, d2);
     } else if (st == 0xD0u)
         mod_midi(midi_track(ch), st, d1, d2);
-    else if (st == 0xC0u && mpc_io)                /* Program Change: the main loop loads it (ui.c midi_pc_poll) */
+    else if (st == 0xC0u && mpc_io && RONDO_PC_IN)  /* Program Change: the main loop loads it (ui.c midi_pc_poll) */
         mpc_io[trk_index(midi_track(ch))] = (uint8_t)(0x80u | d1);
+
 }

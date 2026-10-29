@@ -8,7 +8,16 @@
  * patches into the user presets restored before it (ids 6, 7), as the first boot after the update does (up_fm6.c).
  * Id 9 is the user presets' FM6 patches (up_fm6.c), appended in 1.0.3.
  */
+#if RONDO_LAYOUT                                  /* Dungeon Tracker: ids 10..13, projects E..H; 1.3: 14..16, I..K
+                                                   * (their patterns not archived, as the PATTERN BANK's never were) */
+static const uint8_t ED_BK_IDS[20] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 32, 33, 34, 10, 11, 12, 13, 14, 15, 16};
+#define ED_BK_PROJ(id) (((id) >= 2u && (id) <= 5u) || ((id) >= 10u && (id) <= 16u))
+#define ED_BK_SLOT(id) ((id) <= 5u ? (id) - 2u : (id) - 6u)
+#else
 static const uint8_t ED_BK_IDS[13] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 32, 33, 34};
+#define ED_BK_PROJ(id) ((id) >= 2u && (id) <= 5u)
+#define ED_BK_SLOT(id) ((id) - 2u)
+#endif
 #define ED_BK_N ((uint32_t)sizeof ED_BK_IDS)
 #define ED_BK_MAX ((uint32_t)sizeof proj_wire_u.raw)
 #define ED_BK_RAW (proj_wire_u.raw)  /* reuse the existing serialized main-loop scratch */
@@ -36,9 +45,9 @@ static const uint8_t *ed_bk_object(uint32_t id, uint32_t *len)
     *len = 0;
     if (id == 0u) { *len = sizeof(project_store_t); return ED_BK_RAW; }
     if (id == 1u) { *len = sizeof ed_bk_settings; return (const uint8_t *)&ed_bk_settings; }
-    if (id >= 2u && id <= 5u) {
-        if (project_used(id - 2u)) *len = sizeof proj_slot[0];
-        return (const uint8_t *)&proj_slot[id - 2u];
+    if (ED_BK_PROJ(id)) {
+        if (project_used(ED_BK_SLOT(id))) *len = sizeof proj_slot[0];
+        return (const uint8_t *)pslot(ED_BK_SLOT(id));
     }
     if (id == 6u || id == 7u) {
         if (up_bank[id - 6u].magic == UP_BANK_MAGIC) *len = sizeof up_bank[0];
@@ -53,7 +62,7 @@ static const uint8_t *ed_bk_object(uint32_t id, uint32_t *len)
     if (id >= 32u && id < 32u + SMP_USER_SLOTS) {
         uint32_t k = id - 32u;
         const smp_user_hdr_t *h = (const smp_user_hdr_t *)smp_user_xip(k);
-        if (usr_nz[k] && h->magic == SMP_USER_MAGIC && h->data_len <= SMP_USER_SIZE - SMP_USER_DATA)
+        if (usr_nz[k] && h->magic == SMP_USER_MAGIC && h->data_len <= smp_user_size(k) - SMP_USER_DATA)
             *len = SMP_USER_DATA + h->data_len;
         return smp_user_xip(k);
     }
@@ -93,7 +102,7 @@ static uint32_t ed_bk_commit(void)
     uint8_t *raw = ED_BK_RAW;
     uint32_t obj;
     if (ed_bk_pos != ed_bk_len || st_crc32(raw, ed_bk_len) != ed_bk_crc) return 2;
-    if (ed_bk_id == 0u || (ed_bk_id >= 2u && ed_bk_id <= 5u)) {
+    if (ed_bk_id == 0u || ED_BK_PROJ(ed_bk_id)) {
         if (ed_bk_len && !proj_import(&proj_scratch, raw, (int)ed_bk_len)) return 2;
         if (ed_bk_len) {                            /* an older format becomes FUN10 inside its ranges */
             proj_bound(&proj_scratch);
@@ -104,7 +113,7 @@ static uint32_t ed_bk_commit(void)
             if (!ed_bk_len) return 2;
             return project_restore_runtime(&proj_scratch) ? 2u : 0u;
         }
-        obj = OBJ_PROJECT0 + ed_bk_id - 2u;
+        obj = OBJ_PROJECT0 + ED_BK_SLOT(ed_bk_id);       /* (proj_flash_save below) */
     } else if (ed_bk_id == 1u) {
         const persist_t *p = (const persist_t *)raw;
         if (ed_bk_len != sizeof *p || p->magic != PERSIST_MAGIC || !palette_stored_ok(p->palette) ||
@@ -130,15 +139,17 @@ static uint32_t ed_bk_commit(void)
         return upf_save() == 2 ? 4u : 0u;           /* (a failed write keeps the restored RAM copy) */
     } else return 1;
 #if FELUCCA_FLASH
-    if (!flash_ok || st_save(obj, raw, ed_bk_len)) return 4;
+    if (ED_BK_PROJ(ed_bk_id)) {                         /* (raw is proj_wire: a project, its slot's song with no patterns) */
+        if (!flash_ok || proj_flash_save(ED_BK_SLOT(ed_bk_id), ed_bk_len, SG_PATS_NONE)) return 4;
+    } else if (!flash_ok || st_save(obj, raw, ed_bk_len)) return 4;
 #else
     (void)obj;
 #endif
-    if (ed_bk_id >= 2u && ed_bk_id <= 5u) {
-        memset(&proj_slot[ed_bk_id - 2u], 0, sizeof proj_slot[0]);
-        if (proj_cur == ed_bk_id - 2u)
+    if (ED_BK_PROJ(ed_bk_id)) {
+        memset(pslot(ED_BK_SLOT(ed_bk_id)), 0, sizeof proj_slot[0]);
+        if (proj_cur == ED_BK_SLOT(ed_bk_id))
             proj_cur = PROJ_NO_SLOT;                     /* (another project there now: the music keeps its name) */
-        if (ed_bk_len) memcpy(&proj_slot[ed_bk_id - 2u], raw, ed_bk_len);
+        if (ed_bk_len) memcpy(pslot(ED_BK_SLOT(ed_bk_id)), raw, ed_bk_len);
     } else if (ed_bk_id == 1u) {
         memcpy(&ed_bk_settings, raw, sizeof ed_bk_settings);
         settings_import(&ed_bk_settings, sizeof ed_bk_settings);
@@ -163,13 +174,13 @@ static int proj_store_len(uint32_t len)
 static uint32_t ed_bk_write(const uint8_t *a, uint32_t n)
 {
     /* the arguments first: a malformed request never stops the transport */
-    if (n < 2u || a[0] > 3u || a[1] > 9u) return 1;
+    if (n < 2u || a[0] > 3u || (a[1] > 9u && !ED_BK_PROJ(a[1]))) return 1;
     if (a[0] == 0u) {
         if (n != 12u || a[6] > 15u || a[11] > 15u) return 1;
         uint32_t len = ed_bk_r32(a + 2);
         if (len > ED_BK_MAX || (a[1] == 0u && !proj_store_len(len)) ||
             (a[1] == 1u && len != sizeof(persist_t)) ||
-            (a[1] >= 2u && a[1] <= 5u && len && !proj_store_len(len)) ||
+            (ED_BK_PROJ(a[1]) && len && !proj_store_len(len)) ||
             ((a[1] == 6u || a[1] == 7u) && len && len != sizeof(up_bank_t)) ||
             (a[1] == 8u && len && len != sizeof(fm6_bank_t)) || (a[1] == 9u && len && len != sizeof(upf_t))) return 1;
         if (ed_flash_stop()) return 3;

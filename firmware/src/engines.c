@@ -10,13 +10,9 @@
  * last claimed it (eng_mem_owner); a switch to another such engine zeroes its engine_t.mem bytes, which is
  * the state each had at power-on, so a switch sounds as it did with the arrays (tests/union_test.c). State
  * that runs on across notes and switches stays outside (WHEEL's wheels, GRAIN's random numbers).
- * Sized by the largest, ADPCM when it is built (else PHYS, 3 x SYMP's slot); an engine that needs more than ENG_MEM_PART grows it for
+ * Sized by the largest, PHYS (3 x SYMP's slot); an engine that needs more than ENG_MEM_PART grows it for
  * every part (x NPART of the pool). Zero-initialised pool section: main.c fm1_cstart clears it. */
-#if FELUCCA_ADPCM
-#define ENG_MEM_PART 13344u    /* ADPCM: its 192 ms echo line, 8 voices and the DSP (13288 B; the host's pointers 13320) */
-#else
 #define ENG_MEM_PART 12888u
-#endif
 static union {
     uint64_t align;
     uint8_t b[ENG_MEM_PART];
@@ -26,7 +22,7 @@ static uint8_t eng_mem_owner[NPART];       /* engine index + 1 whose state is in
 #define ENG_MEM_FITS(name, size) _Static_assert((size) <= ENG_MEM_PART, name " state over ENG_MEM_PART")
 
 #include "../engines/src/eng_analog.c"   /* Felucca-Engines (MIT): ANALOG LOFI TRIO WHEEL NOISE */
-#include "../engines/src/eng_phase.c"   /* Felucca-Engines (MIT): PHASE */
+#include "eng_phase.c"
 #include "../engines/src/eng_lofi.c"
 #include "eng_sample.c"
 #include "eng_formant.c"
@@ -44,9 +40,20 @@ static uint8_t eng_mem_owner[NPART];       /* engine index + 1 whose state is in
 #if FELUCCA_SLICE
 #include "eng_slice.c"
 #endif
-#if FELUCCA_ADPCM
-#include "eng_adpcm.c"           /* ADPCM: BRR waves and an FIR echo, its DSP ported from snes_spc (adpcm_dsp.c, LGPL-2.1+) */
+#if RONDO_LAYOUT && !FELUCCA_SLICE  /* Dungeon Tracker: SLICE retired; 13 reserved as DIGITAL's 1 is (never offered:
+                                     * eng_ok; a SLICE sound in a project loads as SAMPLE, project.c proj_slice) */
+static const engine_t ENG_SLICE_GONE = {
+    .name = "-",
+    .page_title = {"-", "-"},
+    .edit = FM4_EDIT("-", "-", "-", "-", "-", "-", "-", F_INT, F_INT, 0, 0),
+    .note_on = fm4_gone_note_on,
+    .render = fm4_gone_render,
+    .knob = {P_E4, P_E5, P_E6, P_REL},
+};
 #endif
+#include "eng_cycle.c"          /* RONDO: CYCLE KIT (14) and CYCLE TONE (15) */
+#include "mutable/eng_waves.c"  /* 1.1: WAVES (16): Ambika's oscillators (Mutable Instruments, GPL-3.0) */
+#include "eng_sid.c"            /* 1.3: SID (17): after the MOS 6581 */
 
 /* the editor protocol, user presets and projects store these indices: append, never reorder */
 static const engine_t *const ENGINES[NENGINES] = {
@@ -69,10 +76,13 @@ static const engine_t *const ENGINES[NENGINES] = {
     &ENG_FM6,                    /* 12 (ENGI_FM6) */
 #if FELUCCA_SLICE
     &ENG_SLICE,                  /* 13 (FELUCCA_SLICE=0 builds without it) */
+#elif RONDO_LAYOUT
+    &ENG_SLICE_GONE,             /* 13: reserved (SLICE, retired in Dungeon Tracker) */
 #endif
-#if FELUCCA_ADPCM
-    &ENG_ADPCM,                  /* 14 (ENGI_ADPCM; FELUCCA_ADPCM=0 builds without it) */
-#endif
+    &ENG_CKIT,                   /* 14 (ENGI_CKIT): RONDO */
+    &ENG_CTONE,                  /* 15 (ENGI_CTONE): RONDO */
+    &ENG_WAVES,                  /* 16 (ENGI_WAVES): Dungeon Tracker */
+    &ENG_SID,                    /* 17 (ENGI_SID): Dungeon Tracker */
 };
 
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
@@ -122,25 +132,25 @@ static const char *snd_missing(const track_t *t, uint32_t *code)
  * engine indices, never DIGITAL's reserved 1 (with FELUCCA_FM4 it follows FM6). The indices stay as they are (the
  * stores and the protocol hold them); only this table orders them */
 static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
+    14, 15,                      /* RONDO: FMKIT, FMTONE first */
     0,                           /* ANALOG */
     12,                          /* FM6 */
+    16,                          /* 1.1: WAVES */
+    17,                          /* 1.3: SID */
 #if FELUCCA_FM4
     1,                           /* DIGITAL */
 #endif
-    2, 3, 4, 5, 6, 7, 8, 9,      /* PHASE LOFI SAMPLE VOICE TRIO WHEEL GRAIN PHYS */
-    11,                          /* NOISE */
-#if FELUCCA_SLICE
-    13,                          /* SLICE */
-#endif
-    10,                          /* DRUM */
-#if FELUCCA_ADPCM
-    14,                          /* ADPCM (1.8): last, so the EDIT layer's white keys keep the 13 above (ui_layer.c LY_ENG_KEYS) */
+    2, 3, 4, 5, 6, 7, 9,         /* PHASE LOFI SAMPLE VOICE TRIO WHEEL PHYS */
+    10,                          /* DRUM (RONDO: SLICE, 13, not offered: core.h NENG_SHOWN) */
+    8,                           /* GRAIN (1.3: after the 14 on the EDIT layer's keys, with NOISE: PRESETS only) */
+#if !FELUCCA_FM4
+    11,                          /* NOISE (1.1: last, after the 14 on the EDIT layer's keys: PRESETS only) */
 #endif
 };
 
 /* the engines one can pick (engine 1 only with FELUCCA_FM4), in ENGINE_ORDER: eng_ok(e), the n-th of them
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
-static int eng_ok(uint32_t e) { return e < NENGINES && (FELUCCA_FM4 || e != ENGI_DIGITAL); }
+static int eng_ok(uint32_t e) { return e < NENGINES && (FELUCCA_FM4 || e != ENGI_DIGITAL) && (FELUCCA_SLICE || !RONDO_LAYOUT || e != ENGI_SLICE); }
 static uint32_t eng_vis(uint32_t n) { return ENGINE_ORDER[n % NENG_SHOWN]; }
 static uint32_t eng_rank(uint32_t e)
 {
@@ -200,6 +210,11 @@ static const struct {
 #define NPATTERNS (sizeof PATTERNS / sizeof PATTERNS[0])
 
 /* the parts at power-on (engine, preset, PATTERNS[n - 1] in the sequencer, 0 = empty: all are): bass, pad, lead, drums */
-static const uint8_t TRK_DEF[NPART][3] = {{0, 4, 0}, {ENGI_FM6, 4, 0}, {3, 0, 0}, {ENGI_DRUM, 0, 0}}; /* ANALOG ACID,
-                                                                       * FM6 PAD (was DIGITAL PAD), LOFI PULSE LD, DRUM KIT */
+/* RONDO: T1 drums (FMKIT, the BEAT pattern), T2 chords / pads (FMTONE FM PAD), T3 bass (FMTONE FM BASS, mono),
+ * T4 lead (FMTONE FM LEAD); the sequencers empty but the drums' */
+#if RONDO_LAYOUT
+static const uint8_t TRK_DEF[NPART][3] = {{ENGI_CKIT, 0, 12}, {ENGI_CTONE, 0, 0}, {ENGI_CTONE, 5, 0}, {ENGI_CTONE, 8, 0}};
+#else
+static const uint8_t TRK_DEF[NPART][3] = {{0, 4, 0}, {ENGI_FM6, 4, 0}, {3, 0, 0}, {ENGI_DRUM, 0, 0}};   /* Felucca's */
+#endif
 static uint32_t trk_def_engine(uint32_t i) { return TRK_DEF[i % NPART][0]; }

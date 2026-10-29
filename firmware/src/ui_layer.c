@@ -14,9 +14,8 @@
  *              GLO + PLAY: from the top without stopping
  *   SCL  SET   any key: its note name is ROOT; KNOB 1..4 ROOT SCL CHRD VOIC (LY_SCL: the SCL page's first two,
  *              the CHORD page's two; QNT TRN stay on SCL); the LEDs show the root lit and the scale's notes breathing
- *   EDIT SET   the white keys from F3: the engines in PRESETS order (one key each, the first LY_ENG_KEYS (13) one can
- *              pick: engines.c eng_vis; ADPCM, last, only with PRESETS' ENG knob), the next white key INIT (LY_INIT: E5),
- *              the next CLEAN INIT (LY_CLEAN: F5, 1.5.5)
+ *   EDIT SET   the white keys from F3: the engines in PRESETS order (one key each, the NENG_SHOWN one can pick:
+ *              engines.c eng_vis), the next white key INIT (LY_INIT: E5), the next CLEAN INIT (LY_CLEAN: F5, 1.5.5)
  *              (the dialog); KNOB 1 ENG, 2 No. (the engine's sounds), 3 FAV. Sound loads as on PRESETS: the steps
  *              stay, SAVE held undoes, the editor gets RELOAD; they apply while playing too. 1.4.1: the black keys
  *              the selected track's engine's quick actions (EQA below: DRUM 1..8 its lanes' MUTE; other engines
@@ -59,29 +58,47 @@ typedef struct {
 } layer_t;
 static const layer_t LAYERS[LAYER_N] = {
     {0, 0, 0, "", {{0, 0}, {0, 0}, {0, 0}}},
+#if RONDO_LAYOUT
+    {B_FX, LK_HOLD, FAM_HOME, "[FX] HOLD", {{KC_KEYS, "FX"}, {KC_K14, "MASTER"}, {KC_OCTDN, "RESET"}}},
+#else
     {B_FX, LK_HOLD, FAM_HOME, "[FX] HOLD", {{KC_KEYS, "EFFECTS"}, {KC_K14, "MACROS"}, {0, 0}}},   /* (LET GO: the header's HOLD) */
+#endif
     {B_GLO, LK_SET, FAM_HOME, "[GLO] SET", {{KC_PLAY, "RESTART"}, {KC_OCTDN, "UNDO"}, {KC_GLO, "DONE"}}},
     {B_SCL, LK_SET, FAM_SCL, "[SCL] SET", {{KC_KEYS, "ROOT"}, {KC_OCTDN, "UNDO"}, {KC_SCL, "DONE"}}},
     {B_EDIT, LK_SET, FAM_HOME, "[EDIT] SET", {{KC_KEYS, "ENGINE"}, {KC_OCTDN, "UNDO"}, {KC_EDIT, "DONE"}}},
     {B_SEQ, LK_SET, FAM_SEQ, "[SEQ] TOOLS", {{KC_KEYS, "TOOLS"}, {KC_OCTDN, "UNDO"}, {KC_SEQ, "DONE"}}},
     {B_REC, LK_SET, FAM_HOME, "[REC] SET", {{KC_KEYS, "RECORDING"}, {KC_OCTDN, "UNDO"}, {KC_REC, "DONE"}}},
+#if RONDO_LAYOUT
+    {B_ARP, LK_HOLD, FAM_FX, "[ARP] TRACK FX", {{KC_K14, "RIDE"}, {KC_KEYS, "TRACK"}, {0, 0}}},
+    {B_ENV, LK_HOLD, FAM_HOME, "[ENV] PATTERNS", {{KC_KEYS, "A-F"}, {KC_OCTUP, "COPY"}, {KC_OCTDN, "CLEAR"}}},
+#endif
 };
-static const uint8_t LY_KC[LAYER_N] = {0, KC_FX, KC_GLO, KC_SCL, KC_EDIT, KC_SEQ, KC_REC};
+static const uint8_t LY_KC[LAYER_N] = {0, KC_FX, KC_GLO, KC_SCL, KC_EDIT, KC_SEQ, KC_REC,
+#if RONDO_LAYOUT
+                                       KC_ARP, KC_ENV,
+#endif
+                                       };
 /* SCL's knobs: the key and its chord (cur_page() while the layer edits or draws them: page_over) */
 static const page_t LY_SCL = {"SCL", FAM_SCL, SC_TRACK, GR_SCALE, {P_ROOT, P_SCALE, P_CHRD, P_VOIC}};
 /* SEQ TOOLS' knobs: LEN DIV SWING GATE (the length the tools work in; up to 1.1.5 the PATTERN page's) */
 static const page_t LY_SEQ = {"PATTERN", FAM_SEQ, SC_TRACK, GR_STEPS, {P_SLEN, P_SDIV, P_SSWING, P_SGATE}};
+#if RONDO_LAYOUT
+/* RONDO: ARP held, the target track's INSERT: A B C MIX (fx.c; their names the TYPE's: params.c ins_desc). The black keys
+ * 1..4 pick T1..T4 while ARP is held (track_select; let go: the track as before) */
+static const page_t LY_ARP = {"TRACK FX", FAM_FX, SC_TRACK, GR_INS, {P_IA, P_IB, P_IC, P_IMIX}};
+static const page_t *ly_page(uint32_t l) { return l == LAYER_SCL ? &LY_SCL : l == LAYER_SEQ ? &LY_SEQ : l == LAYER_ARP ? &LY_ARP : 0; }
+#else
 static const page_t *ly_page(uint32_t l) { return l == LAYER_SCL ? &LY_SCL : l == LAYER_SEQ ? &LY_SEQ : 0; }
+#endif
 #define LY_OPEN 2u                     /* ui.ly_t0: the map opened (no tap any more) */
 #define LY_COMBO 4u                    /* .. by a combo */
 #define LY_DEAD 8u                     /* .. pressed where there is no layer: does nothing */
-#define LY_ENG_KEYS ((uint32_t)(NENG_SHOWN - FELUCCA_ADPCM))   /* EDIT: white keys for the engines before ADPCM (1.8: last
-                                        * in engines.c ENGINE_ORDER, picked with PRESETS' ENG knob), so INIT and CLEAN INIT
-                                        * stay where they were: 13 engines from F3, INIT E5 (14 and F5 with FELUCCA_FM4) */
-#define LY_INIT LY_ENG_KEYS            /* .. INIT, the white key after them */
+#define LY_INIT ((uint32_t)NENG_KEYS)  /* EDIT: the white key of INIT, the one after the engines (13: E5), its map cell */
 #define LY_CLEAN (LY_INIT + 1u)         /* .. and CLEAN INIT's, the next (1.5.5, #190: F5) */
 typedef char ly_init_fits[LY_CLEAN < 16u ? 1 : -1];   /* (a white key: F3 .. G5) */
 #define layer_seen (favorites.factory[15][31])   /* bit l: layer l opened once (a byte no engine uses) */
+/* .. its bit (RONDO's ENV, the ninth: LAYER_NONE's bit 0, which no layer has) */
+static uint32_t ly_seen(uint32_t l) { return l < 8u ? 1u << l : 1u; }
 static const khint_t FX_LATCH_FOOT[3] = {{KC_KEYS, "ON / OFF"}, {KC_K14, "MACROS"}, {KC_OCTDN, "ALL OFF"}};
 static const khint_t FX_KEY_FOOT[3] = {{KC_PRESETS, "ASSIGN"}, {KC_EDIT, "DEFAULT"}, {KC_K14, "MACROS"}};   /* (a key held) */
 static const khint_t GLO_LOCK_FOOT[3] = {{KC_OCTDN, "UNDO"}, {KC_GLO, "DONE"}, {0, 0}};   /* (locked: PLAY plays, #183) */
@@ -128,9 +145,17 @@ static uint32_t layer_bits(void)
 static uint32_t layer_btn(void) { return LAYERS[ui.layer % LAYER_N].btn; }
 static const char *layer_head(void) { return ui.layer == LAYER_FX && perf_latch_on ? "[FX] LATCH" : LAYERS[ui.layer % LAYER_N].head; }
 static uint32_t layer_open(void) { return ui.ly && (ui.ly_t0 & LY_OPEN) && ly_down(ui.ly) && layer_allowed() ? ui.ly : 0u; }
+/* RONDO: ENV (the PATTERN BANK) takes OCT+ / OCT- as a SET layer does: held with a key, COPY / CLEAR; OCT- alone,
+ * the next pattern forgotten (no octave either way) */
+#if RONDO_LAYOUT
+static int ly_env(uint32_t l) { return l == LAYER_ENV; }
+#else
+static int ly_env(uint32_t l) { (void)l; return 0; }
+#endif
 static int layer_set_open(void)                 /* (FX LATCH: FX is one too, OCT- turns all off) */
 {
-    return layer_open() && (LAYERS[layer_open()].kind == LK_SET || (layer_open() == LAYER_FX && perf_latch_on));
+    return layer_open() && (LAYERS[layer_open()].kind == LK_SET || (layer_open() == LAYER_FX && (perf_latch_on || RONDO_LAYOUT)) ||
+                            ly_env(layer_open()));
 }
 static uint32_t layer_held(void) { return ui.ly && ly_down(ui.ly) && layer_allowed(); }
 
@@ -167,10 +192,27 @@ static void layer_arm(uint32_t pressed, uint32_t now)
  * opened, or a combo: KNOB 1..4 quiet for a while (#39: the knob still turning is not the page's) */
 static void layer_let_go(uint32_t quiet)
 {
+    if (tk.pick && ui.ly == LAYER_SEQ) {               /* RONDO: a track picked with SELECT: its tracker */
+        ui.ly_t0 = 0;
+        ui.ly = 0;
+        ui.lock = 0;
+        lys.quiet = 1;
+        lys.quiet_t = fm1_ms;
+        tk_pick_done();
+        return;
+    }
+    tk.pick = 0;
+#if RONDO_LAYOUT
+    if (ui.ly == LAYER_ARP && (ui.ly_t0 & LY_OPEN) && song.sel != lys.trk)
+        track_select(lys.trk);                          /* RONDO: ARP let go: the track it opened on (a black key took
+                                                         * another while held) */
+#endif
     if (eu.on)                                          /* (SEQ TOOLS: an open EUCLID is applied) */
         eu_close(&trk[lys.trk % NTRK], 1);
+#if !RONDO_LAYOUT
     if (ui.ly == LAYER_FX && !perf_latch_on)
         perf_k[0] = perf_k[1] = perf_k[2] = perf_k[3] = 0;
+#endif                                                  /* (RONDO: the macros stay where they are left; FX + OCT- resets) */
     if (lys.rp_dirty) {                                 /* REC: its settings kept, as MENU does when it closes (FX: the map) */
         lys.rp_dirty = 0;
         settings_save();                                /* (deferred while playing) */
@@ -235,8 +277,8 @@ static void layer_lock(uint32_t l, uint32_t now)
 static void layer_opened(uint32_t l)
 {
     uint32_t k;
-    if (!((layer_seen >> l) & 1u)) {
-        layer_seen |= (uint8_t)(1u << l);
+    if (!(layer_seen & ly_seen(l))) {
+        layer_seen |= (uint8_t)ly_seen(l);
         settings_save();                                /* (deferred while playing) */
     }
     lys.l = (uint8_t)l;
@@ -331,7 +373,7 @@ static void layer_tap(uint32_t l)
         acted = page_tap(LAYERS[l].btn);
     }
     lys.dt_hint = 0;
-    if (!((layer_seen >> l) & 1u) && ui.msg_t == m && !name_on() && !ui.confirm && !ui.menu) {
+    if (!(layer_seen & ly_seen(l)) && ui.msg_t == m && !name_on() && !ui.confirm && !ui.menu) {
         ui_say("HOLD [", KC[LY_KC[l]].label);
         str_cpy(ui.msg + str_len(ui.msg), "] QUICK", sizeof ui.msg - str_len(ui.msg));
         ui.msg_t = 90;                                  /* ~1.5 s */
@@ -569,8 +611,21 @@ static uint32_t eqa_drum_on(const track_t *t, uint32_t l) { return !((drum_mute[
 #define EQA_LANE(l) {LK_SET, EQ_SHOW_MUTE, l, drum_lane_abbr, eqa_drum_mute, eqa_drum_on}
 static const eqa_t EQA_DRUM[NLANE] = {EQA_LANE(0), EQA_LANE(1), EQA_LANE(2), EQA_LANE(3), EQA_LANE(4), EQA_LANE(5),
     EQA_LANE(6), EQA_LANE(7)};
+/* RONDO: FMKIT, black keys 1..4 mute its voices KICK SNARE HAT PERC (eng_cycle.c ck_render reads drum_mute) */
+static const char *eqa_ck_name(const track_t *t, uint32_t l) { (void)t; return N_CK_ABBR[l & 3u]; }
+static void eqa_ck_mute(track_t *t, uint32_t l, uint32_t down)
+{
+    uint32_t k = trk_index(t) % NPART;
+    if (!down)
+        return;
+    drum_mute[k] ^= (uint8_t)(1u << l);
+    ui_say(N_CK_LANE[l & 3u], (drum_mute[k] >> l) & 1u ? " MUTED" : " ON");
+}
+#define EQA_CK(l) {LK_SET, EQ_SHOW_MUTE, l, eqa_ck_name, eqa_ck_mute, eqa_drum_on}
+static const eqa_t EQA_CKIT[CK_N] = {EQA_CK(0), EQA_CK(1), EQA_CK(2), EQA_CK(3)};
 static const eqa_set_t EQA[] = {
     {ENGI_DRUM, NLANE, EQA_DRUM},
+    {ENGI_CKIT, CK_N, EQA_CKIT},
 };
 typedef char eqa_fits[NLANE <= 11 ? 1 : -1];       /* (11 black keys) */
 
@@ -657,7 +712,7 @@ static void layer_key(uint32_t l, uint32_t k)
     } else if (l == LAYER_SCL) {
         TSEL->p[P_ROOT] = (int16_t)((k + 5u) % 12u);    /* the key's note name (F3 = F) */
     } else if (l == LAYER_EDIT && !key_black(k)) {
-        if (p < NENG_SHOWN && p < LY_INIT)
+        if (p < NENG_KEYS && p < LY_INIT)
             edit_load(eng_vis(p), 0);
         else if (p == LY_INIT && chain_busy())
             ui_message("STOP TO EDIT");
@@ -672,6 +727,24 @@ static void layer_key(uint32_t l, uint32_t k)
     } else if (l == LAYER_REC) {
         if (!key_black(k) && p < 4u)
             rec_key(p);
+#if RONDO_LAYOUT
+    } else if (l == LAYER_ENV) {                        /* RONDO: F3..D4 the patterns A..F (OCT+ held COPY, OCT- CLEAR) */
+        if (!key_black(k) && p < NBANK) {
+            if ((fm1_in.buttons >> panel.btn[B_OCTUP]) & 1u)
+                bank_copy(p);
+            else if ((fm1_in.buttons >> panel.btn[B_OCTDN]) & 1u) {
+                bank_clear(p);
+                lys.loaded = 1;                         /* (OCT- let go then: no forgetting) */
+            } else
+                bank_key(p);
+            ui.force = 1;
+        }
+    } else if (l == LAYER_ARP) {                        /* RONDO: black keys 1..4, the track whose effect KNOB 1..4 ride */
+        if (key_black(k) && p < NTRK && p != song.sel) {
+            track_select(p);
+            ui.force = 1;
+        }
+#endif
     } else if (l == LAYER_SEQ) {
         if (!key_black(k))
             tools_key(p);
@@ -707,9 +780,17 @@ static void layer_knob(uint32_t k, int32_t s)
 {
     uint32_t l = layer_open();
     if (l == LAYER_FX) {                                /* perform.c perf_k, not recorded */
+#if RONDO_LAYOUT
+        uint32_t e = mk_eff(k);                         /* RONDO: the slot's effect of the pool (FX > MASTER) */
+        volatile int8_t *v = mk_val(e);
+        if (e == MK_DEPTH && !perf_harm_on())
+            s = -s;
+        *v = (int8_t)clamp(*v + accel(EN_K1 + k, s, mk_min(e) ? 200 : 100), mk_min(e), 100);
+#else
         if (k == 3u && !perf_harm_on())
             s = -s;                                     /* DEPTH (100 - perf_k[3]) rises to the right (#40: it fell) */
         perf_k[k] = (int8_t)clamp(perf_k[k] + accel(EN_K1 + k, s, k ? 100 : 200), k ? 0 : -100, 100);   /* (#126) */
+#endif
     } else if (l == LAYER_GLO) {                        /* T1..T4 LEVEL, recorded as on MIXER */
         int16_t *vp = &trk[k].p[P_LEVEL];
         *vp = (int16_t)clamp(*vp + accel(EN_K1 + k, s, TP[P_LEVEL].max - TP[P_LEVEL].min), TP[P_LEVEL].min,
@@ -728,6 +809,7 @@ static void layer_knob(uint32_t k, int32_t s)
             rec_set(k, (uint32_t)clamp((int32_t)rp_get(RL_F[k]) + s, 0, 2));
     } else if (l == LAYER_SEQ && eu.on) {               /* EUCLID: HITS STEPS ROT (KNOB 4: none) */
         eu_knob(TSEL, k, s);
+    } else if (ly_env(l)) {                             /* RONDO: ENV's cards only show (no knob) */
     } else if (l) {                                     /* the page's knobs, wherever the page is */
         uint8_t h = ui.home, pg = ui.page;
         ui.home = 0;
@@ -760,7 +842,7 @@ static void layer_oct_open(uint32_t pressed)
 {
     uint32_t l = ui.ly, oct = 1u << panel.btn[B_OCTDN] | 1u << panel.btn[B_OCTUP];
     if ((pressed & oct) && l && !(ui.ly_t0 & (LY_OPEN | LY_DEAD)) && layer_held() &&
-        (LAYERS[l].kind == LK_SET || (l == LAYER_FX && perf_latch_on))) {
+        (LAYERS[l].kind == LK_SET || (l == LAYER_FX && (perf_latch_on || RONDO_LAYOUT)) || ly_env(l))) {
         ui.ly_t0 |= LY_OPEN | LY_COMBO;
         layer_opened(l);
     }
@@ -780,10 +862,19 @@ static uint32_t layer_oct(uint32_t pressed, uint32_t oct)
         mine = 0;
     }
     if (mine & 1u) {                                    /* OCT-: back to when it opened */
-        if (lys.l == LAYER_FX) {                        /* (FX LATCH) every effect and macro off */
+        if (ly_env(lys.l)) {                            /* RONDO: ENV, OCT- tapped (no key cleared): the next one goes */
+            if (!lys.loaded && !bank_unqueue())
+                ui_message("NOTHING QUEUED");
+            lys.loaded = 0;
+        } else if (lys.l == LAYER_FX) {                        /* (FX LATCH) every effect and macro off */
             perf_latched = 0;
             perf_k[0] = perf_k[1] = perf_k[2] = perf_k[3] = 0;
+#if RONDO_LAYOUT
+            mk_reset();                                 /* (RONDO: OCT- with FX held, latched or not: the knobs back) */
+            ui_message(perf_latch_on ? "FX ALL OFF" : "FX KNOBS RESET");
+#else
             ui_message("FX ALL OFF");
+#endif
         } else if (lys.l == LAYER_EDIT) {
             uint32_t ld = lys.loaded;
             if (ld)
@@ -835,7 +926,7 @@ static uint32_t layer_oct(uint32_t pressed, uint32_t oct)
 
 /* --------------------------------------------------------- the LEDs --- */
 /* lit = in effect now (held, the value, a track sounding), breathing = can be pressed (*br: dark .. ~60 % and
- * back, ~1.1 s, bsp/boards/fm1/fm1_input.h fm1_led_breath; was a hard 250 ms blink, #119), dark = nothing there */
+ * back, ~1.1 s, hal/fm1_input.h fm1_led_breath; was a hard 250 ms blink, #119), dark = nothing there */
 static int glo_sounding(uint32_t t) { return !trk[t].p[P_MUTE] && (!perf_solo || ((perf_solo >> t) & 1u)); }
 static int rec_clearable(void) { return !seq_is_empty(TSEL) || motion_count(TSEL) != 0u; }
 static uint32_t layer_leds(uint32_t *br)
@@ -858,14 +949,19 @@ static uint32_t layer_leds(uint32_t *br)
             on = e == 0u;
             can = (mask >> e) & 1u;
         } else if (l == LAYER_EDIT && !b) {             /* the engine lit, the others and INIT breathe */
-            on = p < NENG_SHOWN && p < LY_INIT && eng_vis(p) == TSEL->eng_req % NENGINES;
-            can = p < NENG_SHOWN && p < LY_INIT ? 1u : (p == LY_INIT || p == LY_CLEAN) && !chain_busy();
+            on = p < NENG_KEYS && p < LY_INIT && eng_vis(p) == TSEL->eng_req % NENGINES;
+            can = p < NENG_KEYS && p < LY_INIT ? 1u : (p == LY_INIT || p == LY_CLEAN) && !chain_busy();
         } else if (l == LAYER_EDIT && (a = eqa_of(TSEL, p)) != 0) {   /* the quick actions: on lit (DRUM: sounding), */
             on = a->on(TSEL, a->arg) != 0u;             /* a HOLD one off breathes, none dark */
             can = a->kind == LK_HOLD;
         } else if (l == LAYER_SEQ) {                    /* the tools breathe (not while a song plays); DRUM: the lane */
             on = (b && p < NLANE && drum_track(TSEL) && p == ui.lane) || (!b && p == TL_EUCLID && eu.on);   /* lit, the */
             can = b ? p < NLANE && drum_track(TSEL) : tl_cell(TSEL, p) && !chain_busy();
+#if RONDO_LAYOUT
+        } else if (l == LAYER_ENV && !b && p < NBANK) { /* RONDO: the current pattern lit, the next one flashing, */
+            on = p == bank.cur || (p == bank.queue && (fm1_ms / 125u) % 2u);   /* the stored ones breathe */
+            can = bank_has(p) && !chain_busy();
+#endif
         } else if (l == LAYER_REC && !b && p < 4u) {    /* a setting on (LEVEL: the click on) lit, the rest breathe; */
             on = p == 1u ? rp_get(RP_CLICK) != 0u : p == 2u ? rp_get(RP_COUNTIN) != 0u :   /* CLEAR: something to */
                  p == 3u && rp_get(RP_CLICK) != 0u;    /* clear, not while a song plays */
@@ -1054,7 +1150,7 @@ static void eqa_row(uint32_t n)
 static void layer_edit(void)                            /* the engines from F3, INIT next (LY_INIT), CLEAN INIT after */
 {                                                        /* it (1.5.5), the sound under them (cells show the engine's
                                                          * icon, not the key's note) */
-    uint32_t n = NENG_SHOWN < LY_INIT ? NENG_SHOWN : LY_INIT, cells = n + 2u, i, h = cells > 12u ? 20u : 28u;   /* 4 rows of 20: 8 px clear above the sound row */
+    uint32_t n = NENG_KEYS < LY_INIT ? NENG_KEYS : LY_INIT, cells = n + 2u, i, h = cells > 12u ? 20u : 28u;   /* 4 rows of 20: 8 px clear above the sound row */
     uint32_t na = eqa_count(TSEL);
     for (i = 0; i < cells; i++) {
         int32_t x = LC_X(i % 4u), y = 4 + (int32_t)(h + 4u) * (int32_t)(i / 4u);
@@ -1165,11 +1261,40 @@ static void layer_rec(void)
     }
 }
 
+#if RONDO_LAYOUT
+static void mk_card(uint32_t c, uint32_t e)
+{
+    char val[12];
+    const char *unit, *t = mk_text(e, val, &unit);
+    int32_t v = *mk_val(e), r = mk_min(e) ? (v + 100) * 5 : e == MK_DEPTH && !perf_harm_on() ? (100 - v) * 10 : v * 10;
+    int on = v || (e == MK_DEPTH && !perf_harm_on());
+    draw_column(c, e == MK_DEPTH && perf_harm_on() ? "SHIMR" : MK_NAME[e], t, unit, on ? VAL(c) : T_DIM, r, MK_ICON[e]);
+}
+#endif
 static void layer_cards(uint32_t l)
 {
     char val[12];
     const char *unit;
     uint32_t c;
+#if RONDO_LAYOUT
+    if (l == LAYER_FX) {                                /* RONDO: the four of the pool (FX > MASTER) */
+        for (c = 0; c < 4u; c++)
+            mk_card(c, mk_eff(c));
+    } else if (l == LAYER_ENV) {                        /* RONDO: NOW, NEXT, the stored ones, the flash (no knob) */
+        uint32_t n = 0;
+        for (c = 0; c < NBANK; c++)
+            n += bank_has(c);
+        val[0] = (char)('A' + bank.cur % NBANK);
+        val[1] = 0;
+        draw_column(0, "NOW", val, "", T_THEME, -1, ICON_X_PLAY);
+        if (bank.queue < NBANK) val[0] = (char)('A' + bank.queue);
+        else str_cpy(val, "--", sizeof val);
+        draw_column(1, "NEXT", val, "", bank.queue < NBANK ? T_THEME : T_DIM, -1, ICON_X_PATTERN);
+        fmt_int(val, (int32_t)n);
+        draw_column(2, "STORED", val, "/6", T_THEME, (int32_t)(n * 1000u / NBANK), ICON_X_SONG);
+        draw_column(3, "FLASH", bank.dirty ? "LATER" : "SAVED", "", bank.dirty ? T_DIM : T_THEME, -1, ICON_SAVE);
+    } else
+#endif
     if (l == LAYER_FX) {                                /* FILTER CRUSH THROW DEPTH */
         int32_t m = perf_k[0];
         fmt_int(val, m < 0 ? -m : m);
@@ -1227,6 +1352,110 @@ static void layer_cards(uint32_t l)
     }
 }
 
+#if RONDO_LAYOUT
+/* RONDO: ARP held. The four tracks as cells (black keys 1..4 pick them; each its effect's name; the one KNOB 1..4 ride
+ * selected, no effect dim), under them the target's effect as the INSERT page draws it (or where to give it one) */
+static void layer_arp(void)
+{
+    uint32_t k;
+    int32_t ty = clamp(TSEL->p[P_ITYPE], 0, IT_N - 1);
+    for (k = 0; k < NTRK; k++) {                         /* (black key k + 1 picks it, as GLO's mutes: no note label) */
+        int32_t t = clamp(trk[k].p[P_ITYPE], 0, IT_N - 1);
+        lcell(LC_X(k), 4, LC_H, 0, trk_icon(k, 0), 0, N_ITYPE[t], k == song.sel ? LS_SEL : t ? LS_OFF : LS_DIM, 0);
+    }
+    if (!ty) {
+        cv_text_in(6, 70, 228, &AF_S, "NO EFFECT: FX > INSERT", T_MID, T_SURF);
+        return;
+    }
+    {
+        int32_t oy = cv_oy, ht = graph_ht;
+        cv_oy = oy + 50;
+        graph_ht = 66;
+        graph_insert(TSEL, T_THEME);
+        cv_oy = oy;
+        graph_ht = ht;
+    }
+}
+#endif
+
+#if RONDO_LAYOUT
+/* RONDO: ENV held. F3..D4 as six cells, A..F, three a row: the key's note, the pattern's letter, its four tracks'
+ * pictures (as SONG draws them); the current one selected, the next one flashing, an empty key EMPTY; under them
+ * a line of what happens */
+#define LE_X(c) (6 + 77 * (int32_t)(c))                  /* three cells a row, 74 px wide, 3 px apart: x 6 .. 234 */
+#define LE_W 74
+static void layer_env(void)
+{
+    static const char *const NOTE[NBANK] = {"F3", "G3", "A3", "B3", "C4", "D4"};
+    uint32_t p, k;
+    char b[32], a[2] = {0, 0}, c[2] = {0, 0};
+    for (p = 0; p < NBANK; p++) {
+        int32_t x = LE_X(p % 3u), y = 4 + 46 * (int32_t)(p / 3u), lx = x + 6, lw = LE_W - 12;
+        uint32_t st = p == bank.cur ? LS_SEL : p == bank.queue ? ((fm1_ms / 250u) % 2u ? LS_WAIT : LS_OFF) :
+                      bank_has(p) && !chain_busy() ? LS_OFF : LS_DIM;
+        uint16_t ink, fill = lc_box(x, y, LE_W, LC_H, lc_fill(st, &ink));
+        uint16_t idle = fill == T_RAISE || fill == T_SURF;
+        a[0] = (char)('A' + p);
+        cv_text_on(x + 5, y + 3, &AF_S, NOTE[p], idle ? T_MID : ink, fill);
+        cv_text_r(x + LE_W - 5, y + 2, &AF_M, a, ink, fill);
+        if (!bank_has(p)) {
+            GFX_HOOK_ALIGN(x, 0, x + LE_W, 0, AL_H | AL_PASS, "pattern cell EMPTY centred across");
+            cv_text_in(x, y + 26 - AF_S_CAP_Y, LE_W, &AF_S, "EMPTY", T_DIM, fill);
+            continue;
+        }
+        for (k = 0; k < NTRK; k++) {                     /* the four tracks: a bar per cell of the pattern */
+            uint32_t den, i;
+            uint8_t n;
+            int32_t ty = y + 21 + 5 * (int32_t)k;
+            bank_info(p, k, &den, &n);
+            for (i = 0; i < n; i++) {
+                int32_t x0 = lx + (int32_t)(i * (uint32_t)lw / n), x1 = lx + (int32_t)((i + 1u) * (uint32_t)lw / n) - 1;
+                uint32_t h = (den >> (2u * i)) & 3u;
+                cv_rect(x0, ty, x1 > x0 ? x1 - x0 : 1, 3, h ? ux_mix(fill, ink, 30 + 23 * (int32_t)h) : ux_mix(fill, ink, 12));
+            }
+        }
+    }
+    a[0] = (char)('A' + bank.cur % NBANK);
+    if (chain_busy())
+        str_cpy(b, "SONG PLAYING: STOP TO SWITCH", sizeof b);
+    else if (bank.queue < NBANK) {
+        c[0] = (char)('A' + bank.queue);
+        str_cpy(b, a, sizeof b);
+        str_cpy(b + str_len(b), " NOW, ", sizeof b - str_len(b));
+        str_cpy(b + str_len(b), c, sizeof b - str_len(b));
+        str_cpy(b + str_len(b), " AT ITS END", sizeof b - str_len(b));
+    } else {
+        str_cpy(b, a, sizeof b);
+        str_cpy(b + str_len(b), song.playing ? " NOW. A KEY: NEXT" : " NOW. A KEY: GO", sizeof b - str_len(b));
+    }
+    GFX_HOOK_ALIGN(3, 96, 237, 118, AL_HV, "pattern bank status centred");
+    cv_text_in(3, 96 + CAP_IN(S, 22), 234, &AF_S, b, T_MID, T_SURF);
+}
+#undef LE_X
+#undef LE_W
+#endif
+
+/* RONDO: SEQ held, SELECT turned: the four tracks, the one picked raised; SEQ let go opens its tracker */
+static void layer_pick(void)
+{
+    uint32_t k, p = tk.pick ? tk.pick - 1u : song.sel;
+    for (k = 0; k < NTRK; k++) {
+        int32_t y = 6 + (int32_t)k * 26;
+        int sel = k == p;
+        uint16_t bg = sel ? T_THEME : T_SURF, fg = sel ? T_INK : T_TEXT;
+        char b[16];
+        if (sel)
+            cv_rrect(8, y, 224, 24, 4, T_THEME, T_SURF);
+        b[0] = 'T';
+        b[1] = (char)('1' + k);
+        b[2] = 0;
+        cv_text_on(16, y + 3, &AF_M, b, fg, bg);
+        cv_text_on(48, y + 4, &AF_S, ENGINES[trk[k].eng_req % NENGINES]->name, sel ? T_INK : T_MID, bg);
+        trk_short_name(k, b);
+        cv_text_on(112, y + 4, &AF_S, b, fg, bg);
+    }
+}
+
 static void draw_layer(void)
 {
     uint32_t l = ui.layer % LAYER_N, sig = l * 7919u + ux.gen * 977u;
@@ -1240,7 +1469,7 @@ static void draw_layer(void)
     {
         uint32_t p;
         sig += (perf_kill ? 0u : perf_held | perf_latched) * 31u + perf_latch_on * 11u + perf_act * 131u + perf_avail() * 7u + (uint32_t)perf_harm_on() * 3u +
-               fx_key_held() * 4099u;
+               fx_key_held() * 4099u + (uint32_t)song.g[G_ENGGO] * 65599u;
         for (p = 0; p < PF_KEYS; p++)                   /* (the key map) */
             sig = sig * 33u + perf_map[p];
     }
@@ -1251,8 +1480,29 @@ static void draw_layer(void)
         sig += (uint32_t)TSEL->p[P_SCALE] * 31u;
     else if (l == LAYER_REC)
         sig += (uint32_t)ui_rec_prefs * 31u + (uint32_t)chain_busy() * 3u + (uint32_t)rec_clearable() * 5u + song.sel * 977u;
+#if RONDO_LAYOUT
+    else if (l == LAYER_ARP) {
+        uint32_t k;
+        sig += song.sel * 977u + (uint32_t)song.g[G_BPM] * 7u;
+        for (k = 0; k < NTRK; k++)
+            sig = sig * 31u + (uint32_t)trk[k].p[P_ITYPE];
+        for (k = 0; k < 4u; k++)
+            sig = sig * 131u + (uint32_t)TSEL->p[P_IA + k];
+        sig += (uint32_t)TSEL->p[P_IMIX] * 65537u;
+    } else if (l == LAYER_ENV) {
+        uint32_t p, k, den;
+        uint8_t n;
+        sig += bank.cur * 977u + bank.queue * 7919u + bank.used * 131u + bank.dirty * 65599u + bank.gen * 31u +
+               (uint32_t)chain_busy() * 3u + (uint32_t)song.playing * 5u;
+        if (bank.queue < NBANK)
+            sig += (fm1_ms / 250u) % 2u * 1000003u;      /* (the next one flashing) */
+        for (p = 0; p < NBANK; p++)
+            for (k = 0; k < NTRK; k++)
+                sig = sig * 33u + bank_info(p, k, &den, &n) + den * 7u + n;
+    }
+#endif
     else if (l == LAYER_SEQ)
-        sig += (uint32_t)drum_track(TSEL) * 31u + ui.lane * 5u + (uint32_t)chain_busy() * 3u + (uint32_t)TSEL->p[P_E0] * 131u + song.sel * 977u +
+        sig += tk.pick * 1000003u + (uint32_t)drum_track(TSEL) * 31u + ui.lane * 5u + (uint32_t)chain_busy() * 3u + (uint32_t)TSEL->p[P_E0] * 131u + song.sel * 977u +
                (eu.on ? 7u + eu.hits * 13u + eu.steps * 1031u + eu.rot * 65537u + (uint32_t)TSEL->p[P_SLEN] * 257u : 0u);
     else
         sig += snd_id() * 31u + (uint32_t)preset_favorite() * 5u + (uint32_t)chain_busy() * 3u + up_gen * 101u +
@@ -1268,10 +1518,18 @@ static void draw_layer(void)
             layer_glo();
         else if (l == LAYER_SCL)
             layer_scl();
+        else if (l == LAYER_SEQ && tk.pick)
+            layer_pick();
         else if (l == LAYER_SEQ)
             layer_seq();
         else if (l == LAYER_REC)
             layer_rec();
+#if RONDO_LAYOUT
+        else if (l == LAYER_ARP)
+            layer_arp();
+        else if (l == LAYER_ENV)
+            layer_env();
+#endif
         else
             layer_edit();
         cv_blit(0, Y_GRAPH);
