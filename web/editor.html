@@ -8,7 +8,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Felucca Editor</title>
+<title>Dungeon Tracker Editor</title>
 <style>
   /* Fukiai: Hügelton Instruments' icon font (MIT, FUKIAI-LICENSE.txt). Icons are text in .ic spans;
      they stay hidden until the face has loaded (html.fk), so a missing font never shows boxes. */
@@ -157,7 +157,7 @@
 <body>
 <main>
   <button class="lang" id="lang"></button>
-  <h1>Felucca Editor</h1>
+  <h1>Dungeon Tracker Editor</h1>   <!-- (Felucca's editor, brought up to Dungeon Tracker; credits below) -->
   <p class="dim"><a href="../installer/" style="color:inherit" data-t="installer"></a></p>
   <!-- always visible: connection, version, sync mode, the tabs and (Sound / Sequencer / Tracks) the track selector -->
   <header class="top">
@@ -445,6 +445,7 @@ const parse = {
     o.fm6 = null;                                 /* FM6 patches (cmds 68..71): the factory and bank slot counts */
     o.syncCaps = 0;                               /* live sync: bit 0 WATCH while on keeps pending pushes, bit 1 no RELOAD */
     o.ratchet = 0;                                /* a step's ratchet (STEP_SET's byte after the chance), 0 = none */
+    o.songLanes = 0;                              /* song sections with a slot per track (SONG ops 4..7): the tracks, 0 = none */
     for (const p of [8, 11]) if (o.motionMax && trailer[p] === 0x46 && trailer[p + 1] === 1) {   /* for the editor's */
       o.fm6 = { factory: trailer[p + 2], bank: trailer[p + 3], caps: 0 };                         /* PRESET / G_ENGSEL */
       if (trailer[p + 4] === 0x53 && trailer[p + 5] === 1) o.syncCaps = trailer[p + 6] & 3;
@@ -453,7 +454,18 @@ const parse = {
       let r = trailer[p + 7] === 0x50 ? p + 10 : p + 7;                                   /* RATCH after FM6 v2 */
       if (trailer[r] === 0x4E && trailer[r + 1] === 1) r += 3;                            /* and the MENU settings (1.0.4) */
       if (o.syncCaps && trailer[r] === 0x52 && trailer[r + 1] === 1) o.ratchet = trailer[r + 2];   /* RATCH: max hits */
+      if (o.ratchet) {                              /* then 1.1 LOCKS (4C), 1.2 MOTION 128 (41), NUDGE (54), and 1.2's song
+                                                       sections with a slot per track (57 01 NTRK: SONG ops 4..7) */
+        let q = r + 3;
+        if (trailer[q] === 0x4C && trailer[q + 1] === 1) q += 3;
+        if (trailer[q] === 0x41 && trailer[q + 1] === 1) q += 4;
+        if (trailer[q] === 0x54 && trailer[q + 1] === 1) q += 3;
+        if (trailer[q] === 0x57 && trailer[q + 1] === 1) o.songLanes = trailer[q + 2];
+      }
     }
+    /* RE-1 (its engines hold FMKIT): a section's slot names a pattern of the PATTERN BANK, A..F (0..3 A..D, 4 silent,
+       5 6 E F: core.h chain_pat), not a PROJECT slot */
+    o.re1 = o.engines.includes("FMKIT");
     return o;
   },
   [CMD.UI_STATE](a) {
@@ -499,7 +511,8 @@ const parse = {
   [CMD.SONG](a) {
     const r = new Reader(a);
     const o = { op: r.b(), rc: r.b(), count: r.b(), playing: r.b(), row: r.b(), remaining: r.b(), rows: [] };
-    for (let i = 0; i < o.count; i++) o.rows.push({ slot: r.b(), repeat: r.b() });
+    for (let i = 0; i < o.count; i++)               /* ops 4..7: a slot per track, then the repeats */
+      o.rows.push(o.op >= 4 ? { lanes: [r.b(), r.b(), r.b(), r.b()], repeat: r.b() } : { slot: r.b(), repeat: r.b() });
     return o;
   },
   [CMD.MOTION](a) {
@@ -612,9 +625,15 @@ const req = {
       ...(st.chance == null || st.ratchet == null ? [] : [Math.max(1, Math.min(4, st.ratchet | 0))])]];   /* (only after the chance) */
   },
   preset: (e, p) => [CMD.PRESET, [e & 0x7F, p & 0x7F]],
-  project: (op, slot) => { if (![0, 1, 2].includes(op)) throw new Error("bad PROJECT op"); return [CMD.PROJECT, [op, slot & 3]]; },   /* 0 load, 1 save, 2 query */
+  project: (op, slot) => { if (![0, 1, 2].includes(op)) throw new Error("bad PROJECT op"); return [CMD.PROJECT, [op, slot & 15]]; },   /* 0 load, 1 save, 2 query (slots A..D; Dungeon Tracker A..K) */
   song: (op = 0, rows = []) => {
-    if (![0, 1, 2, 3].includes(op) || rows.length > 16 || rows.some((r) => !Number.isInteger(r.slot) || r.slot < 0 || r.slot > 3 || !Number.isInteger(r.repeat) || r.repeat < 1 || r.repeat > 16)) throw new Error("bad SONG rows");
+    const rep = (r) => Number.isInteger(r.repeat) && r.repeat >= 1 && r.repeat <= 16;
+    if (op >= 4 && op <= 7) {                       /* sections, a slot per track (0..6: RE-1's A..F and 4 silent) */
+      if (rows.length > 16 || rows.some((r) => !rep(r) || !Array.isArray(r.lanes) || r.lanes.length !== 4 ||
+          r.lanes.some((v) => !Number.isInteger(v) || v < 0 || v > 6))) throw new Error("bad SONG rows");
+      return [CMD.SONG, op === 5 ? [op, rows.length, ...rows.flatMap((r) => [...r.lanes, r.repeat])] : [op]];
+    }
+    if (![0, 1, 2, 3].includes(op) || rows.length > 16 || rows.some((r) => !Number.isInteger(r.slot) || r.slot < 0 || r.slot > 3 || !rep(r))) throw new Error("bad SONG rows");
     return [CMD.SONG, op === 1 ? [op, rows.length, ...rows.flatMap((r) => [r.slot, r.repeat])] : [op]];
   },
   motion: (track, op = 0, arg = {}) => {
@@ -1226,12 +1245,16 @@ const bank = {
   async erase(rq, slot) { return parse[CMD.UP_ERASE](await rq(req.upErase(slot), FLASH_OPT)).rc; },
 };
 
+/* RE-1 (its names hold FMKIT): SLICE (13) is not offered on the device's lists (core.h NENG_SHOWN), so not here either;
+   a sound of it still loads and plays. The kit engines: steps that strike lanes (seq.c, DRUM and FMKIT) */
+const ENGINE_NOT_SHOWN = new Set(["SLICE"]);
+const KIT_ENGINES = new Set(["DRUM", "FMKIT"]);
 /* the current sound: DUMP + the first 16 steps */
 async function capturePatch(rq, info, name) {
   const dump = parse[CMD.DUMP](await rq(req.dump()), info);
   const steps = [];
   for (let i = 0; i < UP.PAT && i < info.nstep; i++) steps.push(parse[CMD.STEP_GET](await rq(req.stepGet(i))));
-  const drum = info.engines[dump.engine] === "DRUM";   /* (a DRUM track that strikes a lane: its grid) */
+  const drum = KIT_ENGINES.has(info.engines[dump.engine]);   /* (a kit track, DRUM or RE-1's FMKIT, strikes lanes: its grid) */
   let fm6 = null;                                      /* an FM6 track: its own patch (the selected track's) */
   if (info.fm6 && info.engines[dump.engine] === "FM6") {
     const sel = info.ntrk ? parse[CMD.TRACK](await rq(req.track())).sel : 0;
@@ -1659,7 +1682,7 @@ function fromPerc(pt, engines, pe0) {
 const engineLabel = (engines, e) => (e === 1 && (engines || [])[1] === "-" ? "FM6" : (engines || [])[e] ?? String(e));
 
 function makeMockDevice(opt = {}) {
-  const NONOFF = ["OFF", "ON"], NDIV = ["1/4", "1/8", "1/16", "1/32", "8T", "16T", "1/2", "1/1", "2BAR", "4BAR"], NGO = ["--", "GO"], NDASH = ["--"];
+  const NONOFF = ["OFF", "ON"], NDIV = ["1/4", "1/8", "1/16", "1/32", "8T", "16T", "1/2", "1/1", "2BAR", "4BAR"], NGO = ["--", "GO"], NDASH = ["--"], NPSLOT = ["Q", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"];   /* (1.0.1: SAVE > PROJECT's SLOT, QUICK first; Dungeon Tracker: A..K) */
   const D = (label, fmt, min, max, def, names = null, unit = "") => ({ label, fmt, min, max, def, names, unit });
   const E = (label, names, def) => D(label, F.ENUM, 0, names.length - 1, def, names);
   const MSRC = ["OFF", "LFO", "ENV", "VEL", "KEY", "RAND", "MODW", "AT", "EXPR", "S&H", "SLEW"];   /* (append-only: S&H SLEW, #132) */
@@ -1685,9 +1708,10 @@ function makeMockDevice(opt = {}) {
     E("TIME", [...NDIV, "1/8D", "1/16D", "1/4D"], 1), D("FDBK", F.PCT, 0, 120, 60), D("COLR", F.PCT, 0, 127, 70), D("MIX", F.PCT, 0, 127, 90),
     D("SIZE", F.PCT, 0, 127, 90), D("DAMP", F.PCT, 0, 127, 60), D("CRT", F.LFOHZ, 0, 127, 40), D("CDP", F.PCT, 0, 127, 60),
     E("MIDI", ["USB", "TRS"], 0), E("SYNC", NDASH, 0), E("ROUT", ["CH1-4", "SEL", "CH5-8", "CH9-12", "CH13-16", "TRACK"], 0), D("CPU", F.INT, 0, 0, 0),
-    D("SLOT", F.INT, 1, 4, 1), E("NAME", NDASH, 0), E("LOAD", NGO, 0), E("SAVE", NGO, 0),
-    E("ENG", ["ANALOG", "-", "PHASE", "LOFI", "SAMPLE", "VOICE", "TRIO", "WHEEL",
-      "GRAIN", "PHYS", "DRUM", "NOISE", "FM6", "SLICE"], 0), E("SET", NGO, 0),
+    E("SLOT", NPSLOT, 1), E("NAME", NDASH, 0), E("LOAD", NGO, 0), E("SAVE", NGO, 0),
+    E("ENG", ["ANALOG", "-", "PHASE", "CHIP", "SAMPLE", "VOICE", "TRIO", "WHEEL",
+      "GRAIN", "PHYS", "DRUM", "NOISE", "FM6", "-", "FMKIT", "FMTONE", "WAVES", "SID"], 0),
+    D("MFX", F.INT, 0, 4095, 0),                    /* RE-1: G_ENGGO holds the FX layer's four master effects (3 bits each) */
     E("CLRSQ", NGO, 0), E("INIT", NGO, 0),
     E("TYPE", ["ROOM", "SPRING", "HALL"], 2),       /* G_RTYPE (id 24, was G_DRCH): the reverb's model (HALL: 1.2) */
     D("-", F.INT, 0, 0, 0), D("-", F.INT, 0, 0, 0),   /* G_DRLVL, G_DRREV: inert since 1.0 */
@@ -1714,15 +1738,22 @@ function makeMockDevice(opt = {}) {
       presets: [P("BRASS", [0, 0, 30, 90, 0, 0, 0, 0], [8, 70, 90, 40], 0, 6), P("ORGAN", [3, 0, 40, 0, 0, 0, 0, 0], [0, 127, 127, 30], 0, 6),
         P("STRING", [0, 4, 50, 40, 12, 0, 0, 0], [40, 90, 100, 70], 0, 5), P("RESO", [5, 0, 60, 60, 0, 0, 0, 0], [0, 70, 30, 60], 0, 1),
         P("BELL", [6, 0, 80, 50, 0, 0, 0, 0], [0, 95, 0, 90], 0, 7), P("WIRE", [4, 7, 70, 40, 7, 0, 0, 0], [10, 80, 80, 60], 0, 4)] },
-    { name: "LOFI", titles: ["CHIP", "MOTN"], edit: [E("CHIP", ["4BIT", "4B/2", "8BIT", "1BIT", "STEP"], 0), E("WAVE", ["PLS", "TRI", "SAW", "NOIS", "WRAM"], 0), D("DUTY", F.INT, 0, 127, 64),
+    { name: "CHIP", titles: ["CHIP", "MOTN"], edit: [E("MODE", ["4BIT", "4B/2", "8BIT", "1BIT", "STEP"], 0), E("WAVE", ["PLS", "TRI", "SAW", "NOIS", "WRAM"], 0), D("DUTY", F.INT, 0, 127, 64),
         D("CRSH", F.PCT, 0, 127, 0), D("SWP", F.PCT, 0, 127, 0), D("VIB", F.PCT, 0, 127, 0), E("ARP", ["OFF", "OCT", "MAJ", "MIN"], 0), D("TONE", F.PCT, 0, 127, 127)],
       presets: [P("PULSE LD", [0, 0, 32, 0, 0, 20, 0, 127], [0, 60, 90, 30], 1, 4), P("WAVE BASS", [1, 1, 0, 0, 0, 0, 0, 90], [0, 50, 70, 20], 1, 2),
         P("ARP 8BIT", [2, 0, 96, 0, 0, 0, 2, 110], [0, 60, 80, 40], 0, 13), P("WAVE LEAD", [0, 4, 92, 0, 0, 18, 0, 110], [0, 70, 90, 30], 1, 3),
-        P("STEP LEAD", [4, 0, 40, 34, 0, 16, 0, 127], [0, 64, 127, 55], 1, 4)] },
-    { name: "SAMPLE", titles: ["SET", "TONE"], edit: [E("SET", ["PIANO", "PIANO", "FLUTE", "SAX", "PIANO", "USR1", "USR2", "USR3"], 0), D("TUNE", F.SEMI, -24, 24, 0), D("BITS", F.INT, 0, 127, 0),
+        P("STEP LEAD", [4, 0, 40, 34, 0, 16, 0, 127], [0, 64, 127, 55], 1, 4),
+        /* RE-1's chip set */
+        P("SQUARE 50", [4, 0, 80, 0, 0, 20, 0, 127], [0, 60, 127, 40], 1, 4), P("TRI BASS", [4, 1, 0, 0, 0, 0, 0, 127], [0, 50, 127, 10], 1, 2),
+        P("PULSE BASS", [4, 0, 48, 44, 0, 0, 0, 110], [0, 60, 127, 20], 1, 2), P("CHIP PLUCK", [4, 0, 48, 16, 0, 0, 0, 127], [0, 40, 127, 30], 0, 13),
+        P("FAST ARP", [2, 0, 64, 8, 0, 0, 3, 110], [0, 70, 90, 40], 0, 13), P("LASER ZAP", [4, 0, 80, 12, 90, 0, 0, 127], [0, 30, 127, 60], 1, 0),
+        P("CHIP KICK", [4, 1, 0, 8, 110, 0, 0, 127], [0, 30, 127, 50], 1, 0), P("NOISE HAT", [3, 3, 0, 0, 0, 0, 0, 127], [0, 24, 0, 28], 0, 0),
+        P("NOISE SNR", [3, 3, 0, 40, 0, 0, 0, 110], [0, 45, 0, 45], 0, 0), P("WAVE ORGAN", [0, 4, 76, 0, 0, 10, 0, 100], [10, 80, 110, 50], 0, 0),
+        P("8BIT SAW", [2, 2, 0, 0, 0, 12, 0, 100], [0, 60, 100, 30], 1, 4), P("VOX CHOIR", [0, 4, 92, 0, 0, 24, 0, 90], [50, 90, 110, 80], 0, 0)] },
+    { name: "SAMPLE", titles: ["SET", "TONE"], edit: [E("SET", ["PIANO", "DUNGEON KIT", "FLUTE", "LOFI KIT", "PIANO", "USR1", "USR2", "USR3"], 0), D("TUNE", F.SEMI, -24, 24, 0), D("BITS", F.INT, 0, 127, 0),
         E("LOOP", NONOFF, 1), D("CUT", F.INT, 0, 127, 127), NONE, D("DRV", F.PCT, 0, 127, 0), NONE],
-      presets: [P("PIANO", [0, 0, 0, 1, 127, 0, 0, 0], [0, 127, 127, 70]), P("PIANO", [0, 0, 0, 1, 127, 0, 0, 0], [0, 127, 127, 70]),
-        P("FLUTE", [2, 0, 0, 1, 127, 0, 0, 0], [12, 80, 120, 60]), P("SAX", [3, 0, 0, 1, 127, 0, 0, 0], [12, 80, 120, 60])] },
+      presets: [P("PIANO", [0, 0, 0, 1, 127, 0, 0, 0], [0, 127, 127, 70]), P("DUNGEON KIT", [1, 0, 0, 0, 127, 0, 0, 0], [0, 127, 127, 60], 0, 12),
+        P("FLUTE", [2, 0, 0, 1, 127, 0, 0, 0], [12, 80, 120, 60]), P("LOFI KIT", [3, 0, 0, 0, 127, 0, 0, 0], [0, 127, 127, 60], 0, 12)] },
     { name: "VOICE", titles: ["VOWL", "TONE"], edit: [D("VOWL", F.INT, 0, 127, 0), D("VOWL2", F.INT, 0, 127, 64), D("TALK", F.TIME, 0, 127, 0),
         D("SHIFT", F.SEMI, -12, 12, 0), D("BUZZ", F.PCT, 0, 127, 64), D("BRTH", F.PCT, 0, 127, 10), D("Q", F.PCT, 0, 127, 64), D("RAND", F.PCT, 0, 127, 0)],
       presets: [P("CHOIR AAH", [0, 0, 0, 0, 40, 22, 60, 0], [85, 90, 115, 95], 0, 5), P("VOX LEAD", [32, 0, 0, 2, 90, 8, 72, 0], [6, 70, 105, 55], 1, 4),
@@ -1739,7 +1770,7 @@ function makeMockDevice(opt = {}) {
       presets: [P("FULL ORGAN", [15, 0, 0, 0, 0, 30, 20, 1], [0, 64, 127, 45], 0, 5), P("JAZZ PERC", [4, 0, 0, 0, 2, 50, 8, 1], [0, 64, 127, 40], 0, 3),
         P("GOSPEL", [6, 0, 0, 0, 1, 60, 40, 2], [0, 64, 127, 45], 0, 6), P("SOFT FLUTE", [1, 0, -2, 0, 0, 10, 0, 1], [0, 64, 127, 55], 0, 5),
         P("ROCK DRIVE", [7, 0, 0, 0, 0, 70, 100, 2], [0, 64, 127, 40], 0, 4)] },
-    { name: "GRAIN", titles: ["GRAN", "SPRY"], edit: [E("SRC", ["PIANO", "PIANO", "FLUTE", "SAX", "PIANO", "USR1", "USR2", "USR3"], 0),
+    { name: "GRAIN", titles: ["GRAN", "SPRY"], edit: [E("SRC", ["PIANO", "DUNGEON KIT", "FLUTE", "LOFI KIT", "PIANO", "USR1", "USR2", "USR3"], 0),
         D("POS", F.PCT, 0, 127, 32), D("SIZE", F.PCT, 0, 127, 80), D("DENS", F.PCT, 0, 127, 80),
         D("PTCH", F.SEMI, -24, 24, 0), D("SPRD", F.PCT, 0, 127, 30), D("RAND", F.PCT, 0, 127, 10), D("TONE", F.PCT, 0, 127, 127)],
       presets: [P("CLOUD PAD", [2, 50, 92, 88, 0, 40, 14, 100], [70, 90, 120, 90], 0, 5), P("GLITCH", [3, 64, 24, 112, 0, 100, 90, 127], [0, 70, 100, 30], 0, 4),
@@ -1770,10 +1801,101 @@ function makeMockDevice(opt = {}) {
         P("FM BASS", [0, 0, 0, 0, 0, 0, 0, 2], [0, 0, 127, 0], 1, 2), P("BRASS", [0, 0, 0, 0, 0, 0, 0, 3], [0, 0, 127, 0], 0, 4),
         P("PAD", [0, 0, 0, 0, 0, 0, 30, 4], [0, 0, 127, 0], 0, 5), P("MARIMBA", [0, 0, 0, 0, 0, 0, 0, 5], [0, 0, 127, 0], 0, 3),
         P("ORGAN", [0, 0, 0, 0, 0, 0, 0, 6], [0, 0, 127, 0], 0, 6), P("PLUCK", [0, 0, 0, 0, 0, 0, 0, 7], [0, 0, 127, 0], 0, 13)] },
-    { name: "SLICE", titles: ["SLCE", "PLAY"], edit: [E("SRC", ["BREAK", "USR1", "USR2", "USR3", "PIANO"], 0),
-        E("DIV", ["4", "8", "16", "32", "AUTO", "MAN"], 2), D("START", F.INT, 0, 31, 0), D("PTCH", F.SEMI, -24, 24, 0),
-        E("MODE", ["ONE", "GATE", "LOOP"], 0), E("REV", ["OFF", "ON"], 0), D("DCAY", F.TIME, 0, 127, 127), D("TONE", F.INT, 0, 127, 127)],
-      presets: [P("CHOP", [0, 2, 0, 0, 0, 0, 127, 127], [0, 127, 127, 30], 0, 9), P("STUTTER", [0, 1, 0, 0, 1, 0, 90, 110], [0, 127, 127, 12], 0, 10)] },
+    /* 13: reserved (SLICE, retired in Dungeon Tracker: src/engines.c ENG_SLICE_GONE; its sounds load as SAMPLE) */
+    { name: "-", titles: ["-", "-"], edit: [D("-", F.INT, 0, 7, 0), D("-", F.INT, 0, 14, 1), D("-", F.INT, 0, 14, 1),
+        D("-", F.INT, 0, 14, 1), D("-", F.PCT, 0, 127, 60), D("-", F.INT, 0, 127, 60), D("-", F.PCT, 0, 127, 0), NONE],
+      presets: [] },
+    /* RE-1 (eng_cycle.c): 14 FMKIT, four FM drum voices on the GM drum map; 15 FMTONE, a two-operator voice */
+    { name: "FMKIT", titles: ["KIT", "FEEL"], edit: [D("TUNE", F.BIPCT, -64, 63, 0), D("DECAY", F.BIPCT, -64, 63, 0), D("COLOR", F.BIPCT, -64, 63, 0),
+        D("OPEN", F.PCT, 0, 127, 64), D("CLICK", F.PCT, 0, 127, 40), D("VELO", F.PCT, 0, 127, 80), D("DRV", F.PCT, 0, 127, 0), D("VARI", F.PCT, 0, 127, 12)],
+      presets: [P("CYCLE KIT", [0, 0, 0, 64, 40, 80, 0, 12], [0, 100, 127, 100], 0, 12), P("808ISH", [0, 0, 0, 80, 16, 80, 0, 6], [0, 100, 127, 100], 0, 12),
+        P("909ISH", [0, 0, 0, 56, 72, 80, 24, 8], [0, 100, 127, 100], 0, 12), P("GRIT KIT", [-4, -4, 0, 64, 90, 70, 80, 20], [0, 100, 127, 100], 0, 12),
+        P("METAL KIT", [0, 0, 0, 90, 30, 90, 10, 30], [0, 100, 127, 100], 0, 12), P("DUB KIT", [-2, 6, -4, 100, 10, 90, 16, 16], [0, 100, 127, 100], 0, 12),
+        P("BOOM BAP", [0, 0, -6, 50, 30, 90, 10, 10], [0, 100, 127, 100], 0, 12), P("TECHNO KIT", [0, -4, 4, 60, 60, 70, 20, 8], [0, 100, 127, 100], 0, 12),
+        P("ELECTRO KIT", [0, 0, 0, 70, 20, 85, 0, 6], [0, 100, 127, 100], 0, 12), P("DUSTY KIT", [-6, -2, -10, 40, 20, 95, 30, 24], [0, 100, 127, 100], 0, 12),
+        P("TRIBAL KIT", [0, 4, 0, 50, 30, 85, 0, 30], [0, 100, 127, 100], 0, 12), P("MINIMAL KIT", [0, -10, 0, 40, 80, 60, 0, 4], [0, 100, 127, 100], 0, 12),
+        P("FORGE KIT", [-6, 0, 8, 70, 100, 70, 70, 18], [0, 100, 127, 100], 0, 12), P("CHIP KIT 2", [4, -6, 6, 50, 20, 60, 20, 6], [0, 100, 127, 100], 0, 12),
+        P("CAVE KIT", [-4, 6, -6, 70, 20, 80, 10, 16], [0, 100, 127, 100], 0, 12), P("DISCO KIT", [0, 0, 0, 90, 40, 80, 0, 10], [0, 100, 127, 100], 0, 12)] },
+    { name: "FMTONE", titles: ["TONE", "BODY"], edit: [E("RATIO", ["0.5", "1", "1.5", "2", "2.5", "3", "3.5", "4", "5", "6", "7", "8", "1.41", "2.76", "3.14", "5.19"], 1),
+        D("COLOR", F.PCT, 0, 127, 64), D("CNTR", F.PCT, 0, 127, 64), D("MSUS", F.PCT, 0, 127, 32), D("FDBK", F.PCT, 0, 127, 0),
+        D("SWEEP", F.BIPCT, -64, 63, 0), D("STACK", F.PCT, 0, 127, 0), D("SUB", F.PCT, 0, 127, 0)],
+      presets: [P("FM PAD", [1, 44, 104, 56, 12, 0, 64, 0], [52, 90, 112, 78], 0, 5), P("CHORD EP", [1, 74, 66, 12, 0, 0, 24, 0], [0, 84, 52, 46], 0, 6),
+        P("STAB", [3, 84, 44, 0, 30, 4, 0, 0], [0, 56, 38, 26], 0, 6), P("GLASS PAD", [6, 62, 92, 24, 0, 0, 48, 0], [24, 100, 76, 84], 0, 5),
+        P("ORGAN", [3, 36, 127, 127, 0, 0, 0, 56], [0, 0, 127, 16], 0, 6), P("FM BASS", [1, 76, 46, 26, 40, 0, 0, 64], [0, 60, 92, 14], 1, 2),
+        P("SUB BASS", [1, 22, 34, 0, 0, 0, 0, 110], [0, 40, 112, 12], 1, 8), P("PLUCK BASS", [3, 92, 32, 0, 20, 6, 0, 44], [0, 56, 30, 12], 1, 1),
+        P("FM LEAD", [1, 86, 92, 72, 56, 0, 24, 0], [0, 70, 100, 32], 0, 4), P("SYNC LEAD", [3, 96, 100, 90, 72, 0, 0, 0], [0, 60, 110, 30], 0, 3),
+        P("BRASS", [1, 72, 70, 60, 20, -8, 32, 0], [14, 70, 100, 36], 0, 4), P("BELL", [13, 70, 84, 0, 0, 0, 20, 0], [0, 96, 0, 80], 0, 7),
+        P("REESE", [1, 60, 80, 60, 24, 0, 100, 40], [0, 60, 110, 20], 1, 8), P("DUB BASS", [1, 30, 40, 10, 0, 0, 0, 90], [0, 50, 100, 16], 1, 2),
+        P("SLAP BASS", [5, 96, 26, 0, 10, 8, 0, 30], [0, 52, 40, 12], 1, 1), P("GROWL FM", [0, 90, 70, 70, 80, 0, 0, 40], [0, 60, 100, 18], 1, 8),
+        P("ROLLING", [3, 70, 30, 0, 30, 4, 0, 60], [0, 48, 30, 10], 1, 2), P("WOOD BASS", [1, 50, 20, 0, 0, 2, 0, 50], [0, 64, 20, 24], 1, 2),
+        P("ZAP BASS", [1, 84, 20, 0, 40, 30, 0, 40], [0, 50, 50, 12], 1, 1), P("OCTAVE BASS", [0, 64, 50, 30, 20, 0, 40, 70], [0, 60, 90, 16], 1, 2),
+        P("WARM PAD", [1, 36, 110, 40, 8, 0, 90, 20], [70, 90, 110, 90], 0, 5), P("CHOIR FM", [3, 50, 110, 60, 0, 0, 80, 0], [60, 90, 110, 90], 0, 5),
+        P("DARK PAD", [0, 40, 100, 30, 20, 0, 70, 30], [80, 96, 110, 96], 0, 5), P("AIR PAD", [7, 30, 110, 40, 0, 0, 100, 0], [90, 96, 100, 100], 0, 5),
+        P("FM STRINGS", [1, 60, 90, 50, 30, -2, 110, 0], [50, 90, 110, 80], 0, 5), P("DX PIANO", [3, 80, 60, 10, 0, 0, 10, 0], [0, 88, 30, 50], 0, 6),
+        P("VIBES", [7, 56, 80, 0, 0, 0, 30, 0], [0, 92, 0, 70], 0, 7), P("CLAV", [5, 100, 30, 0, 40, 0, 0, 0], [0, 60, 30, 20], 0, 6),
+        P("ORGAN 2", [1, 50, 127, 100, 30, 0, 40, 80], [0, 0, 127, 16], 0, 6), P("MUSIC BOX", [11, 60, 70, 0, 0, 0, 0, 0], [0, 90, 0, 60], 0, 7),
+        P("FM HARP", [3, 64, 50, 0, 0, 0, 20, 0], [0, 80, 0, 60], 0, 3), P("KOTO", [5, 86, 40, 0, 20, 4, 0, 0], [0, 74, 0, 40], 0, 3),
+        P("DROP PLUCK", [13, 70, 36, 0, 0, 20, 0, 0], [0, 64, 0, 40], 0, 13), P("FM MARIMBA", [7, 60, 30, 0, 0, 0, 0, 0], [0, 80, 0, 50], 0, 3),
+        P("FM SAW LEAD", [1, 100, 100, 90, 64, 0, 0, 0], [0, 70, 110, 30], 1, 4), P("HOLLOW FM", [3, 70, 100, 90, 20, 0, 0, 30], [0, 70, 110, 34], 0, 4),
+        P("SOLO HORN", [1, 64, 70, 70, 10, -6, 20, 0], [20, 70, 100, 40], 0, 4), P("WHISTLE", [1, 10, 100, 10, 0, 0, 0, 0], [30, 80, 110, 40], 1, 4),
+        P("SCREAMER", [3, 110, 110, 100, 72, 0, 60, 0], [0, 70, 110, 30], 1, 4), P("GLIDE LEAD", [3, 90, 100, 80, 60, -10, 30, 0], [0, 70, 110, 30], 1, 4),
+        P("HERO LEAD", [1, 80, 90, 80, 20, 0, 30, 0], [10, 70, 110, 40], 0, 4), P("SIREN", [1, 80, 100, 80, 50, 63, 0, 0], [40, 90, 100, 60], 0, 7)] },
+    /* Dungeon Tracker (mutable/eng_waves.c): 16 WAVES, Ambika's oscillators (Emilie Gillet, GPL-3.0) through ANALOG's filter */
+    { name: "WAVES", titles: ["WAVE", "FLTR"], edit: [E("SHAPE", ["WT 1", "WT 2", "WT 3", "WT 4", "WT 5", "WT 6", "WT 7", "WT 8", "WT 9", "WT 10", "WT 11", "WT 12", "WT 13", "WT 14", "WT 15", "WT 16", "WAVEQ", "8BIT", "DPWM", "QSAW"], 0),
+        D("PRM", F.PCT, 0, 127, 32), D("PENV", F.BIPCT, -64, 63, 0), D("SUB", F.PCT, 0, 127, 0), D("CUT", F.CUTOFF, 0, 127, 100),
+        D("RES", F.PCT, 0, 127, 20), E("SUBT", ["SQ", "TRI", "PLS", "SQ 2", "TRI 2", "PLS 2"], 0), D("GRIT", F.PCT, 0, 127, 0)],
+      presets: [
+        P("WT PAD", [2, 40, 20, 0, 85, 20, 0, 0], [70, 90, 110, 90], 0, 5), P("WT SWEEP", [5, 10, 50, 0, 100, 30, 0, 0], [20, 95, 80, 60], 0, 4),
+        P("WT KEYS", [9, 64, -30, 0, 95, 10, 0, 0], [0, 80, 40, 50], 0, 6), P("WAVEQ BASS", [16, 30, 0, 64, 60, 50, 0, 0], [0, 60, 70, 30], 1, 2),
+        P("8BIT LEAD", [17, 50, 0, 0, 110, 10, 0, 30], [0, 70, 100, 40], 1, 4), P("DIRTY BASS", [18, 40, 0, 80, 55, 60, 3, 0], [0, 55, 60, 25], 1, 8),
+        P("QUAD PAD", [19, 50, 0, 0, 75, 15, 0, 0], [60, 90, 110, 85], 0, 5), P("GRIT KEYS", [12, 80, 0, 40, 90, 20, 1, 60], [0, 75, 50, 45], 0, 6),
+        P("TORCHLIGHT", [4, 50, 10, 0, 80, 15, 0, 6], [60, 90, 110, 95], 0, 5), P("CRYSTAL CAVE", [11, 40, 40, 0, 110, 10, 0, 0], [0, 88, 0, 80], 0, 7),
+        P("COIN GET", [17, 90, 30, 0, 120, 0, 0, 20], [0, 56, 0, 38], 0, 7), P("ACID WAVE", [18, 30, 20, 0, 45, 105, 0, 0], [0, 52, 40, 20], 1, 1),
+        P("BOSS FIGHT", [19, 60, 0, 40, 95, 25, 0, 0], [0, 70, 100, 30], 1, 4), P("GHOST CHOIR", [12, 64, 0, 0, 90, 20, 0, 0], [75, 90, 110, 100], 0, 5),
+        P("DEEP DELVE", [6, 127, 0, 90, 60, 0, 1, 0], [0, 60, 110, 20], 1, 8), P("LASER ZAP", [11, 0, 63, 0, 127, 30, 0, 40], [0, 62, 0, 40], 0, 12),
+        P("ARP RUNES", [14, 40, 45, 0, 100, 20, 0, 0], [0, 56, 30, 30], 0, 13), P("MANA POOL", [0, 30, 40, 0, 85, 15, 0, 0], [90, 100, 100, 100], 0, 5),
+        P("WT BASS", [1, 30, 0, 80, 60, 30, 0, 0], [0, 60, 80, 20], 1, 2), P("8BIT BASS", [17, 30, 0, 60, 90, 10, 0, 40], [0, 60, 90, 16], 1, 2),
+        P("QSAW BASS", [19, 40, 0, 60, 50, 40, 0, 0], [0, 58, 70, 18], 1, 8), P("RUBBER", [16, 50, -20, 40, 50, 70, 0, 0], [0, 54, 50, 16], 1, 1),
+        P("SUB WAVE", [6, 64, 0, 127, 50, 0, 1, 0], [0, 50, 110, 14], 1, 8), P("GRIT BASS", [18, 60, 0, 70, 70, 40, 3, 70], [0, 58, 80, 16], 1, 2),
+        P("ACID PULSE", [18, 20, 30, 0, 40, 115, 0, 0], [0, 48, 30, 16], 1, 1), P("DUSK PAD", [3, 50, 10, 0, 70, 15, 0, 0], [80, 95, 110, 95], 0, 5),
+        P("VOWEL PAD", [12, 50, 20, 0, 95, 10, 0, 0], [70, 90, 110, 90], 0, 5), P("GLASS WT", [11, 70, -20, 0, 110, 10, 0, 0], [50, 95, 100, 90], 0, 5),
+        P("DRONE", [19, 64, 0, 40, 60, 30, 1, 0], [90, 100, 120, 100], 0, 5), P("CRYPT PAD", [14, 30, 30, 20, 65, 25, 1, 0], [85, 100, 110, 100], 0, 5),
+        P("SHIMMER WT", [1, 90, 40, 0, 110, 10, 0, 0], [60, 95, 100, 100], 0, 5), P("WT PIANO", [9, 50, -20, 0, 100, 10, 0, 0], [0, 86, 30, 50], 0, 6),
+        P("LOFI KEYS", [4, 40, -10, 0, 80, 10, 0, 30], [0, 84, 40, 50], 0, 6), P("TOY PIANO", [10, 80, 0, 0, 115, 0, 0, 20], [0, 74, 0, 50], 0, 7),
+        P("WT PLUCK", [1, 40, 30, 0, 90, 30, 0, 0], [0, 60, 0, 40], 0, 3), P("8BIT PLUCK", [17, 70, 0, 0, 110, 0, 0, 40], [0, 56, 0, 36], 0, 13),
+        P("HARP RUNE", [13, 60, 20, 0, 100, 20, 0, 0], [0, 76, 0, 60], 0, 3), P("WT LEAD", [15, 70, 20, 0, 105, 20, 0, 0], [0, 70, 110, 40], 1, 4),
+        P("QSAW LEAD", [19, 70, 0, 30, 100, 25, 0, 0], [0, 70, 110, 36], 1, 4), P("PULSE HERO", [18, 24, 0, 0, 96, 20, 0, 0], [0, 70, 110, 36], 1, 4),
+        P("CHIP SOLO", [17, 40, 0, 0, 120, 0, 0, 20], [0, 70, 110, 30], 1, 4), P("VOWEL LEAD", [12, 70, 30, 0, 100, 20, 0, 0], [10, 70, 110, 40], 0, 4),
+        P("DRAGON", [19, 90, 0, 60, 110, 30, 3, 60], [0, 70, 110, 30], 1, 4), P("PORTAL", [11, 0, 63, 0, 110, 40, 0, 0], [60, 96, 100, 90], 0, 7),
+        P("TRAPDOOR", [16, 0, -63, 80, 70, 60, 4, 80], [0, 80, 0, 60], 0, 7), P("ROBOT TALK", [12, 64, -40, 0, 90, 40, 0, 100], [0, 60, 60, 30], 0, 13)] },
+    /* 1.3 (src/eng_sid.c): 17 SID, after the C64's chip */
+    { name: "SID", titles: ["OSC", "MOD"], edit: [E("WAVE", ["TRI", "SAW", "PLS", "NSE", "ST", "PT", "PS", "PST", "DRM"], 2),
+        D("PW", F.PCT, 0, 127, 64), D("PWM", F.PCT, 0, 127, 0), E("MOD", ["OFF", "SYNC", "RING", "S+R"], 0), D("TUNE", F.SEMI, 0, 48, 0),
+        D("SWEEP", F.BIPCT, -64, 63, 0), D("CUT", F.CUTOFF, 0, 127, 110), D("RES", F.PCT, 0, 127, 20)],
+      presets: [
+        P("MONTY BASS", [2, 40, 70, 0, 0, 0, 70, 50], [0, 64, 70, 20], 1, 2), P("GROWL BASS", [7, 50, 30, 0, 0, 0, 80, 40], [0, 60, 80, 20], 1, 8),
+        P("SAW BASS", [1, 64, 0, 0, 0, 0, 55, 85], [0, 58, 50, 20], 1, 1), P("SYNC LEAD", [1, 64, 0, 1, 19, 20, 110, 20], [0, 80, 100, 40], 1, 4),
+        P("PWM LEAD", [2, 48, 60, 0, 0, 0, 105, 15], [0, 78, 100, 45], 1, 4), P("TRI FLUTE", [0, 64, 0, 0, 0, 0, 120, 0], [25, 80, 110, 50], 1, 6),
+        P("RING BELL", [0, 64, 0, 2, 17, 0, 115, 10], [0, 85, 0, 75], 0, 7), P("SID STRINGS", [2, 56, 90, 0, 0, 0, 85, 25], [70, 90, 110, 85], 0, 5),
+        P("C64 ARP", [2, 32, 40, 0, 0, 0, 110, 10], [0, 66, 60, 25], 0, 13), P("FILTER SWEEP", [1, 64, 0, 0, 0, 0, 30, 100], [0, 90, 60, 40], 0, 4),
+        P("SID KICK", [8, 64, 0, 0, 0, 36, 95, 0], [0, 58, 0, 40], 0, 12), P("SID SNARE", [8, 40, 0, 0, 12, 20, 110, 0], [0, 54, 0, 40], 0, 12),
+        P("SID HAT", [3, 64, 0, 0, 36, 0, 127, 0], [0, 40, 0, 30], 0, 12), P("ZAP", [2, 20, 0, 0, 36, -50, 120, 30], [0, 60, 0, 40], 0, 7),
+        P("POWER UP", [0, 64, 0, 0, 0, 40, 120, 0], [60, 70, 100, 40], 1, 7), P("NOISE WIND", [3, 64, 0, 0, 0, 0, 60, 90], [90, 90, 100, 95], 0, 5),
+        P("TITLE SCREEN", [5, 50, 50, 0, 12, 0, 110, 20], [0, 75, 90, 45], 1, 4), P("SPELLBOOK", [0, 64, 0, 3, 7, 25, 100, 30], [50, 90, 90, 80], 0, 5),
+        P("SID TOM", [8, 64, 0, 0, 0, 24, 100, 0], [0, 62, 0, 40], 0, 12), P("SID CLAP", [3, 64, 0, 0, 20, 0, 110, 30], [0, 48, 0, 34], 0, 12),
+        P("SID COWBELL", [2, 64, 0, 2, 9, 0, 120, 0], [0, 52, 0, 34], 0, 12), P("SID BOOM", [8, 64, 0, 0, 0, 50, 80, 0], [0, 66, 0, 44], 0, 12),
+        P("SID PULSE", [2, 30, 40, 0, 0, 0, 80, 40], [0, 60, 80, 20], 1, 2), P("SID TRI BASS", [0, 64, 0, 0, 0, 0, 120, 0], [0, 60, 100, 16], 1, 8),
+        P("SYNC BASS", [1, 64, 0, 1, 12, 0, 70, 50], [0, 58, 80, 20], 1, 1), P("BUZZ BASS", [5, 60, 20, 0, 0, 0, 70, 40], [0, 58, 80, 18], 1, 2),
+        P("FUNK BASS", [2, 50, 0, 0, 0, 8, 60, 90], [0, 52, 40, 16], 1, 1), P("DEEP PULSE", [2, 32, 60, 0, 0, 0, 50, 20], [0, 60, 92, 16], 1, 8),
+        P("RING BASS", [0, 64, 0, 2, 12, 0, 100, 20], [0, 58, 90, 18], 1, 2), P("SID CHOIR", [5, 50, 80, 0, 0, 0, 65, 30], [70, 90, 88, 85], 0, 5),
+        P("SAW PAD", [1, 64, 0, 0, 0, 0, 60, 40], [70, 90, 110, 85], 0, 5), P("DREAM PAD", [2, 36, 110, 0, 0, 0, 75, 20], [80, 96, 88, 96], 0, 5),
+        P("SID ORGAN", [2, 40, 0, 0, 0, 0, 90, 10], [0, 0, 90, 20], 0, 6), P("SID KEYS", [2, 40, 20, 0, 0, 0, 100, 20], [0, 80, 30, 40], 0, 6),
+        P("SID PLUCK", [2, 32, 0, 0, 0, 0, 100, 40], [0, 60, 0, 36], 0, 3), P("HARPSI", [6, 40, 0, 0, 0, 0, 115, 10], [0, 80, 0, 40], 0, 3),
+        P("SID SOLO", [2, 36, 30, 0, 0, 0, 95, 20], [0, 70, 88, 40], 1, 4), P("SAW SOLO", [1, 64, 0, 0, 0, 0, 100, 40], [0, 70, 110, 40], 1, 4),
+        P("RING LEAD", [0, 64, 0, 2, 7, 0, 115, 10], [0, 70, 110, 40], 1, 4), P("SYNC SCREAM", [1, 64, 0, 1, 31, 30, 115, 30], [0, 70, 110, 36], 1, 4),
+        P("HOLLOW LEAD", [5, 50, 40, 0, 0, 0, 90, 20], [10, 70, 92, 40], 1, 4), P("ARCADE LEAD", [2, 24, 0, 0, 0, 0, 100, 10], [0, 70, 92, 30], 1, 4),
+        P("EXPLOSION", [3, 64, 0, 0, 0, -40, 90, 40], [0, 80, 0, 60], 0, 7), P("LASER", [2, 30, 0, 0, 24, -63, 120, 20], [0, 60, 0, 40], 0, 7),
+        P("TELEPORT", [0, 64, 0, 3, 19, 63, 110, 30], [20, 80, 60, 60], 0, 7), P("ALARM", [2, 40, 0, 0, 12, 40, 100, 0], [0, 70, 88, 30], 0, 7)] },
   ];
   const FM6_E = ENG.findIndex((e) => e.name === "FM6"), FM6_OWN = FM6.FACTORY_PK.length, DRUM_E = ENG.findIndex((e) => e.name === "DRUM");
   /* factory PATTERNS[] (engines.c; the device loads them from SAVE > PHRASES, presets only suggest one): absolute
@@ -1801,7 +1923,7 @@ function makeMockDevice(opt = {}) {
   TP.push(E("SYNC", ["OFF", "4BAR", "2BAR", "1/1", "1/2", "1/4", "1/8", "8T", "1/16", "16T", "1/32"], 0),   /* 1.2: LFO 2 (91..93) */
     E("TRIG", ["NOTE", "FREE"], 0), E("POL", ["BI", "UNI"], 0), E("QNTZ", ["OFF", "ON"], 1),   /* and QUANTIZE (94) */
     D("SPRD", F.PCT, 0, 127, 0),   /* SPREAD (95, #148) */
-    E("INSRT", ["OFF", "SOFT", "HARD", "FOLD", "FUZZ", "CRUSH", "PHASR", "FLANG", "CHOR"], 0),   /* 1.5: the INSERT (96..100) */
+    E("INSRT", ["OFF", "SOFT", "HARD", "FOLD", "FUZZ", "CRUSH", "PHASR", "FLANG", "CHOR", "FILTR", "DUCK", "REPT"], 0),   /* 1.5: the INSERT (96..100); RE-1: FILTR DUCK REPT */
     D("INS A", F.PCT, 0, 127, 64), D("INS B", F.PCT, 0, 127, 96), D("INS C", F.PCT, 0, 127, 96), D("MIX", F.PCT, 0, 127, 127),
     E("TYPE", ["LP", "BP", "HP"], 0), E("ESYNC", ["OFF", "ON"], 0));   /* 1.5: ANALOG's filter TYPE (101, #104), ENV SYNC (102, #175) */
   const P_COUNT = 111, G_COUNT = 27, NSTEP = 64, P_E0 = 103, G_ENGSEL = 20, P_SLCR = 45;
@@ -1820,7 +1942,7 @@ function makeMockDevice(opt = {}) {
     smp: [0, 1, 2].map(() => ({ flash: new Uint8Array(SMP.SLOT_SIZE).fill(0xFF), zones: 0, name: "", len: 0, next: SMP.DATA_OFF })),
     bank: new Array(opt.slots || 32).fill(null),     /* user presets: {engine, name, p, pattern, grid, fm6 (FM6: its patch)} */
     uiCaps: opt.legacy || opt.v3 || opt.v5 ? 0 : opt.uiCaps ?? 9,
-    palette: 0, font: 0, monitor: 0, filter: 0, bankSig: 0,
+    palette: 8, font: 0, monitor: 0, filter: 0, bankSig: 0,
     palettes: ["GREY", "GREEN", "AMBER", "ICE", "VIOLET", "ROSE", "PAPER", "HI-CON", "NIGHT", "MONO"],
     favorites: Array.from({ length: ENG.length + 1 }, () => []),
     watch: false, v4: false, lastReq: 0,
@@ -1829,10 +1951,36 @@ function makeMockDevice(opt = {}) {
     Object.defineProperty(st, k, { enumerable: false, get: () => st.tracks[st.sel][k], set: (v) => { st.tracks[st.sel][k] = v; } });
   }
   const watchMs = opt.watchMs || 3000;
-  const desc = (scope, id) => (scope === 0 && id < P_COUNT ? (id >= P_E0 ? ENG[st.engine].edit[id - P_E0] : TP[id])
+  /* RE-1: an FMKIT track names the operator slots 61..80 and lanes 83..86 as its four voices (eng_cycle.c ck_param_desc) */
+  const CK_V = [D("PITCH", F.INT, 0, 127, 64), D("DECAY", F.PCT, 0, 127, 64), D("COLOR", F.PCT, 0, 127, 64), D("SWEEP", F.PCT, 0, 127, 0)];
+  const CK_SHAPE = [D("BD DRV", F.PCT, 0, 127, 0), D("SD NOIS", F.PCT, 0, 127, 0),
+    D("HH RAT", F.INT, 0, 127, 0, ["1.41", "1.73", "2.41", "2.76", "3.14", "3.70", "4.60", "5.19"]),
+    D("PC RAT", F.INT, 0, 127, 0, ["1", "2", "3", "1.5", "2.76", "3.5", "0.5", "4.6"])];
+  const CK_LEVEL = ["KICK", "SNARE", "HAT", "PERC"].map((l) => D(l, F.PCT, 0, 127, 127));
+  const CK_KITS = [                                /* eng_cycle.c CK_KITS: per voice PITCH DECAY COLOR SWEEP SHAPE LEVEL */
+    [[64, 82, 38, 72, 24, 127], [64, 58, 52, 30, 78, 112], [64, 36, 80, 0, 40, 92], [64, 54, 58, 22, 20, 100]],     /* CYCLE */
+    [[58, 100, 12, 80, 0, 127], [66, 56, 30, 34, 70, 108], [68, 30, 64, 0, 16, 88], [60, 62, 34, 26, 96, 100]],     /* 808ISH */
+    [[66, 74, 46, 76, 60, 127], [62, 60, 60, 36, 90, 115], [62, 40, 96, 0, 56, 96], [70, 50, 70, 16, 64, 96]],      /* 909ISH */
+    [[60, 88, 70, 92, 96, 120], [56, 64, 80, 52, 50, 112], [56, 34, 110, 0, 90, 90], [52, 70, 96, 40, 32, 104]],    /* GRIT */
+    [[72, 66, 90, 48, 30, 118], [76, 50, 98, 20, 40, 100], [80, 44, 127, 0, 127, 88], [84, 74, 110, 8, 72, 108]],   /* METAL */
+    [[56, 96, 20, 60, 10, 127], [60, 70, 24, 24, 100, 96], [60, 26, 56, 0, 8, 80], [56, 80, 40, 30, 48, 110]],       /* DUB */
+    [[60, 90, 30, 70, 30, 127], [60, 62, 40, 30, 95, 114], [62, 32, 60, 0, 30, 84], [72, 40, 50, 10, 20, 96]],   /* BOOM BAP */
+    [[62, 84, 50, 78, 50, 127], [66, 52, 76, 20, 110, 104], [70, 28, 110, 0, 72, 92], [64, 60, 80, 20, 64, 98]],   /* TECHNO KIT */
+    [[56, 104, 16, 90, 0, 127], [70, 48, 46, 40, 60, 110], [72, 30, 90, 0, 40, 90], [66, 54, 40, 40, 80, 100]],   /* ELECTRO KIT */
+    [[58, 80, 24, 60, 40, 124], [58, 58, 30, 24, 85, 108], [58, 34, 40, 0, 20, 80], [60, 52, 30, 20, 40, 96]],   /* DUSTY KIT */
+    [[54, 96, 24, 56, 10, 127], [56, 70, 30, 46, 40, 106], [60, 40, 70, 0, 30, 80], [50, 80, 40, 50, 48, 118]],   /* TRIBAL KIT */
+    [[66, 60, 40, 70, 20, 127], [74, 36, 70, 10, 110, 96], [76, 20, 100, 0, 100, 88], [80, 34, 90, 8, 112, 104]],   /* MINIMAL KIT */
+    [[60, 86, 90, 96, 110, 124], [54, 66, 100, 60, 70, 116], [54, 40, 127, 0, 120, 94], [48, 74, 110, 46, 24, 108]],   /* FORGE KIT */
+    [[70, 64, 60, 100, 40, 124], [80, 44, 90, 60, 100, 108], [84, 24, 120, 0, 64, 86], [88, 40, 100, 64, 90, 104]],   /* CHIP KIT 2 */
+    [[54, 100, 20, 64, 20, 127], [52, 74, 28, 40, 80, 110], [56, 40, 50, 0, 50, 82], [46, 90, 30, 60, 56, 112]],   /* CAVE KIT */
+    [[64, 78, 36, 70, 30, 127], [64, 56, 60, 34, 96, 110], [66, 44, 96, 0, 48, 96], [72, 50, 60, 30, 88, 100]],   /* DISCO KIT */
+  ];
+  const kitDesc = (id) => (ENG[st.engine].name !== "FMKIT" ? null : id >= 61 && id <= 80 ? ((id - 61) % 5 === 4 ? CK_SHAPE[(id - 61) / 5 | 0] : CK_V[(id - 61) % 5])
+    : id >= 83 && id <= 86 ? CK_LEVEL[id - 83] : null);
+  const desc = (scope, id) => (scope === 0 && id < P_COUNT ? (id >= P_E0 ? ENG[st.engine].edit[id - P_E0] : kitDesc(id) || TP[id])
     : scope === 1 && id < G_COUNT ? GP[id] : null);
   const EMPTY = { n: 0, notes: [0, 0, 0, 0], time: 2, flags: 0, vel: 0, hit: 0, acc: 0, chance: 100, ratchet: 1 };
-  const isDrum = () => ENG[st.engine].name === "DRUM";
+  const isDrum = () => KIT_ENGINES.has(ENG[st.engine].name);
   const clearSteps = () => st.step.forEach((s) => Object.assign(s, EMPTY, { notes: [0, 0, 0, 0] }));
   function toGrid(s) {                            /* eng_drum.c step_to_grid: a lane's own note becomes its hit */
     if (s.time !== 0) return;
@@ -1859,6 +2007,9 @@ function makeMockDevice(opt = {}) {
     for (let i = P_SLCR + 4; i < P_E0; i++) if (!trackOwn(i, P_E0)) st.p[i] = TP[i].def;   /* a factory preset turns the
                                                      matrix off; the SLICER, the chord keys, the steps and the other track
                                                      settings stay (ui.c apply_preset_to) */
+    if (e.name === "FMKIT")                         /* RE-1: a kit's four voices (eng_cycle.c ck_kit_load): PITCH DECAY COLOR
+                                                       SWEEP SHAPE into 61..80, LEVEL into lanes 83..86, the other lanes full */
+      CK_KITS[pi % CK_KITS.length].forEach((v, l) => { for (let k = 0; k < 5; k++) st.p[61 + 5 * l + k] = v[k]; st.p[83 + l] = v[5]; });
     if (st.engine === FM6_E) {                    /* eng_fm6.c fm6_track_loaded */
       const t = st.tracks[st.sel];
       t.own = null;
@@ -1920,12 +2071,15 @@ function makeMockDevice(opt = {}) {
     st.bank[slot] = snapshot(name);
     clearSteps(); st.p[29] = 16;
   });
-  /* the power-on sounds (engines.c TRK_DEF): ACID, PAD, PULSE LD, DRUM KIT */
-  [[1, FM6_E, 4], [2, 3, 0], [3, 10, 0], [0, 0, 4]].forEach(([i, e, p]) => { st.sel = i; setEngine(e); applyPreset(p); });
-  /* the device powers on with its sequencers empty; the mock starts as a little demo to look at: track 1 with
-     the ACID pattern, track 4 with BEAT (as SAVE > PHRASES would load them), pads left, lead right */
-  st.sel = 3; loadPattern(11);
-  st.sel = 0; loadPattern(0);
+  /* the power-on sounds (engines.c TRK_DEF, RE-1): CYCLE KIT, FM PAD, FM BASS, FM LEAD */
+  const FMKIT_E = ENG.findIndex((e) => e.name === "FMKIT"), FMTONE_E = ENG.findIndex((e) => e.name === "FMTONE");
+  [[1, FMTONE_E, 0], [2, FMTONE_E, 5], [3, FMTONE_E, 8], [0, FMKIT_E, 0]].forEach(([i, e, p]) => { st.sel = i; setEngine(e); applyPreset(p); });
+  /* the device powers on with the kit's BEAT and the rest empty; the mock starts as a little demo to look at: the
+     pad, bass and lead with the patterns their presets suggest (as SAVE > PHRASES would load them), pads left, lead right */
+  st.sel = 1; loadPattern(4);
+  st.sel = 2; loadPattern(1);
+  st.sel = 3; loadPattern(3);
+  st.sel = 0; loadPattern(11);
   st.tracks[1].p[39] = -24; st.tracks[2].p[39] = 20; st.tracks[2].p[0] = 92;
   const project = () => JSON.parse(JSON.stringify({ tracks: st.tracks, sel: st.sel, g: st.g, songRows: st.songRows }));
   st.slots[0] = project();
@@ -2075,7 +2229,9 @@ function makeMockDevice(opt = {}) {
         if (!opt.legacy && !opt.v3 && !opt.v5) {
           b(16);
           if (st.uiCaps) { b(0x55); b(1); b(st.uiCaps); b(0x4d); b(1); b(64); b(1); if (!opt.noFm6) { b(0x46); b(1); b(FM6.FACTORY_PK.length); b(0); }
-            if (syncCaps()) { b(0x53); b(1); b(syncCaps()); if (!opt.noFm6) { b(0x50); b(1); b(3); } if (ratchetOn()) { b(0x52); b(1); b(4); } } }   /* (FM6 v2: no bank, preset patches) */
+            if (syncCaps()) { b(0x53); b(1); b(syncCaps()); if (!opt.noFm6) { b(0x50); b(1); b(3); } if (ratchetOn()) { b(0x52); b(1); b(4);
+              b(0x4C); b(1); b(1); b(0x41); b(1); b(64); b(0); b(0x54); b(1); b(16); b(0x57); b(1); b(NTRK); } } }   /* (FM6 v2: no bank, preset patches;
+              then LOCKS, MOTION 128, NUDGE, SONG sections with a slot per track) */
         }
         break;
       case CMD.GET: case CMD.SET: {
@@ -2184,25 +2340,33 @@ function makeMockDevice(opt = {}) {
         }
         b(st.engine); b(st.preset);
         break;
-      case CMD.SONG: {
-        if (!a.length || a[0] > 3) return null;
+      case CMD.SONG: {                              /* (editor.c ED_SONG: ops 0..3 a slot a row; 4..7 a slot per track) */
+        if (!a.length || a[0] > 7) return null;
+        const op = a[0] & 3, lanes = a[0] >= 4, w = lanes ? NTRK + 1 : 2;
+        const pat = (v) => (v < 4 ? v : v === 5 || v === 6 ? v - 1 : -1);   /* core.h chain_pat (RE-1): -1 silent */
         let rc = 0;
-        if (a[0] === 1) {
-          const rows = Array.from({ length: a[1] || 0 }, (_, i) => ({ slot: a[2 + 2 * i], repeat: a[3 + 2 * i] }));
-          if (a.length < 2 || a[1] > 16 || a.length !== 2 + 2 * a[1] || rows.some((r) => r.slot > 3 || r.repeat < 1 || r.repeat > 16)) rc = 1;
+        if (op === 1) {
+          const rows = Array.from({ length: a[1] || 0 }, (_, i) => (lanes ? { lanes: a.slice(2 + w * i, 2 + w * i + NTRK), repeat: a[2 + w * i + NTRK] }
+            : { lanes: [a[2 + 2 * i], a[2 + 2 * i], a[2 + 2 * i], a[2 + 2 * i]], repeat: a[3 + 2 * i], one: a[2 + 2 * i] }));
+          if (a.length < 2 || a[1] > 16 || a.length !== 2 + w * a[1] || rows.some((r) => r.repeat < 1 || r.repeat > 16 ||
+              (lanes ? r.lanes.some((v) => v > 6) : r.one > 3))) rc = 1;
           else if (st.chainPlaying) rc = 2;
-          else st.songRows = rows;
-        } else if (a[0] === 2) {
+          else st.songRows = rows.map(({ lanes: l, repeat }) => ({ lanes: l, repeat }));
+        } else if (op === 2) {
           if (st.chainPlaying) rc = 2;
           else if (!st.songRows.length) rc = 1;
-          else {
-            const missing = st.songRows.find((r) => !st.slots[r.slot]);
-            if (missing) rc = 3 + missing.slot;
+          else {                                      /* (RE-1: a lane's pattern must hold steps; here: a PROJECT slot used,
+                                                         A..D as slots 1..4, E F as the bank's two more: never empty) */
+            const missing = st.songRows.flatMap((r) => r.lanes).map(pat).find((p) => p >= 0 && p < 4 && !st.slots[p]);
+            if (missing != null) rc = 3 + missing;
             else { st.chainPlaying = true; st.chainRow = 0; st.chainRemaining = st.songRows[0].repeat; }
           }
-        } else if (a[0] === 3) st.chainPlaying = false;
+        } else if (op === 3) st.chainPlaying = false;
         b(a[0]); b(rc); b(st.songRows.length); b(st.chainPlaying ? 1 : 0); b(st.chainRow); b(st.chainRemaining);
-        st.songRows.forEach((r) => { b(r.slot); b(r.repeat); });
+        st.songRows.forEach((r) => {
+          if (lanes) { r.lanes.forEach((v) => b(v)); b(r.repeat); }
+          else { const c = r.lanes.find((v) => v < 4); b(c ?? 0); b(r.repeat); }   /* (v6: the clock lane's slot; all - : A) */
+        });
         break;
       }
       case CMD.PROJECT: {
@@ -2404,7 +2568,7 @@ async function readDevicePreferences(rq, info, names, previous = null) {
    and 4, once TRANH and PERC: PIANO 0), else the last with it (DRUM KIT 1..3, once HAND CYM H+CYM: 66 10 77 at 6 5 8;
    EDITOR_PROTOCOL.md). -> the original's index */
 function aliasOf(names, i) {
-  if (!names || names[i] == null) return i;
+  if (!names || names[i] == null || names[i] === "-") return i;   /* (a reserved engine number is no alias: 1, 13) */
   const k = names[0] === names[i] ? 0 : names.lastIndexOf(names[i]);
   return k >= 0 ? k : i;
 }
@@ -2425,11 +2589,12 @@ function enumShown(d) {
 /* the order the device shows its engines in (src/engines.c ENGINE_ORDER): the lists here follow it, the protocol keeps
    the engine numbers. engineOrder(names): the indices of names in that order, "-" (a reserved number) left out; a name
    the list does not know (another firmware) follows in index order */
-const ENGINE_ORDER = ["ANALOG", "FM6", "DIGITAL", "PHASE", "LOFI", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN", "PHYS", "NOISE",
-  "SLICE", "DRUM"];
+const ENGINE_ORDER = ["FMKIT", "FMTONE", "ANALOG", "FM6", "WAVES", "SID", "DIGITAL", "PHASE", "CHIP", "SAMPLE", "VOICE", "TRIO", "WHEEL",
+  "PHYS", "DRUM", "GRAIN", "NOISE"];   /* (1.1: WAVES after FM6; NOISE last, off the EDIT layer's keys; 1.3: SID after WAVES, GRAIN off the keys) */
 function engineOrder(names) {
   const rank = (n) => { const k = ENGINE_ORDER.indexOf(n); return k < 0 ? ENGINE_ORDER.length : k; };
-  return (names || []).map((n, i) => i).filter((i) => names[i] !== "-")
+  const re1 = (names || []).includes("FMKIT");
+  return (names || []).map((n, i) => i).filter((i) => names[i] !== "-" && !(re1 && ENGINE_NOT_SHOWN.has(names[i])))
     .sort((a, b) => rank(names[a]) - rank(names[b]) || a - b);
 }
 
@@ -2599,7 +2764,8 @@ const TEXT = {
     mixer: "ミキサー", mixHelp: "本体の MIXER ページと同じ 4 トラック。フェーダーはレベル。パンはどのトラックも選択を変えずに書き込みます（0.8 のファームウェアでは一瞬そのトラックを選びます）。REC は本体での録音待機の表示です。",
     level: "レベル", pan: "パン", mute: "ミュート", rec: "REC", selectTrack: "選択", selectedTrack: "選択中",
     projHelp: "プロジェクトは本体の状態をまとめて保存します: 4 トラックの音色とパターン、曲の並び順、選択中のトラック、グローバル設定。",
-    slot: "スロット", songTitle: "ソング", songHelp: "保存スロットのパターンと繰り返す回数を順に並べます。音色は現在のまま。並び順を残すには、上のプロジェクトを保存してください。切替はトラック1のパターン終端、曲末で停止します。", songAdd: "行を追加", songRemove: "最後の行を削除", songPlay: "先頭から再生", songStop: "停止", songReps: "回", songEmpty: "行を追加してください", songBusy: "停止してから編集してください", songInvalid: "スロットと回数を確認してください", songPlaying: "再生中の行", songSaved: "並び順を変更しました。プロジェクトを保存すると残せます。",
+    slot: "スロット", songTitle: "ソング", songHelp: "保存スロットのパターンと繰り返す回数を順に並べます。音色は現在のまま。並び順を残すには、上のプロジェクトを保存してください。切替はトラック1のパターン終端、曲末で停止します。", songAdd: "行を追加", songRemove: "最後の行を削除", songPlay: "先頭から再生", songStop: "停止", songReps: "回", songEmpty: "行を追加してください", songBusy: "停止してから編集してください", songInvalid: "スロットと回数を確認してください", songPlaying: "再生中の行", songSaved: "並び順を変更しました。プロジェクトを保存すると残せます。", pattern: "パターン", songSection: "セクション",
+    songHelpRe1: "セクションを並べます。各トラックにパターン A–F（ENV のパターンバンク）か –（無音）を選び、繰り返す回数を決めます。切替は一番長いループの終わり、曲末で停止します。残すには本体でプロジェクトを保存してください。",
     system: "システム", firmware: "ファームウェア", sync: "同期", tracksN: "トラック", stepsN: "ステップ数", enginesL: "エンジン",
     smpSlots: "サンプルスロット", userBank: "ユーザープリセット", none: "なし",
   },
@@ -2702,7 +2868,8 @@ const TEXT = {
     mixer: "Mixer", mixHelp: "The four tracks of the device's MIXER page. The fader is the level. Pan is written to any track without changing the selection (firmware 0.8: by selecting it for a moment). REC shows a track armed for live recording on the device.",
     level: "Level", pan: "Pan", mute: "Mute", rec: "REC", selectTrack: "Select", selectedTrack: "Selected",
     projHelp: "A project keeps the sounds and patterns of all four tracks, the song chain, the selected track and the global settings.",
-    slot: "Slot", songTitle: "Song", songHelp: "Arrange patterns from saved slots and choose their repeats. The current sounds stay. Save a project above to keep the chain. Rows change at the end of track 1; the song stops at the end.", songAdd: "Add row", songRemove: "Remove last row", songPlay: "Play from start", songStop: "Stop", songReps: "repeats", songEmpty: "Add a row first", songBusy: "Stop before editing", songInvalid: "Check slots and repeats", songPlaying: "Playing row", songSaved: "Chain changed. Save a project to keep it.",
+    slot: "Slot", songTitle: "Song", songHelp: "Arrange patterns from saved slots and choose their repeats. The current sounds stay. Save a project above to keep the chain. Rows change at the end of track 1; the song stops at the end.", songAdd: "Add row", songRemove: "Remove last row", songPlay: "Play from start", songStop: "Stop", songReps: "repeats", songEmpty: "Add a row first", songBusy: "Stop before editing", songInvalid: "Check slots and repeats", songPlaying: "Playing row", songSaved: "Chain changed. Save a project to keep it.", pattern: "Pattern", songSection: "section",
+    songHelpRe1: "Arrange sections: each picks a pattern A–F (from ENV's pattern bank) or – (silent) for every track, and how many times it repeats. Sections change at the end of the longest loop; the song stops at the end. Save a project on the device to keep it.",
     system: "System", firmware: "Firmware", sync: "Sync", tracksN: "Tracks", stepsN: "Steps", enginesL: "Engines",
     smpSlots: "Sample slots", userBank: "User presets", none: "none",
   },
@@ -2835,28 +3002,36 @@ const EXPECT = { pcount: 91, gcount: 27, pe0: 83 };
 /* the same layout without the chord keys (P_COUNT 89, P_E0 81), the FM operator ENVs too (69, 61) or the matrix
    (firmware 1.0: 57, 49) */
 const knownLayout = (info) => info.gcount === EXPECT.gcount &&
-  [[99, 91], [91, 83], [89, 81], [69, 61], [57, 49]].some(([c, e]) => info.pcount === c && info.pe0 === e);
+  [[111, 103], [99, 91], [91, 83], [89, 81], [69, 61], [57, 49]].some(([c, e]) => info.pcount === c && info.pe0 === e);
+/* 1.5 and later (P_COUNT 111, P_E0 103: Felucca 1.6.1, RE-1): LFO 2 91..93, QUANTIZE 94, SPREAD 95, the INSERT 96..100,
+   ANALOG's filter TYPE 101, ENV SYNC 102 (params.c PAGES). RE-1's FMKIT names the operator slots 61..80 and the lanes
+   83..86 as its four voices (eng_cycle.c ck_param_desc: the device's DESC gives the labels) */
+const FMKIT_PAGES = [["KICK", 0, [61, 62, 63, 64]], ["SNARE", 0, [66, 67, 68, 69]], ["HAT", 0, [71, 72, 73, 74]], ["PERC", 0, [76, 77, 78, 79]],
+  ["SHAPE", 0, [65, 70, 75, 80]], ["LANES", 0, [83, 84, 85, 86]]];
 const P = { LEVEL: 0, SLEN: 29 };
 const LAYOUT = (pe0) => [
-  { t: "ENV", pages: [["ENV", 0, [1, 2, 3, 4]], ["ENV DEST", 0, [5, 6, 7, 8]]] },
-  { t: "LFO", pages: [["LFO", 0, [9, 10, 11, 12]], ["LFO DEST", 0, [13, 14, 15, 16]]] },
+  { t: "ENV", pages: [["ENV", 0, [1, 2, 3, 4]], ["ENV DEST", 0, pe0 >= 103 ? [5, 6, 7, 102] : [5, 6, 7, 8]]] },
+  { t: "LFO", pages: [["LFO", 0, [9, 10, 11, 12]], ...(pe0 >= 103 ? [["LFO 2", 0, [91, 92, 93]]] : []), ["LFO DEST", 0, [13, 14, 15, 16]]] },
   ...(pe0 >= 61 ? [{ t: "MOD", mod: 49 }] : []),   /* the matrix: P_M1SRC 49 .. P_M4AMT 60, one row per slot */
   { t: "EDIT", engine: true, pages: [["EDIT 1", 0, [pe0, pe0 + 1, pe0 + 2, pe0 + 3]], ["EDIT 2", 0, [pe0 + 4, pe0 + 5, pe0 + 6, pe0 + 7]],
-    ...(pe0 >= 91 && engName() === "DRUM" ? [["LANES", 0, P_LANES.slice(0, 4)], ["LANES 2", 0, P_LANES.slice(4)]] : [])] },   /* lane levels 83..90 */
+    ...(pe0 >= 91 && engName() === "DRUM" ? [["LANES", 0, P_LANES.slice(0, 4)], ["LANES 2", 0, P_LANES.slice(4)]] : []),   /* lane levels 83..90 */
+    ...(pe0 >= 103 && engName() === "ANALOG" ? [["FILTER", 0, [101]]] : []),   /* TYPE; CUT RES KTR: EDIT 2 */
+    ...(pe0 >= 103 && engName() === "FMKIT" ? FMKIT_PAGES : [])] },
   ...(pe0 >= 81 && engName() === "DIGITAL" ? [{ t: "OP ENV", pages: [   /* P_FM1_ATK 61: ATK DEC SUS REL LVL per operator (a
                                                     FELUCCA_FM4=1 firmware only: DIGITAL retired, its engine is "-") */
     ...[0, 1, 2, 3].map((k) => [`OP${k + 1}`, 0, [61 + 5 * k, 62 + 5 * k, 63 + 5 * k, 64 + 5 * k]]),
     ["OP LVL", 0, [65, 70, 75, 80]]] }] : []),
-  { t: "VOICE", pages: [["LEVEL", 0, [0]], ["VOICE", 0, [37, 38, 41, 42]], ["VOICE 2", 0, [43, 44, 39, 40]]] },
-  { t: "FX", pages: [["FX", 0, [33, 34, 35, 36]], ["SLICER", 0, [45, 46, 47, 48]], ["DLY", 1, [4, 5, 6, 7]], ["REVERB", 1, [24, 8, 9]], ["CHORUS", 1, [10, 11]]] },   /* G_RTYPE 24: ROOM / SPRING / HALL */
+  { t: "VOICE", pages: [["LEVEL", 0, [0]], ["VOICE", 0, [37, 38, 41, 42]], ["VOICE 2", 0, [43, 44, 39, 40]], ...(pe0 >= 103 ? [["VOICE 3", 0, [95]]] : [])] },
+  { t: "FX", pages: [["FX", 0, [33, 34, 35, 36]], ...(pe0 >= 103 ? [["INSERT", 0, [96, 97, 98, 99, 100]]] : []), ["SLICER", 0, [45, 46, 47, 48]],
+    ["DLY", 1, [4, 5, 6, 7]], ["REVERB", 1, [24, 8, 9]], ["CHORUS", 1, [10, 11]]] },   /* G_RTYPE 24: ROOM / SPRING / HALL */
   { t: "SCL", pages: [["SCL", 0, [25, 26, 27, 28]], ...(pe0 >= 83 ? [["CHORD", 0, P_CHORD]] : [])] },   /* CHRD VOIC 81, 82 */
   { t: "ARP", pages: [["ARP", 0, [17, 18, 19, 20]], ["ARP 2", 0, [21, 22, 23, 24]]] },
-  { t: "SEQ PATTERN", tab: "seqgroups", pages: [["PATTERN", 0, [29, 30, 31, 32]]] },
+  { t: "SEQ PATTERN", tab: "seqgroups", pages: [["PATTERN", 0, [29, 30, 31, 32, ...(pe0 >= 103 ? [94] : [])]]] },   /* (94 QUANTIZE) */
   /* 1.2: as the device shows them: HOME > CLOCK (BPM SWG; CLK not here), MENU > AUDIO TUNE, MENU > MIDI > MIDI IN (G_ROUTE) */
   { t: "GLOBAL", tab: "setgroups", pages: [["CLOCK", 1, [0, 1, 2]], ["AUDIO", 1, [3]], ["MIDI", 1, [14]]] },
 ];
 /* globals that are actions or placeholders on the device: buttons instead, or hidden */
-const G_SKIP = new Set(["SLOT", "NAME", "LOAD", "SAVE", "ENG", "SET", "CLRSQ", "INIT", "MIDI", "SYNC", "CPU", "CLK"]);
+const G_SKIP = new Set(["SLOT", "NAME", "LOAD", "SAVE", "ENG", "SET", "MFX", "CLRSQ", "INIT", "MIDI", "SYNC", "CPU", "CLK"]);   /* (MFX: RE-1's packed master effects, set on the device) */
 const key = (s, id) => s + ":" + id;
 const engName = () => (dev && dev.info && dev.dump ? dev.info.engines[dev.dump.engine] : "");
 const gEng = () => { const i = dev.gdesc.findIndex((d) => d && d.label === "ENG"); return i >= 0 ? i : 20; };
@@ -2975,9 +3150,9 @@ async function load(d) {
       d.names[e] = r.names;
       d.titles[e] = r.titles;
     }
-    for (let k = 0; k < 4; k++) {                    /* PROJECT op 2: is the slot used */
+    for (let k = 0; k < 11; k++) {                   /* PROJECT op 2: is the slot used (A..D; Dungeon Tracker: A..K) */
       try { d.slotUsed[k] = parse[CMD.PROJECT](await sessionRequest(d, req.project(2, k))).used; }
-      catch (e) { if (e.message === "closed") throw e; }
+      catch (e) { if (e.message === "closed") throw e; if (k >= 4) { d.slotUsed.length = k; break; } }   /* (no E: four slots) */
     }
     try { d.smp = parse[CMD.SMP_INFO](await sessionRequest(d, req.smpInfo())); }
     catch (e) { if (e.message === "closed") throw e; d.smp = null; }   /* older firmware, or no flash */
@@ -2986,7 +3161,7 @@ async function load(d) {
     assertSession(d);
     if (d.info.ntrk) d.sel = parse[CMD.TRACK](await sessionRequest(d, req.track())).sel;   /* v3: the selected track */
     d.dump = await getDump(d);
-    if (d.info.chainRows) d.song = parse[CMD.SONG](await sessionRequest(d, req.song()));
+    if (d.info.chainRows) d.song = parse[CMD.SONG](await sessionRequest(d, req.song(songOp(0, d))));
     buildUI();
     renderPanels();
     await loadSteps(d);
@@ -3016,6 +3191,10 @@ async function rereadEngineDesc(d = dev) {
   const pe0 = d.info.pe0;
   const before = JSON.stringify(d.pdesc.slice(pe0));
   for (let i = 0; i < 8 && pe0 + i < d.info.pcount; i++) d.pdesc[pe0 + i] = await getDescOrNull(0, pe0 + i, d);
+  /* RE-1: FMKIT gives the operator slots and four lanes its own labels (PITCH .. LEVEL): a switch to or from it reads them again */
+  const kit = (e) => (d.info.engines || [])[e] === "FMKIT";
+  if (pe0 >= 91 && d.built !== d.dump.engine && (kit(d.dump.engine) || kit(d.built)))
+    for (let i = 61; i <= 90 && i < pe0; i++) d.pdesc[i] = await getDescOrNull(0, i, d);
   if (d.built !== d.dump.engine || JSON.stringify(d.pdesc.slice(pe0)) !== before) buildGroups();
 }
 
@@ -3286,7 +3465,7 @@ function renderSlots() {
   renderBackup();
   const box = $("slots");
   box.replaceChildren();
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < Math.max(4, dev.slotUsed.length); i++) {
     const u = dev.slotUsed[i];
     box.append(el("span", { text: String.fromCharCode(65 + i) }),
       el("span", { class: "dim", text: u == null ? t("unknown") : t(u ? "used" : "empty") }),
@@ -3305,7 +3484,7 @@ async function project(op, slot) {
     dev.slotUsed[slot] = r.used;
     renderSlots();
     if (!op && r.used) await afterSoundChange();
-    if (dev.info.chainRows) { dev.song = parse[CMD.SONG](await rq(req.song())); renderSong(); }
+    if (dev.info.chainRows) { dev.song = parse[CMD.SONG](await rq(req.song(songOp(0)))); renderSong(); }
     sayK(op ? "savedSlot" : r.used ? "loadedSlot" : "emptySlot", String(slot + 1));
   } catch (err) { report(err); } finally { releaseBusy(); }
 }
@@ -3315,6 +3494,10 @@ function renderSong() {
   box.hidden = !dev || !dev.info?.chainRows || !dev.song;
   if (box.hidden) return;
   const s = dev.song;
+  {                                                 /* (RE-1: its own help, the sections' patterns) */
+    const hp = box.querySelector("p.dim"), k = songLanes() ? "songHelpRe1" : "songHelp";
+    if (hp && hp.dataset.t !== k) { hp.dataset.t = k; hp.textContent = t(k); }
+  }
   $("songplay").textContent = t(s.playing ? "songStop" : "songPlay");
   $("songadd").disabled = !!s.playing || s.rows.length >= 16;
   $("songremove").disabled = !!s.playing || !s.rows.length;
@@ -3322,6 +3505,27 @@ function renderSong() {
   const rows = $("songrows");
   if (rows.contains(document.activeElement)) return;
   rows.replaceChildren();
+  if (songLanes()) {                                /* RE-1: a section = a pattern (A..F) or - per track, its repeats */
+    const head = el("div", { class: "bar dim", style: "margin:8px 0 0" }, el("span", { text: "#" }));
+    for (let k = 0; k < 4; k++) head.append(el("span", { text: `T${k + 1}`, style: "width:56px;display:inline-block;text-align:center" }));
+    rows.append(head);
+    s.rows.forEach((r, i) => {
+      const line = el("div", { class: "bar", style: "margin:8px 0" });
+      line.append(el("span", { text: String(i + 1) }));
+      r.lanes.forEach((v, k) => {
+        const sel = el("select", { disabled: !!s.playing, style: "width:56px", "aria-label": `T${k + 1} ${t("songSection")} ${i + 1}` });
+        SONG_PATS.forEach(([val, name]) => sel.append(el("option", { value: val, text: name })));
+        sel.value = String(v);
+        sel.addEventListener("change", () => { const next = s.rows.map((x) => ({ ...x, lanes: [...x.lanes] })); next[i].lanes[k] = +sel.value; op(() => changeSong(1, next)); });
+        line.append(sel);
+      });
+      const reps = el("input", { type: "number", min: 1, max: 16, value: r.repeat, disabled: !!s.playing, style: "width:64px", "aria-label": `${t("songReps")} ${i + 1}` });
+      reps.addEventListener("change", () => { const v = +reps.value; if (!Number.isInteger(v) || v < 1 || v > 16) { reps.value = r.repeat; return; } const next = s.rows.map((x) => ({ ...x, lanes: [...x.lanes] })); next[i].repeat = v; op(() => changeSong(1, next)); });
+      line.append(reps, el("span", { text: t("songReps") }));
+      rows.append(line);
+    });
+    return;
+  }
   s.rows.forEach((r, i) => {
     const line = el("div", { class: "bar", style: "margin:8px 0" });
     line.append(el("span", { text: String(i + 1) }));
@@ -3335,21 +3539,28 @@ function renderSong() {
     rows.append(line);
   });
 }
+/* RE-1 (INFO: FMKIT, SONG ops 4..7): sections with a pattern per track; the values core.h chain_val gives A..F and - */
+const SONG_PATS = [[0, "A"], [1, "B"], [2, "C"], [3, "D"], [5, "E"], [6, "F"], [4, "–"]];
+const songLanes = (d = dev) => !!(d && d.info && d.info.re1 && d.info.songLanes === 4);
+const songOp = (action, d = dev) => (songLanes(d) ? 4 : 0) + action;
 async function changeSong(action, rows = []) {
-  const r = parse[CMD.SONG](await rq(req.song(action, rows)));
-  if (r.rc) throw new Error(r.rc >= 3 ? `${t("slot")} ${r.rc - 2}: ${t("empty")}` : t(r.rc === 2 ? "songBusy" : "songInvalid"));
+  const r = parse[CMD.SONG](await rq(req.song(songOp(action), rows)));
+  if (r.rc) throw new Error(r.rc >= 3 ? (songLanes() ? `${t("pattern")} ${"ABCDEF"[r.rc - 3] || "?"}: ${t("empty")}` : `${t("slot")} ${r.rc - 2}: ${t("empty")}`)
+    : t(r.rc === 2 ? "songBusy" : "songInvalid"));
   dev.song = r;
   renderSong();
   if (action === 1) sayK("songSaved");
 }
 $("songplay").addEventListener("click", () => op(() => changeSong(dev.song?.playing ? 3 : 2)));
-$("songadd").addEventListener("click", () => op(() => changeSong(1, [...dev.song.rows, { slot: dev.song.rows.at(-1)?.slot || 0, repeat: 1 }])));
+$("songadd").addEventListener("click", () => op(() => changeSong(1, songLanes()
+  ? [...dev.song.rows, { lanes: [...(dev.song.rows.at(-1)?.lanes || [0, 0, 0, 0])], repeat: 1 }]   /* (a copy of the last section) */
+  : [...dev.song.rows, { slot: dev.song.rows.at(-1)?.slot || 0, repeat: 1 }])));
 $("songremove").addEventListener("click", () => op(() => changeSong(1, dev.song.rows.slice(0, -1))));
 setInterval(async () => {
   if (!dev?.info?.chainRows || busy || document.hidden || !dev.link.idle || tab !== "projects") return;
   const releaseBusy = beginBusy();
   const d = dev;
-  try { const r = parse[CMD.SONG](await rq(req.song())); if (d === dev) { d.song = r; renderSong(); } }
+  try { const r = parse[CMD.SONG](await rq(req.song(songOp(0, d)))); if (d === dev) { d.song = r; renderSong(); } }
   catch (err) { report(err); } finally { releaseBusy(); }
 }, 1000);
 

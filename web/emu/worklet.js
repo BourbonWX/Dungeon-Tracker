@@ -4,6 +4,8 @@
 // (web/emu/felucca_web.c). Each render quantum asks it for 128 frames, which runs the device's clock forward;
 // between quanta the page's input goes in and, about 30 times a second (4 when the page is hidden), the screen,
 // the lights and any changed flash go out. After X0X's web/emu/worklet.js (charlesvestal/fm1-x0x, GPL-3.0).
+// WASI imports of the clang/wasi-libc build: none is reached at run time (no files, no exit), so each is a no-op.
+export const WASI_STUB = { wasi_snapshot_preview1: new Proxy({}, { get: () => () => 0 }) };
 
 // The flash the page keeps: storage.c's areas (projects, user presets and their FM6 patches, the user sample
 // slots 0x97000..0xDFFFF; the autosave 0xE5000..0xE6FFF (1.2) and FM6's voice bank 0xE7000 (1.4.1); the settings and
@@ -71,12 +73,13 @@ if (typeof registerProcessor === "function") {
     async onMessage(m) {
       if (m.type === "load") {
         try {
-          const { instance } = await WebAssembly.instantiate(m.wasm, {});
+          const { instance } = await WebAssembly.instantiate(m.wasm, WASI_STUB);
           const ex = instance.exports;
           ex._initialize();
           ex.web_nor_erase();
           restoreSectors(new Uint8Array(ex.memory.buffer, ex.web_nor(), ex.web_nor_size()), m.sectors);
           ex.web_master(m.master ?? 700);
+          if (ex.web_seed) ex.web_seed((Math.random() * 4294967296) >>> 0);   /* (each power-on its own song) */
           ex.web_boot();
           this.ex = ex;
           this.sentWrites = ex.web_flash_writes_count();

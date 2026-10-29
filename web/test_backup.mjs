@@ -67,11 +67,11 @@ const order = target.log.filter((x) => typeof x === "number");
 ok(order.at(-1) === 0 && order.at(-2) === 1 && order.indexOf(2) < order.indexOf(1), "backup: restore order: projects, banks, samples, settings, live music last");
 ok([0, 1, 2, 6].every((id) => target.objs.get(id).every((v, i) => v === objs.find((o) => o[0] === id)[1][i])), "backup: restored objects equal the source");
 {   /* the FM6 patch bank (id 8) and the archives of firmware before it (11 objects, no id 8) */
-  ok(BACKUP_IDS.length === 13 && file.objects.some((o) => o.id === 8) && file.objects.some((o) => o.id === 9),
-    "backup: 13 objects: id 8 (the retired FM6 bank, empty) and id 9 (the user presets' FM6 patches)");
-  const v2 = JSON.parse(JSON.stringify(file)); v2.objects = v2.objects.filter((o) => o.id !== 9);
+  ok(BACKUP_IDS.length === 20 && file.objects.some((o) => o.id === 8) && file.objects.some((o) => o.id === 9),
+    "backup: 20 objects: id 8 (the retired FM6 bank, empty), id 9 (the user presets' FM6 patches), 10..16 (projects E..K)");
+  const v2 = JSON.parse(JSON.stringify(file)); v2.objects = v2.objects.filter((o) => o.id !== 9 && (o.id < 10 || o.id >= 32));
   ok(readBackup(v2).objects.length === 12, "backup: an archive of 1.0..1.0.2 (12 objects, the bank as id 8) still reads");
-  const old = JSON.parse(JSON.stringify(file)); old.objects = old.objects.filter((o) => o.id !== 8 && o.id !== 9);
+  const old = JSON.parse(JSON.stringify(file)); old.objects = old.objects.filter((o) => o.id !== 8 && o.id !== 9 && (o.id < 10 || o.id >= 32));
   ok(readBackup(old).objects.length === 11, "backup: an archive of the 11 objects before FM6 still reads");
   const odd = JSON.parse(JSON.stringify(file)); odd.objects = odd.objects.filter((o) => o.id !== 33);
   ok(throws(() => readBackup(odd)), "backup: an archive missing another object is refused");
@@ -83,7 +83,7 @@ ok([0, 1, 2, 6].every((id) => target.objs.get(id).every((v, i) => v === objs.fin
     const r = await v2dev.request([cmd, a]);
     if (cmd !== BACKUP_CMD.LIST) return r;
     const n = r[2], keep = [];
-    for (let i = 0; i < n; i++) if (r[3 + i * 11] !== 9) keep.push(...r.slice(3 + i * 11, 14 + i * 11));
+    for (let i = 0; i < n; i++) if (r[3 + i * 11] !== 9 && (r[3 + i * 11] < 10 || r[3 + i * 11] > 16)) keep.push(...r.slice(3 + i * 11, 14 + i * 11));
     return [1, 0, keep.length / 11, ...keep];
   }, "1.0.2");
   const to103 = device([]);

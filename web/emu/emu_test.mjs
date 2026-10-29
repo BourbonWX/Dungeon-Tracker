@@ -11,7 +11,7 @@
 // Then the cost: 1 s of a heavy song (FM6, PHYS, GRAIN chords, DRUM) against real time (BENCH_MAX, default 0.5:
 // fails above half of real time on this machine).
 import fs from "fs";
-import { storeSectors, restoreSectors, midiKnob, KNOB_CC, MASTER_CC } from "./worklet.js";
+import { WASI_STUB, storeSectors, restoreSectors, midiKnob, KNOB_CC, MASTER_CC } from "./worklet.js";
 
 const wasmPath = process.argv[2] || "build/emu/felucca.wasm", nativePath = process.argv[3];
 const bytes = fs.readFileSync(wasmPath);
@@ -21,7 +21,7 @@ let fails = 0;
 const check = (what, ok) => { console.log(`emu: ${what.padEnd(76)} ${ok ? "ok" : "FAIL"}`); if (!ok) fails++; };
 
 async function device(saved) {
-  const { instance } = await WebAssembly.instantiate(bytes, {});
+  const { instance } = await WebAssembly.instantiate(bytes, WASI_STUB);
   const ex = instance.exports, mem = ex.memory;
   ex._initialize();
   ex.web_nor_erase();
@@ -56,7 +56,7 @@ const colours = (fb) => new Set(fb).size;
 const a = await device(null);
 a.render(200);
 const splash = colours(a.screen());
-{ // the power-on LED sweep (bsp/boards/fm1/fm1_led_anim.h) under the splash: at 200 ms its head on the middle of the keyboard, the
+{ // the power-on LED sweep (hal/fm1_led_anim.h) under the splash: at 200 ms its head on the middle of the keyboard, the
   // keys it passed glowing (DIM HI), the ones ahead dark, the buttons not yet; the UI's LEDs untouched until it ends
   const p = a.ex.web_anim_levels(), lv = p ? Array.from(new Uint8Array(a.mem.buffer, p, 41)) : [];
   const keys = lv.slice(14), head = keys.indexOf(Math.max(...keys.map((q) => q & 127)) | 128);
@@ -101,10 +101,10 @@ a.render(300);
 check("FX held: its button and the effects' keys breathe, none lit; let go: nothing",
       (brB >> B.FX & 1) === 1 && brK !== 0 && (brK & litK) === 0 && litK === 0 &&
       a.ex.web_breath_keys() === 0 && a.ex.web_breath_buttons() === 0);
-{ // the page's breathing peaks against the firmware's (bsp/boards/fm1/fm1_input.h FM1_LED_BREATH_PK / _LO, /256 of lit): the
+{ // the page's breathing peaks against the firmware's (hal/fm1_input.h FM1_LED_BREATH_PK / _LO, /256 of lit): the
   // colour at 50 % between the dark and the lit one by the LED's share, gamma-encoded (sRGB), within 0.06
   const html = fs.readFileSync(new URL("./index.html", import.meta.url), "utf8");
-  const hal = fs.readFileSync(new URL("../../firmware/bsp/boards/fm1/fm1_input.h", import.meta.url), "utf8");
+  const hal = fs.readFileSync(new URL("../../firmware/hal/fm1_input.h", import.meta.url), "utf8");
   const pk = (n) => +hal.match(new RegExp(`#define ${n} (\\d+)u`))[1] / 256;
   const srgb = (x) => x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055;
   const red = (c) => parseInt(c.slice(1, 3), 16);
