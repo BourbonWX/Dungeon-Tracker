@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dungeon Tracker</title>
+<style>
+  :root { color-scheme: dark; --bg: #12101a; --card: #1c1928; --line: #2f2a42; --text: #e9e4f5; --dim: #9d94b8; --accent: #f2b84b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 44rem; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+  h1 { font-size: 2.2rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .tag { color: var(--accent); font-weight: 600; margin: 0 0 1rem; }
+  p { color: var(--dim); margin: 0 0 1rem; }
+  .cards { display: grid; gap: .9rem; margin: 2rem 0; }
+  a.card { display: block; padding: 1.1rem 1.25rem; background: var(--card); border: 1px solid var(--line); border-radius: 10px; color: inherit; text-decoration: none; }
+  a.card:hover, a.card:focus-visible { border-color: var(--accent); outline: none; }
+  a.card strong { display: block; font-size: 1.1rem; margin-bottom: .2rem; }
+  a.card span { color: var(--dim); font-size: .95rem; }
+  footer { color: var(--dim); font-size: .85rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+  footer a { color: var(--dim); }
+</style>
+<main>
+  <h1>Dungeon Tracker</h1>
+  <p class="tag">Version 1.5 · firmware for the M-VAVE FM-1</p>
+  <p>A four-track tracker groovebox whose HOME screen is a dungeon crawl played by your song.
+     Eight engines in four families (FM, WAVE, AMIGA'D, SUB), DICE sound design, SOUND MORPH and a party of eight classes.</p>
+  <div class="cards">
+    <a class="card" href="https://github.com/BourbonWX/Dungeon-Tracker/releases/latest">
+      <strong>Download the firmware</strong>
+      <span>The 1.5 release: <code>dungeon-tracker-1.5.fwsc</code>, with install and recovery steps. Use it at your own risk.</span></a>
+    <a class="card" href="webapp/emulator/">
+      <strong>Try it in the browser</strong>
+      <span>The emulator runs the real 1.5 firmware code with no FM-1 needed. Press <em>Switch on</em> to start it.</span></a>
+    <a class="card" href="webapp/editor/">
+      <strong>Editor</strong>
+      <span>Edit sounds, patterns and the party, and back up your FM-1 over USB MIDI (Chrome or Edge). Add <code>?mock=1</code> to try it without the device.</span></a>
+    <a class="card" href="https://github.com/BourbonWX/Dungeon-Tracker/blob/main/DUNGEON-TRACKER.md">
+      <strong>Manual</strong>
+      <span>Everything Dungeon Tracker does, page by page.</span></a>
+  </div>
+  <footer>
+    A fork of <a href="https://github.com/hugelton/Felucca">Felucca</a> 1.6.1 · GPL-3.0 ·
+    <a href="https://github.com/BourbonWX/Dungeon-Tracker">source</a> · <a href="firmware/LICENSES/">licences</a> ·
+    not affiliated with M-VAVE, Hügelton Instruments or Elektron.
+  </footer>
+</main>
+</html>
