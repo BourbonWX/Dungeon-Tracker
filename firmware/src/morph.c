@@ -1,6 +1,10 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* RONDO: SOUND MORPH (EDIT > MORPH). Each track blends its sound (A: what it is, every edit and load included) toward
- * a TARGET (B: a preset of the same engine, as apply_preset_to would load it) by AMOUNT 0..100 %. Only what glides
+ * a TARGET (B: a preset of the same engine, as apply_preset_to would load it; 1.5: or a sound saved in SAVE > USER of
+ * the same engine, as up_load would load it) by AMOUNT 0..100 %.
+ *   TARGET's code (mo.tgt, saved in the project): 0 none, 1..n the engine's preset n, MO_USER + k the saved slot k
+ *     (a slot, not a place in the list, so saving or erasing another sound moves nothing; firmware before 1.5 reads
+ *     one as past its presets: none). KNOB 1 walks OFF, the presets, then the saved sounds of the track's engine Only what glides
  * blends (morph_ok: a sound parameter motion could automate, not a list or a switch, not the mix): the engine, its
  * lists and switches, an FM6 patch's operators and a kit's choice stay A's.
  *   the tracker's MORPH command (CMD_MORPH, a step record) sets AMOUNT from its step on: a pattern of the bank whose
@@ -25,6 +29,10 @@ static struct {
 } mo __attribute__((section(".pool")));
 static track_t mo_tmp __attribute__((section(".pool")));   /* (the target made on a copy: main loop only) */
 
+#define MO_USER 0x80u                        /* TARGET: MO_USER + k, the saved sound in slot k (1.5) */
+static int32_t up_engine_of(uint32_t k);     /* (upreset.c) */
+static int up_values_of(uint32_t k, int16_t *v);
+static void up_name(uint32_t k, char *b);
 static const param_desc_t *track_desc(const track_t *t, uint32_t id);
 static int param_kept(uint32_t i);
 static uint32_t preset_orig(const engine_t *e, uint32_t k);
@@ -32,7 +40,7 @@ static uint32_t preset_orig(const engine_t *e, uint32_t k);
 static int morph_ok(const track_t *t, uint32_t id)
 {
     const param_desc_t *d;
-    if (id >= P_COUNT || !motion_param(id) || id == P_LEVEL || id == P_PAN || id == P_MUTE)
+    if (id >= P_COUNT || !motion_param(id) || id == P_LEVEL || id == P_PAN || id == P_MUTE || id == P_BEND)
         return 0;
     d = track_desc(t, id);
     return !d->names && d->fmt != F_ENUM && d->fmt != F_ONOFF && d->fmt != F_OCT && d->fmt != F_STEPS &&
@@ -48,12 +56,56 @@ static uint32_t morph_npresets(const track_t *t)
 #endif
     return e->npresets;
 }
+/* 1.5: the saved sounds a target can be: slot u of the track's own engine */
+static int morph_user_ok(const track_t *t, uint32_t u)
+{
+    return morph_npresets(t) && u < UP_SLOTS && up_engine_of(u) == (int32_t)(t->eng_req % NENGINES);
+}
+/* code tgt names something track t can blend to now */
+static int morph_tgt_ok(const track_t *t, uint32_t tgt)
+{
+    return !tgt || (tgt < MO_USER ? tgt <= morph_npresets(t) : morph_user_ok(t, tgt - MO_USER));
+}
+/* KNOB 1's list: OFF, the presets, the saved sounds of the engine: its length, a code's place, the place's code */
+static uint32_t morph_list_n(const track_t *t)
+{
+    uint32_t n = morph_npresets(t) + 1u, u;
+    for (u = 0; n > 1u && u < UP_SLOTS; u++)
+        n += (uint32_t)morph_user_ok(t, u);
+    return n;
+}
+static uint32_t morph_list_pos(const track_t *t, uint32_t tgt)
+{
+    uint32_t pos = morph_npresets(t) + 1u, u;
+    if (tgt < MO_USER)
+        return tgt;
+    for (u = 0; u < tgt - MO_USER && u < UP_SLOTS; u++)
+        pos += (uint32_t)morph_user_ok(t, u);
+    return pos;
+}
+static uint32_t morph_list_at(const track_t *t, uint32_t pos)
+{
+    uint32_t n = morph_npresets(t), u;
+    if (pos <= n)
+        return pos;
+    pos -= n + 1u;
+    for (u = 0; u < UP_SLOTS; u++)
+        if (morph_user_ok(t, u) && !pos--)
+            return MO_USER + u;
+    return 0;
+}
 /* the TARGET's name ("" none) */
 static const char *morph_tname(const track_t *t)
 {
+    static char nb[13];
     uint32_t k = trk_index(t), n = morph_npresets(t);
-    if (!mo.tgt[k] || mo.tgt[k] > n)
+    if (!mo.tgt[k] || !morph_tgt_ok(t, mo.tgt[k]))
         return "";
+    if (mo.tgt[k] >= MO_USER) {
+        up_name(mo.tgt[k] - MO_USER, nb);
+        return nb;
+    }
+    (void)n;
     return ENGINES[t->eng_req % NENGINES]->presets[preset_orig(ENGINES[t->eng_req % NENGINES], mo.tgt[k] - 1u)].name;
 }
 /* B: the preset's values as apply_preset_to would set them, the rest A's (main loop) */
@@ -64,8 +116,16 @@ static void morph_make(uint32_t k)
     uint32_t i, pi;
     mo.eng[k] = t->eng_req;
     memcpy(mo.b[k], mo.on[k] ? mo.a[k] : t->p, sizeof mo.b[k]);
-    if (!mo.tgt[k] || mo.tgt[k] > morph_npresets(t))
+    if (!mo.tgt[k] || !morph_tgt_ok(t, mo.tgt[k]))
         return;
+    if (mo.tgt[k] >= MO_USER) {                         /* 1.5: a saved sound, as up_load would set it */
+        int16_t v[P_COUNT];
+        if (up_values_of(mo.tgt[k] - MO_USER, v))
+            for (i = 0; i < P_COUNT; i++)
+                if (!param_kept(i))
+                    mo.b[k][i] = v[i];
+        return;
+    }
     pi = preset_orig(e, (mo.tgt[k] - 1u) % e->npresets);
     for (i = 0; i < P_E0; i++)
         if (!param_kept(i))
@@ -82,9 +142,14 @@ static void morph_make(uint32_t k)
         for (i = 0; i < 4u; i++)
             mo.b[k][P_DIST + i] = (int16_t)(e->presets[pi].fx[i] ? e->presets[pi].fx[i] - 1 : FX_DEF[i]);
     }
-    if (t->eng_req % NENGINES == ENGI_CKIT) {          /* a kit's voices (eng_cycle.c ck_kit_load, on a copy) */
+    if (ENG_KIT(t->eng_req % NENGINES)) {          /* a kit's voices (eng_cycle.c ck_kit_load, on a copy) */
         memcpy(mo_tmp.p, mo.b[k], sizeof mo_tmp.p);
         ck_kit_load(&mo_tmp, pi);
+        memcpy(mo.b[k], mo_tmp.p, sizeof mo.b[k]);
+    }
+    if (t->eng_req % NENGINES == ENGI_GENESIS) {       /* (1.2: GENESIS's operators, the same way) */
+        memcpy(mo_tmp.p, mo.b[k], sizeof mo_tmp.p);
+        gen_ops_load(&mo_tmp, pi);
         memcpy(mo.b[k], mo_tmp.p, sizeof mo.b[k]);
     }
 }
@@ -144,8 +209,13 @@ static void morph_poll(void)
                 mo.on[k] = 0;
                 motion_unguard(f);
             }
-            if (mo.tgt[k] > morph_npresets(t))
+            if (!morph_tgt_ok(t, mo.tgt[k]))
                 mo.tgt[k] = 0;
+            morph_make(k);
+            mo.req |= (uint8_t)(1u << k);
+        } else if (mo.tgt[k] >= MO_USER && !morph_tgt_ok(t, mo.tgt[k])) {   /* (its saved sound erased, or another
+                                                                              * engine's saved there: no target) */
+            mo.tgt[k] = 0;
             morph_make(k);
             mo.req |= (uint8_t)(1u << k);
         }

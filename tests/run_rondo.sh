@@ -4,7 +4,7 @@
 # build/rondo_demo; the TRACKER and the SEQ + SELECT track picker (tests/tracker_test.c);
 # EDIT > DICE (tests/dice_test.c, with demos of eight rolls per role); the HOME dungeon (tests/dungeon_test.c);
 # the live effects: FILTR DUCK REPT, ARP held, the master knobs (tests/livefx_test.c);
-# the TRACKER's commands SPEED LOOP PITCH (tests/cmd_test.c); SEQ > VARY (tests/vary_test.c); the PATTERN BANK, SONG on it, the arrangement recorded, MIDI program changes (tests/bank_test.c); SOUND MORPH (tests/morph_test.c). Run from the repo root after the generate step (build/gen):
+# the TRACKER's commands SPEED LOOP PITCH (tests/cmd_test.c); SEQ > VARY (tests/vary_test.c); the PATTERN BANK, SONG on it, the arrangement recorded, MIDI program changes (tests/bank_test.c); SOUND MORPH (tests/morph_test.c); 1.1's WAVES engine and its presets (tests/waves_test.c, demos in build/rondo_demo); 1.2's song slots (tests/songslot_test.c). Run from the repo root after the generate step (build/gen):
 #   sh tests/run_rondo.sh            (NOCOST=1 skips the timing comparison)
 set -e
 cd "$(dirname "$0")/.."
@@ -28,9 +28,33 @@ ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/bank_test test
 build/host/bank_test
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/morph_test tests/morph_test.c -lm
 build/host/morph_test
+${CC:-cc} -O2 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/waves_test tests/waves_test.c -lm
+build/host/waves_test build/rondo_demo
+${CC:-cc} -O2 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/wt32_test tests/wt32_test.c -lm   # 1.5: WAVE 32
+build/host/wt32_test build/rondo_demo
+${CC:-cc} -O2 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/mod_test tests/mod_test.c -lm   # 1.5: MOD
+build/host/mod_test build/rondo_demo
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/glide_test tests/glide_test.c -lm   # 1.5: GLIDE
+build/host/glide_test
+# 1.3: the SID engine and the LOFI KIT (tests/sid_test.c; demos in build/rondo_demo)
+${CC:-cc} -O2 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/sid_test tests/sid_test.c -lm
+build/host/sid_test build/rondo_demo
+# 1.2: the GENESIS engine, after the YM2612 (tests/genesis_test.c)
+${CC:-cc} -O2 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/genesis_test tests/genesis_test.c -lm
+build/host/genesis_test
+# 1.0: the pitch wheel records as automation (tests/bend_test.c)
+${CC:-cc} -O2 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/bend_test tests/bend_test.c -lm
+build/host/bend_test
+# 1.0: the power-on fanfare (tests/jingle_test.c)
+${CC:-cc} -O2 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/jingle_test tests/jingle_test.c -lm
+build/host/jingle_test
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/persistence_test tests/persistence_test.c -lm
 build/host/persistence_test > build/host/persistence.txt || { grep FAIL build/host/persistence.txt; exit 1; }
 tail -1 build/host/persistence.txt                    # (the flash: the PATTERN BANK's pairs too)
+# 1.2: the SONG SLOTS, A..H, whole songs (tests/songslot_test.c: round trips, power cuts, 1.1's projects moved in)
+${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/songslot_test tests/songslot_test.c -lm
+build/host/songslot_test > build/host/songslot.txt || { grep FAIL build/host/songslot.txt; exit 1; }
+tail -1 build/host/songslot.txt
 # the audio tools build (tests/chip_demo.c, tests/chip_tour.c: CHIP's demos, run by hand)
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/chip_demo tests/chip_demo.c -lm
 ${CC:-cc} -O1 -w -Ibuild/gen -Ifirmware/src -Itests -o build/host/chip_tour tests/chip_tour.c -lm

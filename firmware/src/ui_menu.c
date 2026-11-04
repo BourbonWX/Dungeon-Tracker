@@ -43,6 +43,10 @@ static const menu_credit_t MENU_CREDITS[] = {
     {"Fukiai icon font: MIT", MC_TEXT},
     {"https://github.com/hugelton", MC_URL},
     {"", MC_TEXT},
+    {"AMBIKA", MC_TITLE},                     /* 1.1: WAVES */
+    {"Emilie Gillet / GPL-3.0", MC_TEXT},
+    {"https://github.com/pichenettes/ambika", MC_URL},
+    {"", MC_TEXT},
     {"KLATTSCH", MC_TITLE},
     {"Tony Gies / MIT", MC_TEXT},
     {"https://github.com/tgies/klattsch", MC_URL},
@@ -437,6 +441,15 @@ static void draw_menu(void)
           (song.mch[0] | (uint32_t)song.mch[1] << 8 | (uint32_t)song.mch[2] << 16 | (uint32_t)song.mch[3] << 24) *
           2246822519u +                                   /* (1.5.5: T1..T4 CHANNEL) */
           (ui.menu == 2 ? ui.menu_scroll * 48611u : 0u) + (ui.menu == 3 ? info_sig() * 2654435761u : 0u);
+#if RONDO_LAYOUT
+    {   /* Dungeon Tracker: the GAME tab's values (1.0 on the hardware: a class turned, or one waiting, drew nothing until
+         * the cursor moved): DUNGEON, the four classes as shown (a class waiting: its preview), PARTY's points */
+        uint32_t k, g = dg_game * 3u + party_waiting * 5u;
+        for (k = 0; k < NTRK; k++)
+            g = g * 7u + party_cls(k) + 1u;
+        sig += g * 2654435769u;
+    }
+#endif
     if (!ui.force && sig == ui.menu_sig) {
         if (ui.menu == 1 && mt.pos != pos0) {          /* only the tabs slid: their strip */
             cv_begin(240, MP_Y - H_HEAD, T_BG);
@@ -510,6 +523,9 @@ static void enc_drop(void)                             /* knob turns nobody take
 
 static void menu_close(void)
 {
+#if RONDO_LAYOUT
+    party_menu_closed();                               /* (THE PARTY over its points: as it was) */
+#endif
     settings_save();                                   /* palette / panel table, if changed */
     ui.menu = 0;
     ui.force = 1;
@@ -568,6 +584,9 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
         enc_drop();
         return;
     }
+#if RONDO_LAYOUT
+    party_tick();                                      /* (THE PARTY: a class shown takes once the knob rests) */
+#endif
     if ((s = panel_enc(EN_PRESET)) != 0)
         menu_move(s);
     if ((s = panel_enc(EN_ALGO)) != 0)
@@ -593,6 +612,11 @@ static void menu_input(uint32_t oct)                  /* oct: ui_input.c oct_tap
             panel_setup();
             scrn.idle = fm1_ms;                         /* (SCREEN OFF: its own loop had the input) */
             ui.force = 1;
+#if RONDO_LAYOUT
+        } else if (ui.menu_sel == MI_RANDOM) {          /* 1.0: a song rolled (NEW + DEFAULT SOUNDS first: SAVE held
+                                                         * undoes it); the MENU stays, its message says so */
+            random_song();
+#endif
         } else if (ui.menu_sel == MI_INFO) {
             ui.menu = 3;
             info.t = fm1_ms - INFO_CPU_MS;              /* (the CPU load read at once) */

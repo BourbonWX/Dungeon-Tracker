@@ -662,9 +662,11 @@ static void state(void)                          /* a playing song with steps on
 {
     uint32_t i;
     ui_power_on();
+    as.pend = 0; as.have = 0;                    /* (1.0.1: the autosave's mark and QUICK, scene by scene) */
     seq_fill = 0;                                /* (1.5.5: GLO's FILL, held in layer_glo_fill only; */
     eu.on = 0;                                   /* SEQ TOOLS' EUCLID, open in layer_seq_euclid*) */
     if (large_on) ui_prefs |= PREF_LARGE;
+    lg_peek = 0;                                 /* (1.1: no knob turned on HOME: LARGE's dungeon whole) */
     song.playing = 1;
     song.g[G_BPM] = 124;
     clk_pos = 0; clk_step = 8; cin_total = cin_left = 0;   /* the bar's 3rd beat: the header's metronome at rest */
@@ -794,7 +796,13 @@ enum { S_HOME, S_HOME_IDLE, S_HOME_BOOT, S_HOME_FALLEN, S_HOME_CROSS, S_HOME_TUR
        S_DETAIL_COND, S_DETAIL_FILL, S_AUTO_COND, S_GLO_FILL, S_SEQ_EUCLID, S_SEQ_EUCLID_DRUM, S_SEQ_EUCLID_64,
        S_MENU_SELECT, S_PROJECT_ERASE, S_CONFIRM_ERASE_PROJ, S_TOOLS_CLEAN, S_CONFIRM_CLEAN,
        S_MENU_MIDI_TRACK, S_MENU_MIDI_TCH_UNUSED, S_MENU_MIDI_AUTO, S_HOME_TRACKS_MIDI, S_MIXER_MIDI, S_EDIT_PHASE_FOLD,
-       S_TOOLS_NEW, S_TOOLS_NEW_S, S_CONFIRM_NEW, S_CONFIRM_NEW_S, S_COUNT };
+       S_TOOLS_NEW, S_TOOLS_NEW_S, S_CONFIRM_NEW, S_CONFIRM_NEW_S, S_PROJECT_QUICK, S_HEAD_UNSAVED, S_HEAD_UNSAVED_Q,
+       S_WAVES_EDIT1, S_WAVES_EDIT2, S_WAVES_HOME, S_WAVES_PRESETS, S_WAVES_EDIT_LAYER, S_HOME_FLOORFX, S_LG_HOME_FULL, S_LG_HOME_FIGHT, S_LG_HOME_PEEK, S_LG_HOME_BOOT, S_HOME_PAIR, S_LG_HOME_PAIR, S_HOME_PAIR_COMING,
+       S_HOME_BREATH, S_HOME_BOLT, S_HOME_CLAW, S_HOME_SLAM, S_HOME_CRIT, S_HOME_POOF, S_HOME_MACE, S_HOME_HAMMER, S_HOME_STAFF,
+       S_SLOTS_LOW, S_SLOTS_LOW_LG, S_CONFIRM_LOAD_SONG, S_SLOTS_TOO_BIG,
+       S_SID_EDIT1, S_SID_EDIT2, S_SID_HOME, S_SID_PRESETS, S_LOFI_KIT, S_SLOTS_K,
+       S_MENU_PARTY, S_MENU_PARTY_OVER, S_HOME_TWO_ROGUES, S_PRESETS_CLASS, S_HOME_BOSS, S_HOME_LEVEL_UP,
+       S_DICE_SID, S_DICE_PHYS, S_MENU_PARTY_NEW, S_HOME_NEW_PARTY, S_DICE_HELD, S_MORPH_USER, S_COUNT };   /* (1.1) */
 static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_boot", "home_fallen", "home_cross", "home_turn", "message", "message_key", "message_nofile", "presets", "presets_nofav", "user",
     "phrases", "project", "tools", "song_empty", "song", "step", "auto_steps", "auto_add_chance", "automation", "drum",
     "drum_hand", "drum_cym", "mixer", "mixer_from_home", "mixer_pan", "env", "env_dest", "lfo", "mod", "fx", "slicer", "dly", "scl", "chord", "chord_wide", "chord_off", "chord_kit", "arp",
@@ -829,7 +837,13 @@ static const char *const S_NAME[S_COUNT] = {"home", "home_idle", "home_boot", "h
     "layer_seq_euclid_64",
     "menu_select", "project_erase", "confirm_erase_project", "tools_clean", "confirm_clean",
     "menu_midi_track", "menu_midi_channels_unused", "menu_midi_auto_select", "home_tracks_midi", "mixer_midi", "edit_phase_fold",
-    "tools_new", "tools_new_sounds", "confirm_new", "confirm_new_sounds"};
+    "tools_new", "tools_new_sounds", "confirm_new", "confirm_new_sounds", "project_quick", "head_unsaved", "head_unsaved_queued",
+    "waves_edit1", "waves_edit2", "waves_home", "waves_presets", "waves_edit_layer", "home_floor_fx", "large_home_full", "large_home_fight", "large_home_peek", "large_home_boot", "home_pair", "large_home_pair", "home_pair_coming",
+    "home_breath", "home_bolt", "home_claw", "home_slam", "home_crit", "home_poof", "home_mace", "home_hammer", "home_staff",
+    "slots_low", "slots_low_large", "confirm_load_song", "slots_too_big",
+    "sid_edit1", "sid_edit2", "sid_home", "sid_presets", "lofi_kit", "slots_k",
+    "menu_party", "menu_party_over", "home_two_rogues", "presets_class", "home_boss", "home_level_up",
+    "dice_sid", "dice_phys", "menu_party_new", "home_new_party", "dice_held", "morph_user"};
 
 /* the STEP page's piano roll (ui_graph.c graph_roll) on track 1, stopped unless said: an empty pattern; ACID in
  * A minor; POLY chords (Am7 F C G, tied); a line with ties, slides and accents in C major; LEN 32 on its second
@@ -1004,7 +1018,16 @@ static void set_ins_ui(int32_t ty, int32_t a, int32_t b, int32_t c, int32_t mix)
     TSEL->p[P_IMIX] = (int16_t)mix;
 }
 
-static void setup(int s)
+static void setup_scene(int s);
+static void setup(int s)   /* (1.5: then the monsters' looks by the depth, as dg_walk gives them) */
+{
+    setup_scene(s);
+    if (dg.mon)
+        dg.skin = (uint8_t)dg_skin_of(dg.mon, dg.floor);
+    if (dg.mon2)
+        dg.skin2 = (uint8_t)dg_skin_of(dg.mon2, dg.floor);
+}
+static void setup_scene(int s)
 {
     memset(kb_chn, 0, sizeof kb_chn);               /* no key held (roll_playing holds one) */
     state();
@@ -1032,9 +1055,47 @@ static void setup(int s)
         trk[2].step[0].time = ST_NOTE; trk[2].step[0].n = 1; trk[2].step[0].note[0] = 36; trk[2].step[0].vel = 100; dg_party(); dg.in[2] = 1; dg.lvl[2] = 3;
         dg.dead = 4; dg.hp[2] = 0; dg.hp[0] = 2; dg.mon = DM_SKEL; dg.mon_dist = 1; dg.mon_max = 30; dg.mon_hp = 17;
         dg.floor = 7; dg.kills = 12; dg_say("FIGHTER FALLS: T3 CUT"); dg.msg_f = 250; dg.swing[0] = 6; break;
+    case S_HOME_FLOORFX:                            /* 1.1: FLOOR FX, the longest message (STAIRS: T4 FLANGER) */
+        song.playing = 1; ui_home_view = HV_SCOPE; dg_game = 1; dg.lvl_ms = 0; dg_party();
+        dg.floor = 8; dg.kills = 9; str_cpy(dgf.msg, "STAIRS: T4 FLANGER", sizeof dgf.msg); dg_say(dgf.msg); dg.msg_f = 250; break;
+    case S_LG_HOME_FULL: case S_LG_HOME_FIGHT: case S_LG_HOME_PEEK: case S_LG_HOME_BOOT:   /* 1.1: LARGE, the dungeon whole */
+        ui_prefs |= PREF_LARGE; go_home(); ui_home_view = HV_SCOPE; ui.msg_t = 0;
+        if (s == S_LG_HOME_BOOT) { song.playing = 0; dg_played = 0; dg_game = 0; dg_party(); break; }
+        song.playing = 1; dg_game = 1; dg.lvl_ms = 0; dg_party(); dg.floor = 6; dg.kills = 14;
+        if (s == S_LG_HOME_FIGHT) {
+            dg.mon = DM_OGRE; dg.mon_dist = 1; dg.mon_max = 40; dg.mon_hp = 23; dg.mon_hit = 2; dg.dmg = 6; dg.swing[0] = 6;
+            str_cpy(dgf.msg, "BOSS: T2 FLANGER", sizeof dgf.msg); dg_say(dgf.msg); dg.msg_f = 250;
+        } else if (s == S_LG_HOME_FULL) {
+            dg.mon = DM_GOBLIN; dg.mon_dist = 3;
+        } else {
+            ui.hot_col = 1; ui.hot_t = 30;              /* a knob turned: the tall cards back */
+        }
+        break;
+    case S_HOME_BREATH: case S_HOME_BOLT: case S_HOME_CLAW: case S_HOME_SLAM: case S_HOME_CRIT: case S_HOME_POOF:
+        /* 1.5: the monsters by the depth: a DRAGON's breath (B10, the boss, raging), a WISP's bolt (B7), a DARK ELF's claws
+         * (no: a BONE KNIGHT's, B10), a CUBE's slam (B11), a CRIT on an ORC (B6), a GOBLIN fading (B1) */
+        go_home(); ui_home_view = HV_SCOPE; ui.msg_t = 0;
+        song.playing = 1; dg_game = 1; dg.lvl_ms = 0; dg_party(); dg.kills = 20;
+        dg.mon_dist = 1; dg.mon_max = 40; dg.mon_hp = 30;
+        if (s == S_HOME_BREATH) { dg.floor = 10; dg.mon = DM_OGRE; dg.mon_hp = 14; dg.rage = 1; dg.mon_atk = 3; }
+        if (s == S_HOME_BOLT) { dg.floor = 7; dg.mon = DM_SLIME; dg.mon_atk = 2; }
+        if (s == S_HOME_CLAW) { dg.floor = 10; dg.mon = DM_SKEL; dg.mon_atk = 3; }
+        if (s == S_HOME_SLAM) { dg.floor = 11; dg.mon = DM_SLIME; dg.mon_atk = 4; }
+        if (s == S_HOME_CRIT) { dg.floor = 6; dg.mon = DM_GOBLIN; dg.crit = 9; dg.mon_hit = 4; dg.dmg = 18; dg.swing[0] = 6; }
+        if (s == S_HOME_POOF) { dg.floor = 1; dg.mon = DM_NONE; dg.mon_dist = 0; dg.poof = 7; dg.poof_skin = 0; dg.poof_side = 0;
+                                dg_say("SLAIN"); dg.msg_f = 250; }
+        break;
+    case S_HOME_PAIR: case S_LG_HOME_PAIR: case S_HOME_PAIR_COMING:   /* 1.1: a pair, side by side (the longest name) */
+        if (s == S_LG_HOME_PAIR) ui_prefs |= PREF_LARGE;
+        go_home(); ui_home_view = HV_SCOPE; ui.msg_t = 0;
+        song.playing = 1; dg_game = 1; dg.lvl_ms = 0; dg_party(); dg.floor = 4; dg.kills = 7;
+        dg.mon = DM_SKEL; dg.mon2 = DM_GOBLIN; dg.mon_max = 18; dg.mon_hp = 11; dg.mon2_max = 10; dg.mon2_hp = 7;
+        dg.mon_dist = s == S_HOME_PAIR_COMING ? 3 : 1;
+        if (s != S_HOME_PAIR_COMING) { dg.mon2_hit = 2; dg.dmg = 5; dg.swing[2] = 6; }
+        str_cpy(dg.pair_msg, "SKELETON AND GOBLIN", sizeof dg.pair_msg); dg_say(dg.pair_msg); dg.msg_f = 250; break;
     case S_HOME_IDLE: song.playing = 0; song.batt_raw = 570; ui.hot_col = 1; ui.hot_t = 30; break;
     case S_HOME_BOOT:                               /* Dungeon Tracker: just powered on, its own song, stopped: PRESS PLAY */
-        song.playing = 0; boot_song(0x5EEDu); boot_song_settle(); ui_home_view = HV_SCOPE; dg_played = 0; dg.lvl_ms = 0; dg_party(); break;
+        song.playing = 0; random_song_make(0x5EEDu); boot_song_settle(); ui_home_view = HV_SCOPE; dg_played = 0; dg.lvl_ms = 0; dg_party(); break;
     case S_MESSAGE: ui_say("LOADED ", "07 A VERY LONG PATTERN NAME"); break;
     case S_MESSAGE_KEY: ui_message("[SAVE] HOLD TO UNDO"); break;            /* a message with a keycap */
     case S_MESSAGE_NOFILE:                          /* a missing sample (ui_input.c sample_notice): USR2 */
@@ -1181,7 +1242,8 @@ static void setup(int s)
     case S_CHORD_OFF: go_title("CHORD"); break;
     case S_CHORD_KIT: eng(ENGI_DRUM); TSEL->p[P_CHRD] = CH_DIA3; go_title("CHORD"); break;
     case S_ARP: go_title("ARP"); break;
-    case S_VOICE: go_title("VOICE"); break;
+    case S_VOICE:                                       /* (1.5: T3's bass, LEGATO, GLIDE 75: 253 ms; a kit has no VOICE) */
+        track_select(2); TSEL->p[P_VOICE] = V_LEGATO; TSEL->p[P_GLIDE] = 75; go_title("VOICE"); break;
     case S_CLOCK: go_title("CLOCK"); break;          /* (1.2: HOME > MIXER > CLOCK; up to 1.1.5 GLO > GLOBAL) */
     /* 1.2: the old SYSTEM page's items in the MENU: MIDI > MIDI IN (ROUT) on CH5-8; AUDIO > TUNE (-12 ct) selected;
      * SYSTEM > INFO (the USB state, the CPU load) */
@@ -1494,8 +1556,17 @@ static void setup(int s)
         song.playing = 0;
         if (s == S_MOMENTARY_EDIT)
             open_family(FAM_EDIT);
+        vp = 0;
         if (s == S_MOMENTARY) home_param(0, &vp);
         else page_desc(cur_page(), 0, &vp);
+        if (!vp) {                                       /* (1.1: EDIT opens on DICE, no value: the VOICE page's) */
+            uint32_t i;
+            for (i = 0; i < NPAGES && !str_eq(PAGES[i].title, "VOICE"); i++)
+                ;
+            ui.page = (uint8_t)i;
+            page_entered();
+            page_desc(cur_page(), 0, &vp);
+        }
         mom.n = 1; mom.vp[0] = vp; mom.v[0] = *vp;
         *vp = (int16_t)(*vp > 64 ? *vp - 40 : *vp + 40);
         ui.hot_col = 0; ui.hot_t = 40;
@@ -1705,6 +1776,108 @@ static void setup(int s)
     case S_TOOLS_NEW_S: go_page(GR_TOOLS); ui.act = 1; ui.tl_new = 2; break;
     case S_CONFIRM_NEW: ui.confirm = CF_NEW; ui.confirm_trk = 0; break;
     case S_CONFIRM_NEW_S: ui.confirm = CF_NEW_SOUNDS; ui.confirm_trk = 0; break;
+    case S_SLOTS_LOW: case S_SLOTS_LOW_LG: case S_SLOTS_TOO_BIG:   /* 1.2: A..H, G picked (the list scrolled) */
+        song.playing = 0;
+        project_save_as(1, "DUB SKETCH"); project_save_as(5, "BOSS THEME"); project_save_as(7, "A VERY LONG NAME");
+        project_save_as(6, "");
+        if (s == S_SLOTS_LOW_LG) ui_prefs |= PREF_LARGE;
+        song.g[G_SLOT] = 7; go_page(GR_SLOTS); ui.act = 4;
+        if (s == S_SLOTS_TOO_BIG) ui_message("SONG TOO BIG"); else ui.msg_t = 0;
+        break;
+    case S_SID_EDIT1: case S_SID_EDIT2: case S_SID_HOME: case S_SID_PRESETS:   /* 1.3: SID */
+        eng(ENGI_SID); apply_preset_to(TSEL, s == S_SID_HOME ? 3 : 17); TSEL->engine = TSEL->eng_req;
+        if (s == S_SID_EDIT1) go_title("EDIT 1");
+        else if (s == S_SID_EDIT2) go_title("EDIT 2");
+        else if (s == S_SID_PRESETS) go_page(GR_BROWSE);
+        else go_home();
+        ui.msg_t = 0;
+        break;
+    case S_LOFI_KIT:                                    /* 1.3: SAMPLE's LOFI KIT */
+        eng(ENGI_SAMPLE); apply_preset_to(TSEL, 3); TSEL->engine = TSEL->eng_req; go_title("EDIT 1"); ui.msg_t = 0; break;
+    case S_SLOTS_K:                                     /* 1.3: A..K, K picked (the list's end) */
+        song.playing = 0; project_save_as(8, "CAVE TUNE"); project_save_as(10, "LAST STAND");
+        song.g[G_SLOT] = 11; go_page(GR_SLOTS); ui.act = 4; ui.msg_t = 0; break;
+    case S_MENU_PARTY: case S_MENU_PARTY_OVER:          /* 1.0: THE PARTY on MENU > GAME (over: T3 ROGUE waiting) */
+        party_waiting = 0;
+        song.clsx[1] = CLS_FIGHTER ^ 1u; song.clsx[2] = CLS_ROGUE ^ 2u;
+        ui.menu = 1; ui.menu_sel = MI_CLS3; dg_game = 1;
+        if (s == S_MENU_PARTY_OVER) { song.clsx[1] = 0; song.clsx[2] = 0; menu_put(MI_CLS3, CLS_ROGUE); }
+        break;
+    case S_HOME_TWO_ROGUES:                             /* 1.0: two rogues and a fighter on T2, the dungeon on */
+        song.clsx[1] = CLS_FIGHTER ^ 1u; song.clsx[2] = CLS_ROGUE ^ 2u;
+        for (uint32_t k = 0; k < 4u; k++) { trk[k].step[0].time = ST_NOTE; trk[k].step[0].n = 1; trk[k].step[0].note[0] = 36; trk[k].step[0].vel = 100; }
+        song.playing = 1; ui_home_view = HV_SCOPE; dg_game = 1; dg.lvl_ms = 0; dg_party(); dg.floor = 3; dg.kills = 5;
+        go_home(); ui.msg_t = 0; break;
+    case S_HOME_MACE: case S_HOME_HAMMER: case S_HOME_STAFF:   /* 1.5: the cleric's mace, the paladin's warhammer, the
+                                                         * druid's staff (frames 6, 3, 5 of 10) */
+        song.playing = 0; random_song_make(0x5EEDu); boot_song_settle(); go_home(); ui_home_view = HV_SCOPE; ui.msg_t = 0;
+        song.playing = 1; dg_played = 1; dg_game = 1; dg.lvl_ms = 0;
+        song.clsx[0] = (uint8_t)(CLS_ROGUE ^ 0u); song.clsx[1] = (uint8_t)(CLS_CLERIC ^ 1u);
+        song.clsx[2] = (uint8_t)(CLS_PALADIN ^ 2u); song.clsx[3] = (uint8_t)(CLS_DRUID ^ 3u);
+        dg_party(); dg.floor = 5; dg.kills = 9; dg.mon = DM_GOBLIN; dg.mon_dist = 1; dg.mon_max = 30; dg.mon_hp = 21;
+        dg.swing[s == S_HOME_MACE ? 1 : s == S_HOME_HAMMER ? 2 : 3] = s == S_HOME_MACE ? 6 : s == S_HOME_HAMMER ? 3 : 5;
+        break;
+    case S_HOME_BOSS: case S_HOME_LEVEL_UP:             /* 1.0: the floor's ogre after ten slain; slain: LEVEL UP */
+        song.playing = 0; random_song_make(0x5EEDu); boot_song_settle(); go_home(); ui_home_view = HV_SCOPE; ui.msg_t = 0;
+        song.playing = 1; dg_played = 1; dg_game = 1; dg.plv = 2; dg.lvl_ms = 0; dg_party(); dg.floor = 2; dg.kills = 21;
+        dg.fkills = DG_BOSS_AT; dg.boss_up = 1; dg.mon = DM_OGRE; dg.mon_dist = 1; dg.mon_max = 90; dg.mon_hp = 34;
+        dg.mon_hit = 2; dg.dmg = 9; dg.swing[2] = 6; dg_say("OGRE"); dg.msg_f = 250;
+        if (s == S_HOME_LEVEL_UP) { dg.mon_hp = 0; dg_slain(); dg.msg_f = 250; dg.mon_hit = 0; }
+        break;
+    case S_DICE_SID: case S_DICE_PHYS:                  /* 1.1: the bred dice: T4 SID rolled (MAGE), T2 PHYS (CLERIC) */
+        track_select(s == S_DICE_SID ? 3 : 1); set_engine_of(TSEL, s == S_DICE_SID ? ENGI_SID : ENGI_PHYS);
+        TSEL->engine = TSEL->eng_req; go_page(GR_DICE); dice.rng = 0x51D5u; dice.hold[song.sel] = 1u; dice_roll();
+        dice.cur[song.sel] = 6; dice.anim = 0; ui.msg_t = 0;
+        break;
+    case S_MORPH_USER:                                  /* 1.5: T4 morphing between two saved sounds (U05 -> U06) */
+    {   uint8_t pl = song.playing, tq = transport_req;
+        song.playing = 0; transport_req = 0;            /* (a save waits for the transport to stop) */
+        track_select(3); apply_preset_to(TSEL, 14); TSEL->engine = TSEL->eng_req;
+        up_store(5, "DARK SWELL");
+        apply_preset_to(TSEL, 16); TSEL->engine = TSEL->eng_req;
+        up_store(6, "BRIGHT KEYS");
+        up_load(4); TSEL->engine = TSEL->eng_req;
+        up_load(5); TSEL->engine = TSEL->eng_req; morph_poll();
+        morph_set(3, MO_USER + 6u, 45); morph_poll(); morph_poll();
+        song.playing = pl; transport_req = tq;
+        go_page(GR_MORPH); ui.msg_t = 0;
+        break;
+    }
+    case S_DICE_HELD:                                   /* 1.5: T4 WAVE 32 rolled, FILTR held and set by hand (VALUE, PART) */
+        track_select(3); set_engine_of(TSEL, ENGI_WT32); apply_preset_to(TSEL, 12);
+        TSEL->engine = TSEL->eng_req; go_page(GR_DICE); dice.rng = 0x15A1u; dice.hold[3] = (1u << 4) | (1u << 0);
+        dice_roll(); dice.cur[3] = 4; dice.part[3] = 0; dice.anim = 0; ui.msg_t = 0;
+        break;
+    case S_MENU_PARTY_NEW:                              /* 1.1: MONK DRUID PALADIN BARD, T1 picked */
+        party_waiting = 0;
+        song.clsx[0] = CLS_MONK; song.clsx[1] = CLS_DRUID ^ 1u; song.clsx[2] = CLS_PALADIN ^ 2u; song.clsx[3] = CLS_BARD ^ 3u;
+        ui.menu = 1; ui.menu_sel = MI_CLS1; dg_game = 1;
+        break;
+    case S_HOME_NEW_PARTY:                              /* 1.1: the new four in a fight, the bard's song and the monk's fists */
+        song.clsx[0] = CLS_MONK; song.clsx[1] = CLS_DRUID ^ 1u; song.clsx[2] = CLS_PALADIN ^ 2u; song.clsx[3] = CLS_BARD ^ 3u;
+        for (uint32_t k = 0; k < 4u; k++) { trk[k].step[0].time = ST_NOTE; trk[k].step[0].n = 1; trk[k].step[0].note[0] = 48; trk[k].step[0].vel = 100; }
+        song.playing = 1; ui_home_view = HV_SCOPE; dg_game = 1; dg.lvl_ms = 0; dg_party(); dg.floor = 3; dg.kills = 7;
+        dg.mon = DM_SKEL; dg.mon_dist = 1; dg.mon_max = 30; dg.mon_hp = 18; dg.mon_hit = 2; dg.dmg = 4;
+        dg.swing[0] = 6; dg.swing[3] = 5; dg_say("SKELETON"); dg.msg_f = 250;
+        go_home(); ui.msg_t = 0; break;
+    case S_PRESETS_CLASS:                               /* 1.0: PRESETS on a ROGUE track, LIST CLASS: its drums */
+        song.sel = 0; memset(&favorites, 0, sizeof favorites); go_page(GR_BROWSE); ui.msg_t = 0; break;
+    case S_CONFIRM_LOAD_SONG: song.playing = 0; project_save_as(5, "BOSS THEME"); ui.confirm = CF_LOAD_SONG; ui.confirm_trk = 5; break;
+    case S_PROJECT_QUICK:                               /* 1.0.1: QUICK picked (the autosave there), A saved */
+        song.playing = 0; project_save(0); as.have = 1; song.g[G_SLOT] = 0; go_page(GR_SLOTS); ui.act = 4; break;
+    case S_WAVES_EDIT1: case S_WAVES_EDIT2: case S_WAVES_HOME: case S_WAVES_PRESETS: case S_WAVES_EDIT_LAYER:   /* 1.1 */
+        eng(ENGI_WAVES); apply_preset_to(TSEL, s == S_WAVES_HOME ? 12 : 9); TSEL->engine = TSEL->eng_req;
+        if (s == S_WAVES_EDIT1) go_title("EDIT 1");
+        else if (s == S_WAVES_EDIT2) go_title("EDIT 2");
+        else if (s == S_WAVES_PRESETS) go_page(GR_BROWSE);
+        else { go_home(); if (s == S_WAVES_EDIT_LAYER) ui.layer = LAYER_EDIT; }
+        ui.msg_t = 0;
+        break;
+    case S_HEAD_UNSAVED:                                /* 1.0.1: the header's unsaved mark after the pattern letter */
+        as.pend = 1; go_home(); ui.msg_t = 0; break;
+    case S_HEAD_UNSAVED_Q:                              /* .. with the next pattern queued (A>C*) */
+        bank_fill(); seq_start(); song.playing = 1; events_block(32); bank.queue = 2; fm1_ms = 250u * 3u;
+        as.pend = 1; go_home(); ui.msg_t = 0; break;
     case S_DRUM_LOCKS: case S_DRUM_LOCK_HELD:
         drum(0); go_page(GR_ROLL); ui.cursor = 4; ui.lane = 1; trk[3].seq_idx = 9;
         motion_set_lock(TSEL, 2, P_E1, 90); motion_set_lock(TSEL, 4, P_REV, 100); motion_set_lock(TSEL, 4, P_DLY, 70);
@@ -2550,7 +2723,7 @@ int main(int argc, char **argv)
                lg_nspan, lg_njump, lg_nface[0], lg_nface[1], lg_nface[2]);
         if (lg_nspan < 100u) { fprintf(stderr, "ui_render: LARGE swept %u knobs tall only\n", lg_nspan); return 1; }
     }
-    {   /* every FM6 chart (the lint above, fmp_check, runs on each), in GREY: gray */
+    if (!DT_RETIRE) {   /* every FM6 chart (the lint above, fmp_check, runs on each), in GREY: gray (1.1: FM6 retired: none) */
         uint32_t a, c0 = fmp_charts;
         for (a = 1; a <= 32u; a++) {
             char name[32];
@@ -2563,7 +2736,7 @@ int main(int argc, char **argv)
         }
         if (fmp_charts - c0 != 32u) { fprintf(stderr, "ui_render: %u FM6 charts drawn of 32\n", fmp_charts - c0); return 1; }
     }
-    {   /* every FM6 chart again on OPERATOR, each operator picked in turn, its frequency at its widest ("x61.69", every
+    if (!DT_RETIRE) {   /* every FM6 chart again on OPERATOR, each operator picked in turn, its frequency at its widest ("x61.69", every
          * operator FIXED: "9.77 KHZ") top right: the same chart lint (the text is part of the label's net), in GREY */
         uint32_t a, o, w, k, c0 = fmp_charts;
         for (w = 0; w < 2u; w++)

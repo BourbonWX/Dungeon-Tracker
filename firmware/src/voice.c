@@ -111,7 +111,7 @@ static void track_lfo_tick(track_t *t)                  /* (one core: the whole 
 /* voices the engine may use (POLY and UNISON): its cap, else all of them */
 static uint32_t trk_nvoice(const track_t *t)
 {
-    uint32_t c = ENGINES[t->engine]->poly, cap = TRK_CAP[(uint32_t)(t - trk) % NPART];   /* RONDO: the track's cap */
+    uint32_t c = ENGINES[t->engine]->poly, cap = trk_cap((uint32_t)(t - trk) % NPART);   /* RONDO: the track's cap (its class) */
     c = c && c < NVOICE ? c : NVOICE;
     return c < cap ? c : cap;
 }
@@ -218,8 +218,8 @@ static voice_t *voice_alloc(track_t *t, uint32_t note)
 {
     uint32_t i, np = trk_nvoice(t), best = np, low = np, nfree = 0;
     int32_t bd = 0x7FFFFFFF;
-    if (t->engine == ENGI_DRUM || t->engine == ENGI_CKIT) {   /* (RONDO: FMKIT, a voice per lane too) */
-        voice_t *v = t->engine == ENGI_DRUM ? drum_reuse(t, note) : ck_reuse(t, note);
+    if ((!DT_RETIRE && t->engine == ENGI_DRUM) || ENG_KIT(t->engine)) {   /* (RONDO: FMKIT, a voice per lane too) */
+        voice_t *v = !DT_RETIRE && t->engine == ENGI_DRUM ? drum_reuse(t, note) : ck_reuse(t, note);
         if (v)
             return voice_reuse(t, v);
     }
@@ -273,20 +273,33 @@ static voice_t *voice_alloc(track_t *t, uint32_t note)
 }
 
 /* glide: RATE = a fixed speed, TIME = the same time for any interval */
+/* GLIDE (1.5): 1..127 is GLIDE_MS (5 ms .. 4 s, exponential; params.c shows it, 0 OFF). RATE (GLMODE 0): that long
+ * for an octave (wider jumps take longer); TIME (GLMODE 1): that long for any jump. A step with SLIDE and GLIDE OFF:
+ * TIME, GLIDE_SLIDE_MS (a 303's slide). The pitch moves in 1/256 of its 1/16-semitone units a control block
+ * (glide_frac, the rest of pitch_cur; the oscillator hears it as fine tuning), so a slow glide is smooth and the whole
+ * range is there (before 1.5: whole 1/16 semitones a block, ~140 ms an octave at most, the knob's top quarter idle) */
+/* (GLIDE_MS: params.c, which shows it) */
+#define GLIDE_SLIDE_MS 60u
+static uint8_t glide_frac[NPART][NVOICE];         /* the pitch below pitch_cur, 1/256 of a 1/16 semitone */
+static uint8_t *glide_fr(const track_t *t, const voice_t *v) { return &glide_frac[(uint32_t)(t - trk) % NPART][(uint32_t)(v - t->v) % NVOICE]; }
 static void glide_set(track_t *t, voice_t *v, int glide)
 {
+    uint32_t ms = GLIDE_MS[t->p[P_GLIDE] & 127], blocks, d;
     if (!glide || !v->pitch_cur) {
         v->pitch_cur = v->pitch16;
+        *glide_fr(t, v) = 0;
         v->gstep = 0;
         return;
     }
-    if (t->p[P_GLMODE]) {
-        int32_t d = v->pitch16 - v->pitch_cur, ticks = 1 + t->p[P_GLIDE] * t->p[P_GLIDE] / 8;
-        d = d < 0 ? -d : d;
-        v->gstep = d / ticks > 0 ? d / ticks : 1;
-    } else {
-        v->gstep = 0;
-    }
+    d = (uint32_t)(v->pitch16 > v->pitch_cur ? v->pitch16 - v->pitch_cur : v->pitch_cur - v->pitch16);
+    if (!ms)                                            /* SLIDE with GLIDE OFF */
+        ms = GLIDE_SLIDE_MS;
+    else if (!t->p[P_GLMODE])                           /* RATE: ms an octave */
+        d = 192u;
+    blocks = ms * (uint32_t)FS / (CTL * 1000u);         /* (4000 ms: 5512 blocks; 32-bit) */
+    v->gstep = (int32_t)(blocks ? (d * 256u + blocks / 2u) / blocks : d * 256u);   /* Q8 a control block */
+    if (v->gstep < 1)
+        v->gstep = 1;
 }
 
 static void voice_start(track_t *t, voice_t *v, uint32_t note, uint32_t vel, int glide)
@@ -398,7 +411,7 @@ static void trk_note_on(track_t *t, uint32_t note, uint32_t vel)
     uint32_t any = 0, i, mode = trk_vmode(t);
     if (t->p[P_MUTE])
         return;
-    if (t == &trk[0] && t->engine != ENGI_CKIT && (t->engine != ENGI_DRUM || note == 35u || note == 36u))
+    if (t == &trk[0] && !ENG_KIT(t->engine) && (t->engine != ENGI_DRUM || note == 35u || note == 36u))
         duck_kick();                                    /* RONDO: track 1's notes (a DRUM kit's kick) duck (core.h; FMKIT's
                                                          * KICK lane: eng_cycle.c) */
     if (t->xf_on || t->eng_req != t->engine) {          /* engine switch under way: after the fade */
@@ -661,8 +674,11 @@ static __attribute__((noinline)) void spread_sum(int32_t *out)
 #endif
 
 /* render one block of a part into out (cleared here); returns the voices rendered */
-/* Channel bend is live performance state, outside projects/presets. Q8 semitones. */
-static int32_t midi_bend_q8[NTRK], midi_bend_target[NTRK];
+/* The bend, Q8 semitones, gliding to the track's P_BEND (the wheel, live or as recorded automation) over the channel's
+ * range (midi_bend_range, Q8; 2 semitones until an RPN says). Live (the wheel moved in the last ~0.3 s) it follows in
+ * ~3 ms; played back from automation, one value a step, it glides ~20 ms, so a recorded bend sweeps, not stairs */
+static int32_t midi_bend_q8[NTRK], midi_bend_target[NTRK], midi_bend_range[NTRK] = {512, 512, 512, 512};
+static uint16_t midi_bend_live[NTRK];
 static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
 {
     const engine_t *e = ENGINES[t->engine];
@@ -674,12 +690,16 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
     int32_t tune_fine = (song.g[G_TUNE] * 16 - tune * 100) * 2367 / 16000;   /* rest, in 1/4096 (1 ct = 2.367) */
     int32_t bend, bend16, bend_fine;
     uint32_t ti = (uint32_t)(t - trk);
-    if (ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM || ENGINES[eng_idx(t->eng_req)] == &ENG_CKIT) {
+    if ((!DT_RETIRE && t->eng_req == ENGI_DRUM) || ENG_KIT(t->eng_req)) {
         midi_bend_q8[ti] = midi_bend_target[ti] = 0;
     } else {
-        int32_t d = midi_bend_target[ti] - midi_bend_q8[ti];
-        /* ~6 ms smoothing, with an exact landing (no permanent small offset). */
-        midi_bend_q8[ti] += d > 0 ? (d < 4 ? d : (d + 3) / 4) : (d > -4 ? d : (d - 3) / 4);
+        int32_t b = p[P_BEND], d, g = midi_bend_live[ti] ? 4 : 24;
+        midi_bend_target[ti] = b * midi_bend_range[ti] / (b < 0 ? 64 : 63);
+        d = midi_bend_target[ti] - midi_bend_q8[ti];
+        if (midi_bend_live[ti])
+            midi_bend_live[ti]--;
+        /* smoothing, with an exact landing (no permanent small offset) */
+        midi_bend_q8[ti] += d > 0 ? (d < g ? (d < 4 ? d : 4) : (d + g - 1) / g) : (d > -g ? (d > -4 ? d : -4) : (d - g + 1) / g);
     }
     bend = midi_bend_q8[ti];
     bend16 = bend >= 0 ? bend / 16 : -((-bend + 15) / 16);
@@ -734,27 +754,34 @@ static uint32_t track_render(track_t *t, int32_t *out, uint32_t n)
             m.amp0 = v->env_out;
             v->env_out = m.amp1;
         }
-        if (v->pitch_cur != v->pitch16) {               /* glide */
-            int32_t d = v->pitch16 - v->pitch_cur;
-            int32_t st = v->gstep ? v->gstep : (int32_t)(ENV_LIN[(p[P_GLIDE] ? p[P_GLIDE] : 40) & 127] >> 14);   /* slide: ~45 ms */
+        if (v->pitch_cur != v->pitch16 || *glide_fr(t, v)) {   /* glide, in Q8 (glide_set) */
+            uint8_t *fr = glide_fr(t, v);
+            int32_t at = v->pitch_cur * 256 + *fr, to = v->pitch16 * 256, d = to - at;
+            int32_t st = v->gstep > 0 ? (int32_t)((uint32_t)v->gstep * n / CTL) : 192 * 256;
             if (st < 1)
                 st = 1;
-            v->pitch_cur += d > 0 ? (d < st ? d : st) : (-d < st ? d : -st);
+            at += d > 0 ? (d < st ? d : st) : (-d < st ? d : -st);
+            v->pitch_cur = at >> 8;
+            *fr = (uint8_t)(at & 255);
         }
         if (!env && !m.amp0 && v->stage == 2 && !e->sampled)
             continue;                                   /* held at a silent sustain (SUS 0): nothing to render */
         pitch = v->pitch_cur + tune + bend16 + ((lfo * p[P_LD_PIT] * 3) >> 15) + ((m.envq15 * p[P_ED_PIT] * 3) >> 15);
         m.pitch16 = clamp(pitch, 0, 2047);
         m.inc = pitch_inc(m.pitch16);
-        m.fine = v->fine + tune_fine + bend_fine;
-        if (v->fine + tune_fine + bend_fine)             /* residual below 1/16 semitone */
-            m.inc += (uint32_t)((int32_t)(m.inc >> 12) * (v->fine + tune_fine + bend_fine));
+        {
+            int32_t fall = v->fine + tune_fine + bend_fine + (int32_t)*glide_fr(t, v) * 2367 / 40960;   /* (1.5: and a
+                                                         * glide's rest below its 1/16 semitone, 1/4096) */
+            m.fine = fall;
+            if (fall)                                   /* residual below 1/16 semitone */
+                m.inc += (uint32_t)((int32_t)(m.inc >> 12) * fall);
+        }
         m.cutoff = ((lfo * p[P_LD_FLT]) >> 7) + ((m.envq15 * p[P_ED_FLT]) >> 7);
         if (v->vel > 110)                               /* accent opens the filter with the env */
             m.cutoff += (m.envq15 * 24) >> 7;
         m.shape = (64 << 8) + ((lfo * p[P_LD_SHP]) >> 7) + ((m.envq15 * p[P_ED_SHP]) >> 7);
         if (MOD(t).on)                                  /* the modulation matrix (mod.c) */
-            mod_voice(t, v, &m, v->fine + tune_fine + bend_fine);
+            mod_voice(t, v, &m, m.fine);
         e->render(t, v, T_SPREAD(t) > v->side ? SPREAD_BUF(t) : out, n, &m);   /* (SPREAD: the left ones) */
         nr++;
     }

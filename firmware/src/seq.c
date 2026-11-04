@@ -77,7 +77,7 @@ static uint32_t trk_midi_ch(uint32_t i)
 
 static int drum_track(const track_t *t)
 {
-    return ENGINES[eng_idx(t->eng_req)] == &ENG_DRUM || ENGINES[eng_idx(t->eng_req)] == &ENG_CKIT;   /* (RONDO) */
+    return (!DT_RETIRE && t->eng_req == ENGI_DRUM) || ENG_KIT(t->eng_req);   /* (RONDO; 1.1: DRUM retired) */
 }
 
 /* the 27 keys from F: black or white, and the key's place among the keys of its colour (white 0..15, black
@@ -942,7 +942,7 @@ static int seq_miss(const track_t *t, const step_t *s, uint32_t idx)
 }
 #define SEQ_REP (1u << 16)
 #if RONDO_LAYOUT
-/* Dungeon Tracker 1.0: what each track played, a sixteenth at a time (the dungeon's turns: ui_dungeon.c dg_sixteenth).
+/* Dungeon Tracker: what each track played, a sixteenth at a time (the dungeon's turns: ui_dungeon.c dg_sixteenth).
  * The ISR fills the bucket of the sixteenth playing (dgq.step, counted on the sequencer's own clock: dgq_clock), the
  * main loop reads the ones before it. A note that plays (its chance or condition passed; a ratchet's repeats are the
  * same note) is weighed here (dgq_on): its velocity, accent, drums, chord, chance and nudge; a tie that holds counts its
@@ -964,11 +964,26 @@ static struct {
     volatile uint32_t step;                             /* the sixteenth playing (its bucket: b[step % DGQ_N]) */
     uint32_t pos;                                       /* samples into it */
     uint8_t ties[NTRK];
+    uint32_t held_at[NTRK];                             /* the sixteenth a held note was last counted (no twice) */
     dgq_t b[DGQ_N][NTRK];
 } dgq;
-static void dgq_next(void)                              /* (ISR) the next sixteenth: its bucket empty */
+/* (ISR) the next sixteenth: its bucket empty. 1.0: a melodic track's note still sounding into it (any DIV: a 1/4 or a
+ * whole-bar step rings over several) is a held note there, as a tie is, so its hero's turn sees it held (the cleric
+ * heals on, the mage stores, a weapon follows through) rather than nothing; a new note in the sixteenth still wins
+ * (dg_hero). Not on a kit (DRUM, FMKIT) or a ROGUE: hits, not held notes */
+static void dgq_next(void)
 {
-    memset(dgq.b[(dgq.step + 1u) % DGQ_N], 0, sizeof dgq.b[0]);
+    uint32_t k, nx = (dgq.step + 1u) % DGQ_N;
+    memset(dgq.b[nx], 0, sizeof dgq.b[0]);
+    for (k = 0; k < NTRK; k++) {
+        const track_t *t = &trk[k];
+        if (!t->seq_n || drum_track(t) || CLS_ROLE[trk_cls(k)] == ROLE_DRUMS)
+            continue;
+        if (dgq.ties[k] < 255u)
+            dgq.ties[k]++;
+        dgq.b[nx][k].tie = dgq.ties[k];
+        dgq.held_at[k] = dgq.step + 1u;
+    }
     RING_PUBLISH();
     dgq.step++;
 }
@@ -1019,8 +1034,9 @@ static void dgq_on(const track_t *t, const step_t *s)    /* (ISR) a step's notes
 static void dgq_tie(const track_t *t)                   /* (ISR) a tie holds the note on */
 {
     uint32_t k = trk_index(t);
-    if (dgq.ties[k] < 255u)
+    if (dgq.held_at[k] != dgq.step && dgq.ties[k] < 255u)   /* (counted already: its note rang into this sixteenth) */
         dgq.ties[k]++;
+    dgq.held_at[k] = dgq.step;
     dgq.b[dgq.step % DGQ_N][k].tie = dgq.ties[k];
 }
 static void dgq_rest(const track_t *t) { dgq.b[dgq.step % DGQ_N][trk_index(t)].rest = 1; }

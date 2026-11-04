@@ -87,6 +87,8 @@ static int ed_smp_erase(uint32_t k, uint32_t all)  /* header sector, or the whol
 {
     uint32_t i, took;
     int rc = 0;
+    if (!smp_user_ok(k))                          /* (1.2: USR2 retired, its flash the song slots': never erased here) */
+        return 0;
     usr_nz[k] = 0;
     for (i = 0; i < 16u; i++)
         usr_zone[k][i].n = 0;                     /* a sounding voice ends instead of reading 0xFF */
@@ -102,6 +104,8 @@ static int ed_flash_stop(void);
 static int ed_smp_end(uint32_t k, const uint8_t *a, uint32_t na)
 {
     const smp_user_hdr_t *h = (const smp_user_hdr_t *)ed_smp_buf;
+    if (!smp_user_ok(k))                               /* (1.2: USR2 retired) */
+        return 6;
     if (ed_unpack7(a, na, ed_smp_buf, sizeof(smp_user_hdr_t)) != sizeof(smp_user_hdr_t))
         return 1;
     if (h->magic != SMP_USER_MAGIC || h->version != 1 || !h->nz || h->nz > 16u ||
@@ -562,12 +566,18 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         if (na < 2u || a[0] >= NENGINES)
             return;
         ed_load_before(&b);
-#if !FELUCCA_FM4
+#if !FELUCCA_FM4 && !DT_RETIRE
         if (a[0] == ENGI_DIGITAL)                          /* a DIGITAL preset (retired): its sound, as FM6 */
             fm4_load_preset(TSEL, a[1]);
         else
 #endif
-        {
+        if (eng_retired(a[0])) {                           /* 1.1: a retired engine's preset: its substitute's of the
+                                                            * same category (retire.c) */
+            uint32_t k = eng_subst_preset(a[0], a[1]);
+            if (eng_subst_k(a[0], a[1]) != TSEL->eng_req)
+                set_engine(eng_subst_k(a[0], a[1]));
+            apply_preset(k);
+        } else {
             if (a[0] != TSEL->eng_req)
                 set_engine(a[0]);
             apply_preset(a[1]);
@@ -578,18 +588,18 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         ed_b(TSEL->preset);
         break;
     }
-    case ED_PROJECT:                                       /* 0 = load, 1 = save, 2 = query; slot 0..3 */
-        if (na < 2u || a[0] > 2u || a[1] >= 4u)
+    case ED_PROJECT:                                       /* 0 = load, 1 = save, 2 = query; slot 0..NPROJ - 1 */
+        if (na < 2u || a[0] > 2u || a[1] >= NPROJ)
             return;
         if (a[0] == 1u) {
             if (ed_flash_stop() || project_save(a[1]))
                 return;                              /* the legacy reply has no failure bit: do not confirm a failed save */
         }
         else if (a[0] == 0u)
-            project_load(a[1] & 3u);
+            project_load(a[1]);
         ed_b(a[0]);
-        ed_b(a[1] & 3u);
-        ed_b(project_used(a[1] & 3u));
+        ed_b(a[1]);
+        ed_b(project_used(a[1]));
         break;
     case ED_NAMES:                                         /* preset names of an engine */
         if (na < 1u || a[0] >= NENGINES)
@@ -606,6 +616,10 @@ static void ed_handle(const uint8_t *f, uint32_t n)   /* f: the bytes between F0
         if (na < 1u || a[0] >= SMP_USER_SLOTS || !flash_ok)
             return;
         ed_b(a[0]);
+        if (!smp_user_ok(a[0]) && cmd == ED_SMP_BEGIN) {   /* (1.2: USR2 retired: 6, nothing erased; ERASE: 0, empty) */
+            ed_b(6);
+            break;
+        }
         ed_b(ed_flash_stop() || ed_smp_erase(a[0], cmd == ED_SMP_ERASE) ? 1u : 0u);
         break;
     case ED_SMP_WRITE: {                                   /* slot, off (3 x 7 bit), pack7 data -> slot, off, rc */

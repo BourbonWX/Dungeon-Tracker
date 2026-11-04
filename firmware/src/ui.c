@@ -8,6 +8,12 @@ static int project_save(uint32_t slot);
 static void panel_setup(void);
 static void project_load(uint32_t slot);
 static int project_used(uint32_t slot);
+static uint32_t project_pats(uint32_t slot);     /* (project.c) 1.2: the song slot's patterns (bit p: A..F), 0 none */
+static int quick_save(void);                     /* 1.0.1: SAVE > PROJECT's QUICK slot (project.c: the autosave) */
+static void quick_load(void);
+static int quick_used(void);
+static int autosave_pending(void);               /* .. the music not in it yet (the header's mark) */
+static int slot_quick(void) { return song.g[G_SLOT] == 0; }   /* the QUICK slot picked (SLOT 0, above A-D) */
 static uint32_t chain_prepare(void);
 static int up_used(uint32_t k);              /* user presets: upreset.c */
 static int up_load(uint32_t k);
@@ -39,6 +45,7 @@ static uint32_t user_of(const track_t *t)    /* user preset slot its sound came 
 static uint32_t up_gen;                      /* bumped on every user bank change (redraws) */
 #include "favorites.c"
 #include "category.c"                   /* sound categories (Discussion #90): PRESETS > LIST */
+#include "retire.c"                     /* Dungeon Tracker 1.1: the retired engines' sounds -> their substitutes */
 /* MENU's two-valued settings (ui_menu.c MENU_FLAGS), a bit each in a byte no engine uses (as ui_layer.c layer_seen):
  * saved with the settings; 0 in older ones = every setting's default (append-only: a new setting takes a new bit,
  * its default is 0) */
@@ -234,7 +241,7 @@ static struct {
 
 enum { CF_NONE, CF_CLEAR_SEQ, CF_CLEAR_TRK, CF_OVR_PROJ, CF_OVR_USER, CF_LOAD_PAT,
        CF_DEL_ROW, CF_CLEAR_SONG, CF_INIT_SOUND, CF_CLEAR_MOTION, CF_ERASE_USER, CF_ERASE_PROJ, CF_CLEAN_SOUND,
-       CF_NEW, CF_NEW_SOUNDS };
+       CF_NEW, CF_NEW_SOUNDS, CF_LOAD_SONG };
 static void new_song(uint32_t sounds);           /* (project.c) SAVE > TOOLS: NEW, NEW + DEFAULT SOUNDS */
 static int new_undo(void);                       /* (project.c) SAVE held right after: 1 = undone */
                                   /* ui.confirm: TOOLS' clears; SAVE over a used slot; a pattern over the user's steps;
@@ -438,14 +445,24 @@ static uint32_t layer_btn(void);
 /* FM operator pages belong to DIGITAL; they never appear on other instruments (without FELUCCA_FM4: never). SLICES:
  * a SLICE track's (ui_slice.c); LANES / LANES 2 a DRUM track's (its lane levels); FILTER an ANALOG track's; OPERATOR, OP ENV, OPERATOR 2 an FM6
  * track's (its patch's operators, ui_fm6op.c) */
+static int dice_engine_ok(const track_t *t);      /* (ui_dice.c) */
 static int page_visible(uint32_t i)
 {
-    uint32_t ckit = TSEL->eng_req % NENGINES == ENGI_CKIT;   /* RONDO: FMKIT's pages */
-    if (PAGES[i].graph == GR_DICE)                    /* RONDO: DICE, the FM engines' (RE-1: and CHIP's) */
-        return ckit || TSEL->eng_req % NENGINES == ENGI_CTONE || TSEL->eng_req % NENGINES == ENGI_LOFI;
+    uint32_t ckit = ENG_KIT(TSEL->eng_req % NENGINES);   /* RONDO: FMKIT's pages */
+    if (PAGES[i].graph == GR_DICE)                    /* RONDO: DICE (1.1: every engine's but the ones going) */
+        return dice_engine_ok(TSEL);
+    if (PAGES[i].fam == FAM_EDIT && dice_engine_ok(TSEL) && PAGES[i].graph == GR_NONE &&
+        (PAGES[i].scope == SC_ENGINE || (PAGES[i].id[0] >= P_FM1_ATK && PAGES[i].id[0] <= P_FM4_LEVEL) ||
+         (PAGES[i].id[0] >= P_LN0 && PAGES[i].id[0] <= P_LN7) || PAGES[i].id[0] == P_FTYPE))
+        return 0;                                     /* Dungeon Tracker 1.1: the dice shape the sound: EDIT 1 / 2 and
+                                                       * FMKIT's voice pages gone (the editor, HOME's knobs still reach
+                                                       * the values) */
 #if RONDO_LAYOUT
     if (PAGES[i].graph == GR_MORPH)                   /* RONDO: MORPH, an engine with presets to morph to */
         return morph_npresets(TSEL) != 0u;
+    if (PAGES[i].scope == SC_TRACK && PAGES[i].id[0] == P_VOICE && ENGINES[TSEL->eng_req % NENGINES]->oneshot)
+        return 0;                                     /* 1.5: VOICE on a kit (one-shot hits): its voice mode, GLIDE,
+                                                       * its mode and PRIORITY do nothing there */
 #endif
     if (PAGES[i].scope == SC_TRACK && PAGES[i].graph == GR_NONE && PAGES[i].fam == FAM_EDIT &&
         PAGES[i].id[0] >= P_FM1_ATK && PAGES[i].id[0] <= P_FM4_LEVEL && PAGES[i].title[0] != 'O')
@@ -453,7 +470,7 @@ static int page_visible(uint32_t i)
     if (PAGES[i].scope == SC_TRACK && PAGES[i].id[0] >= P_LN0 && PAGES[i].id[0] <= P_LN7)
         return TSEL->eng_req % NENGINES == ENGI_DRUM || (ckit && PAGES[i].id[0] == P_LN0);   /* (FMKIT: LANES) */
     if (PAGES[i].id[0] == P_FTYPE)                    /* FILTER (1.5, #104): ANALOG's */
-        return ENGINES[TSEL->eng_req % NENGINES] == &ENG_ANALOG;
+        return !DT_RETIRE && TSEL->eng_req % NENGINES == 0u;   /* (1.1: ANALOG retired) */
     if (PAGES[i].graph >= GR_FMOP && PAGES[i].graph <= GR_FMENV)
         return TSEL->eng_req % NENGINES == ENGI_FM6;
 #if FELUCCA_SLICE
@@ -470,6 +487,9 @@ static int page_visible(uint32_t i)
 static uint32_t page_first(uint32_t fam)
 {
     uint32_t i;
+    for (i = 0; i < NPAGES; i++)
+        if (PAGES[i].fam == fam && page_visible(i))   /* (1.1: EDIT 1 hidden on a track with dice: DICE first) */
+            return i;
     for (i = 0; i < NPAGES; i++)
         if (PAGES[i].fam == fam)
             return i;
@@ -1307,7 +1327,7 @@ static void pat_load_ui(track_t *t, uint32_t n)
 static int param_kept(uint32_t i)
 {
     return i == P_LEVEL || i == P_PAN || i == P_MUTE || (i >= P_AMODE && i <= P_SGATE) ||
-           (i >= P_SLCR && i <= P_SLDEPTH) || i == P_CHRD || i == P_VOIC || i == P_SQNT;
+           (i >= P_SLCR && i <= P_SLDEPTH) || i == P_CHRD || i == P_VOIC || i == P_SQNT || i == P_BEND;   /* (1.0: the wheel) */
 }
 
 /* a retired preset kept as an alias, so stored preset numbers stay valid: SAMPLE 1, once TRANH, is PIANO
@@ -1379,7 +1399,14 @@ static void apply_preset_to(track_t *t, uint32_t pi)
 {
     const engine_t *e = ENGINES[t->eng_req % NENGINES];
     uint32_t i;
-#if !FELUCCA_FM4
+    if (eng_retired(t->eng_req % NENGINES)) {         /* 1.1: preset pi of a retired engine (the editor's, a favourite's,
+                                                       * MIDI's number): the substitute's of its category */
+        uint32_t oe = t->eng_req % NENGINES;
+        t->eng_req = (uint8_t)eng_subst_k(oe, pi);
+        apply_preset_to(t, eng_subst_preset(oe, pi));
+        return;
+    }
+#if !FELUCCA_FM4 && !DT_RETIRE
     if (t->eng_req % NENGINES == ENGI_DIGITAL) {
         fm4_load_preset(t, pi);
         return;
@@ -1418,8 +1445,10 @@ static void apply_preset_to(track_t *t, uint32_t pi)
             t->p[P_DIST + i] = (int16_t)(pr->fx[i] ? pr->fx[i] - 1 : FX_DEF[i]);
     }
     fm6_track_loaded(t);                              /* FM6: the preset's patch (its SLOT) */
-    if (t->eng_req % NENGINES == ENGI_CKIT)           /* RONDO: the kit's four voices */
+    if (ENG_KIT(t->eng_req % NENGINES))               /* RONDO: the kit's four voices */
         ck_kit_load(t, pi);
+    if (t->eng_req % NENGINES == ENGI_GENESIS)        /* 1.2: GENESIS's operators */
+        gen_ops_load(t, pi);
     load_end(t);
 }
 
@@ -1428,8 +1457,14 @@ static void apply_preset_to(track_t *t, uint32_t pi)
 static void set_engine_of(track_t *t, uint32_t ei)
 {
     const engine_t *e = ENGINES[ei % NENGINES];
-    uint32_t i;
-#if !FELUCCA_FM4
+    uint32_t i, pi = 0;
+    if (eng_retired(ei % NENGINES)) {                 /* 1.1: a retired engine (a stored number): its substitute's sound
+                                                       * of the category of the engine's first preset (retire.c) */
+        pi = eng_subst_preset(ei % NENGINES, 0);
+        ei = eng_subst_k(ei % NENGINES, 0);
+        e = ENGINES[ei];
+    }
+#if !FELUCCA_FM4 && !DT_RETIRE
     if (ei % NENGINES == ENGI_DIGITAL) {             /* DIGITAL (retired): its first preset, as FM6 */
         fm4_load_preset(t, 0);
         return;
@@ -1440,7 +1475,7 @@ static void set_engine_of(track_t *t, uint32_t ei)
     t->eng_req = (uint8_t)(ei % NENGINES);
     for (i = 0; i < 8u; i++)
         t->p[P_E0 + i] = e->edit[i].def;
-    apply_preset_to(t, 0);
+    apply_preset_to(t, pi);
     fm1_irq_on();
     load_end(t);
 }
@@ -1484,8 +1519,10 @@ static void clean_engine_of(track_t *t)
         t->p[P_REL] = CLEAN_REL;
     }
     fm1_irq_on();
-    if (ei == ENGI_CKIT)                              /* RONDO: FMKIT's clean sound: its first kit's voices */
+    if (ENG_KIT(ei))                                  /* RONDO: FMKIT's clean sound: its first kit's voices */
         ck_kit_load(t, 0);
+    if (ei == ENGI_GENESIS)                           /* 1.2: GENESIS's: its first preset's operators */
+        gen_ops_load(t, 0);
     if (ei == ENGI_FM6) {                             /* the init voice as the track's own patch (SLOT: OWN) */
         uint8_t v[FP_SIZE + 1u];
         fm6_unpack(FM6_INIT, v);
@@ -1547,8 +1584,54 @@ static void track_defaults(track_t *t)
 }
 
 /* switch engine (its defaults + first preset) and say so */
+static void apply_preset(uint32_t pi);
+#if RONDO_LAYOUT
+#define LIST_CLASS (2u + CAT_N - 1u)                     /* (PRESETS > LIST CLASS: list_mode below) */
+static uint32_t list_mode(void);
+static int cls_allows(uint32_t c, uint32_t cat);
+#endif
+/* the engine `steps` from e (eng_step) that has a sound the list keeps: LIST CLASS skips the engines with none of the
+ * track's class (a ROGUE's PRESETS > ENG goes FMKIT SID CHIP SAMPLE PHYS DRUM) */
+static uint32_t eng_step_listed(uint32_t e, int32_t steps)
+{
+#if RONDO_LAYOUT
+    if (list_mode() == LIST_CLASS) {
+        uint32_t c = trk_cls(song.sel), n, i, k;
+        int32_t dir = steps < 0 ? -1 : 1, left = steps < 0 ? -steps : steps;
+        for (n = 0, i = e; left && n < NENGINES; n++) {
+            const engine_t *en;
+            i = eng_step(i, dir);
+            en = ENGINES[i];
+            for (k = 0; k < en->npresets && (preset_orig(en, k) != k || !cls_allows(c, preset_cat(i, k))); k++)
+                ;
+            if (k < en->npresets && !--left)
+                return i;
+        }
+        return e;
+    }
+#endif
+    return eng_step(e, steps);
+}
 static void select_engine(uint32_t e)
 {
+#if RONDO_LAYOUT
+    if (list_mode() == LIST_CLASS) {                    /* (THE PARTY: the engine's first sound of the track's class) */
+        const engine_t *en = ENGINES[e % NENGINES];
+        uint32_t k, c = trk_cls(song.sel);
+        for (k = 0; k < en->npresets && (preset_orig(en, k) != k || !cls_allows(c, preset_cat(e % NENGINES, k))); k++)
+            ;
+        if (k >= en->npresets) {
+            ui_say(CLS_NAME[c], ": NOT ON THIS ENGINE");
+            return;
+        }
+        set_engine(e);
+        if (k)
+            apply_preset(k);
+        ui_say("ENGINE ", ENGINES[TSEL->eng_req]->name);
+        ui.force = 1;
+        return;
+    }
+#endif
     set_engine(e);
     ui_say("ENGINE ", ENGINES[TSEL->eng_req]->name);
     ui.force = 1;
@@ -1594,18 +1677,58 @@ static uint32_t preset_all_at(uint32_t n, uint32_t *k)
  * editor and backups); the PRESETS knob and page browse that list */
 #define ui_lcat (favorites.factory[15][11])
 #define LIST_N (1u + CAT_N)                              /* ALL FAV BASS LEAD PAD PLUCK KEYS DRUM FX OTHER */
+#if RONDO_LAYOUT
+/* Dungeon Tracker: LIST's first value, CLASS (the default): the sounds the selected track's class plays (cls_allows:
+ * a ROGUE drums, a FIGHTER basses, a CLERIC pads keys and plucks, a MAGE leads plucks and FX); ALL is the way out. Its
+ * mode LIST_CLASS; kept as ui_lcat 0 (ALL is 0xFF now), so a fresh unit, and one of before, starts on CLASS */
+#define LIST_ALL_MARK 0xFFu                              /* (LIST_CLASS: LIST_N, above) */
+static uint32_t list_mode(void)
+{
+    return favorites.filter ? 1u : ui_lcat == LIST_ALL_MARK ? 0u : ui_lcat && ui_lcat < CAT_N ? 1u + ui_lcat : LIST_CLASS;
+}
+static void list_set(uint32_t m)
+{
+    favorites.filter = m == 1u;
+    ui_lcat = (uint8_t)(m == 0u ? LIST_ALL_MARK : m >= 2u && m < LIST_N ? m - 1u : 0u);
+}
+static uint32_t list_pos(uint32_t m) { return m == LIST_CLASS ? 0u : m + 1u; }   /* (the knob: CLASS ALL FAV BASS ..) */
+static uint32_t list_of(uint32_t pos) { return pos ? pos - 1u : LIST_CLASS; }
+#define LIST_POSN (LIST_N + 1u)
+static const char *list_name(uint32_t m)
+{
+    return m == LIST_CLASS ? "CLASS" : m == 0u ? "ALL" : m == 1u ? "FAV" : CAT_NAME[(m - 1u) % CAT_N];
+}
+static int cls_allows(uint32_t c, uint32_t cat)
+{
+    static const uint16_t A[NCLS] = {1u << CAT_DRUM, 1u << CAT_PAD | 1u << CAT_KEYS | 1u << CAT_PLUCK | 1u << CAT_OTHER,
+                                     1u << CAT_BASS, 1u << CAT_LEAD | 1u << CAT_PLUCK | 1u << CAT_FX | 1u << CAT_OTHER,
+                                     1u << CAT_PLUCK | 1u << CAT_LEAD | 1u << CAT_KEYS,       /* 1.1: BARD arps, plucks */
+                                     1u << CAT_BASS,                                          /* PALADIN */
+                                     1u << CAT_PAD | 1u << CAT_FX | 1u << CAT_OTHER | 1u << CAT_KEYS,   /* DRUID textures */
+                                     1u << CAT_DRUM};                                         /* MONK */
+    return cat == CAT_NONE || ((A[c & CLS_MASK] >> cat) & 1u);   /* (an untagged sound of yours: any class) */
+}
+#else
 static uint32_t list_mode(void) { return favorites.filter ? 1u : ui_lcat && ui_lcat < CAT_N ? 1u + ui_lcat : 0u; }
 static void list_set(uint32_t m)
 {
     favorites.filter = m == 1u;
     ui_lcat = (uint8_t)(m >= 2u && m < LIST_N ? m - 1u : 0u);
 }
+static uint32_t list_pos(uint32_t m) { return m; }
+static uint32_t list_of(uint32_t pos) { return pos; }
+#define LIST_POSN LIST_N
 static const char *list_name(uint32_t m) { return m == 0u ? "ALL" : m == 1u ? "FAV" : CAT_NAME[(m - 1u) % CAT_N]; }
+#endif
 /* the category of list entry e, k (preset_all_at: NENGINES = user preset k) */
 static uint32_t sound_cat(uint32_t e, uint32_t k) { return e == NENGINES ? up_cat(k) : preset_cat(e, k); }
 static int list_keep(uint32_t e, uint32_t k)
 {
     uint32_t m = list_mode();
+#if RONDO_LAYOUT
+    if (m == LIST_CLASS)
+        return cls_allows(trk_cls(song.sel), sound_cat(e, k));
+#endif
     return m == 1u ? favorite_has(e, k) : m ? sound_cat(e, k) == m - 1u : 1;
 }
 /* the category of the sound track t plays: its user preset's, else its factory preset's (the NAME screen's default) */
@@ -1732,10 +1855,32 @@ static uint32_t eng_list_pos(uint32_t *total)
 
 static void eng_list_step(int32_t direction)         /* the next / previous sound of the engine (wraps) */
 {
-    uint32_t total, cur = eng_list_pos(&total), e = TSEL->eng_req % NENGINES, np = preset_shown(e), k, n;
+    uint32_t total, cur = eng_list_pos(&total), e = TSEL->eng_req % NENGINES, np = preset_shown(e), k, n, tries;
     if (total < 2u)
         return;
     n = (cur + (direction > 0 ? 1u : total - 1u)) % total;
+#if RONDO_LAYOUT
+    for (tries = 0; list_mode() == LIST_CLASS && tries < total; tries++) {   /* (LIST CLASS: the track's class only) */
+        uint32_t m = n, kk, ok;
+        if (m < np) {
+            for (kk = 0; preset_orig(ENGINES[e], kk) != kk || m--; kk++)
+                ;
+            ok = list_keep(e, kk);
+        } else {
+            m -= np;
+            for (kk = 0; kk < UP_SLOTS && !(up_used(kk) && up_engine(kk) == e && !m--); kk++)
+                ;
+            ok = kk < UP_SLOTS && list_keep(NENGINES, kk);
+        }
+        if (ok)
+            break;
+        n = (n + (direction > 0 ? 1u : total - 1u)) % total;
+    }
+    if (n == cur)
+        return;
+#else
+    (void)tries;
+#endif
     if (n < np) {
         for (k = 0; preset_orig(ENGINES[e], k) != k || n--; k++)   /* the n-th shown preset */
             ;
@@ -1911,9 +2056,11 @@ static int act_ready(void)
     if (cur_page()->graph == GR_SLICES)
         return slice_act_ready(c);
 #endif
-    if (cur_page()->graph == GR_SLOTS && c == 1u)       /* PROJECT ERASE: a used slot, stopped */
-        return !song.playing && project_used((uint32_t)song.g[G_SLOT] - 1u);
+    if (cur_page()->graph == GR_SLOTS && c == 1u)       /* PROJECT ERASE: a used slot, stopped (QUICK: never) */
+        return !slot_quick() && !song.playing && project_used((uint32_t)song.g[G_SLOT] - 1u);
     id = cur_page()->id[c & 3u];
+    if (id == G_LOAD && cur_page()->graph == GR_SLOTS && slot_quick())
+        return quick_used();
     if (id == G_LOAD)
         return project_used((uint32_t)song.g[G_SLOT] - 1u);
     if (id == G_SAVE)

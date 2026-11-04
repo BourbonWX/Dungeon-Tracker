@@ -2,45 +2,81 @@
 
 Dungeon Tracker (formerly RE-1 "Random Encounters", and RONDO before that) is an old-school tracker-style four-track
 FM groovebox with an old-school first-person dungeon crawl on its HOME screen, played by the song. It is a fork of [Felucca](https://github.com/hugelton/Felucca) 1.6.1 (GPL-3.0) by Leo Kuroshita / Hügelton
-Instruments. It keeps everything Felucca does (its sequencer, song mode, effects, the other engines, the web
-installer's package format) and adds:
+Instruments. It keeps Felucca's sequencer, song mode, effects and the web installer's package format, and plays
+**eight engines in four families, two each** (1.5; Felucca's others, and the earlier Dungeon Tracker engines, are
+retired, their sounds loading as one of these):
 
-* **FMKIT** (engine 14) — four FM drum voices, Model-machine style: **KICK, SNARE, HAT, PERC**, each with its own
-  PITCH, DECAY, COLOR, SWEEP, SHAPE and LEVEL.
-* **FMTONE** (engine 15) — a two-operator FM voice with a sub and a detuned second carrier, for chords, pads, basses
-  and leads, with a timbre envelope (COLOR / CNTR / MSUS) instead of an operator editor.
-* **CHIP**, Felucca's LOFI engine renamed for what it plays (its first knob, Felucca's CHIP, is now MODE), with
-  twelve more presets (square and pulse leads, a staircase-triangle bass, plucks,
-  arps, zaps, chip kick, noise hat and snare, a wave-RAM organ and choir).
-* **DICE sound design**: on FMTONE, FMKIT and CHIP tracks, every part of the sound is a die. Roll, hold the dice you like,
-  roll again, and the rest change around them, always inside ranges that sound musical.
+| Family | Melodic | Kit |
+|---|---|---|
+| **FM** | **GENESIS** (18) — a four-operator voice after the Mega Drive's YM2612: its eight algorithms, operator 1's feedback, the chip's plain sine and 9-bit DAC (GRIT) | **GEN KIT** (14) — four drum voices (KICK SNARE HAT PERC), each a YM2612-style FM voice, with the SN76489 PSG's noise for the snare and hats |
+| **WAVE** | **WAVES** (16) — Ambika / Shruthi-1's 8-bit wavetables (Mutable Instruments) | **WAVE 32** (20) — morphing 16-bit band-limited tables: eight banks of eight frames (CLASSIC PWM FORMANT ORGAN GLASS SYNC DIGITAL GROWL), no aliasing |
+| **AMIGA'D** | **MOD** (21) — 8-bit sample instruments played as the Amiga's Paula chip played them (whole-number periods, no interpolation): SQUARE to HOOVER, STRINGS, CHOIR, STAB, with the trackers' ARP, VIB, the LED filter, CRSH, RATE and a doubled channel | **MOD KIT** (19) — GEN KIT's voices as crunchy 8-bit hits, eight a voice (909, 808, GABBER, CLAP, BREAK, CRASH, COWBELL, TOLL...); the DUNGEON KIT and the LOFI KIT rebuilt here |
+| **SUB** | **ANALOG** (0) — back in 1.5: two oscillators (saw, square, triangle, sine, PWM, sync, sub), noise, a resonant filter with drive | **SID** (17) — after the Commodore 64's chip: its waves, PWM, sync, ring, the resonant filter and a C64-style drum mode |
+
+The two kits share one interface (the GM drum map, the four voices and their PITCH DECAY COLOR SWEEP SHAPE LEVEL, the kit
+values TUNE DECAY COLOR OPEN CLICK VELO DRV VARI), so a kit moves from one to the other as it is.
+
+* **DICE sound design** (1.1: on every engine, in place of the engines' own EDIT pages): every part of the sound is a
+  die. Roll, hold the dice you like, roll again, and the rest change around them, always inside ranges that sound musical.
 * **A tracker sequencer** in place of Felucca's step grid and piano roll: every track has its own tracker screen,
   steps as rows top to bottom, and **SEQ held + SELECT turned** picks the track whose tracker opens when SEQ is let go.
-* **A fixed voice layout**, so no track ever steals a voice from another:
+* **THE PARTY**: every track is played by a class, and the class sets its voices and its sounds, so no track ever
+  steals a voice from another and a drum track never lands on a bass preset mid-song (*The party*, below):
 
-| Track | Default sound | Voices | Role |
+| Class | Plays | Voices | Default party |
 |---|---|---|---|
-| T1 | FMKIT · CYCLE KIT (with the BEAT pattern) | 4 (one per drum) | drums |
-| T2 | FMTONE · FM PAD | 4 | chords / pads |
-| T3 | FMTONE · FM BASS (mono, legato) | 1 | bass |
-| T4 | FMTONE · FM LEAD | 3 | lead |
+| ROGUE | drums | 4 (one per drum) | T1 · GEN KIT · CYCLE KIT (with the BEAT pattern) |
+| CLERIC | chords / pads | 4 | T2 · GENESIS · WARM PAD |
+| FIGHTER | bass | 1 (mono, legato) | T3 · GENESIS · GEN BASS |
+| MAGE | lead | 3 | T4 · GENESIS · HERO LEAD |
+| BARD (1.1) | arps, plucks | 4 (1.5; 2 before) | |
+| PALADIN (1.1) | two-voice bass | 2 | |
+| DRUID (1.1) | pads, textures | 3 | |
+| MONK (1.1) | a light kit | 2 | |
 
-Any track can still load any engine (ANALOG, FM6, DRUM, …); it just keeps its track's voice count. The budget is
-12 voices at once (Felucca's is 8 shared), all of them light FM voices.
+The party has **12 points** (one per voice; Felucca's budget is 8 shared). Run two rogues for two drum kits, two
+fighters and two mages, whatever fits in 12.
 
-> **Status: untested on hardware.** Dungeon Tracker builds (`dungeon-tracker-1.0.fwsc`) and passes its tests in the
-> browser emulator and on the host (the firmware's own C code), but it has not been flashed to an FM-1 yet. Read
-> *Flashing* below before you try.
+> **Status: 1.5** (`dungeon-tracker-1.5.fwsc`; 1.0 the first release, 1.1 the eight engines and the new classes). 1.5 brings the
+> four engine families: GENESIS, GEN KIT, WAVE 32, MOD, MOD KIT and ANALOG pass their tests on the host and are new to the
+> hardware. Read *Flashing* below before you try.
 
 ## Powering on
 
 The splash: DUNGEON over TRACKER in the firmware's own block lettering, in the palette's colours (MENU > COLOR;
-NIGHT, black and green, until you pick another).
-Then, unless there is music of yours to bring back (MENU > SYSTEM > RESTORE LAST, or a pattern stored in the PATTERN
-BANK), Dungeon Tracker writes a **song of its own** (`firmware/src/boot_song.c`): a tempo, a key and mode, a four-bar
-chord progression, an FMKIT beat on T1, chords on T2, a bass line on T3 and a lead on T4 (FMTONE or CHIP sounds),
-different at every power-on. HOME shows the dungeon with the whole party and **PRESS PLAY**: press it and they walk.
-Nothing of it is saved until you change something; then it is yours and comes back at the next power-on.
+NIGHT, black and green, until you pick another). Under it plays a short fanfare, about three seconds: a chip lead rising to a held
+top C, a wavetable pad, a triangle bass and a crash (`firmware/src/jingle.c`, its own little synth: the tracks keep their
+sounds). The MASTER knob sets its level; any key or button cuts it short and goes straight to work. It doesn't play
+after a crash or a failed boot.
+Then your music comes back where you left it (MENU > SYSTEM > RESTORE LAST, and the PATTERN BANK). A new FM-1 starts
+on the default song: the default party and sounds, the BEAT on T1, the other tracks empty. HOME shows the dungeon and
+**PRESS PLAY**.
+
+### A song to start from: RANDOM SONG
+
+MENU > GAME > **RANDOM SONG** (hold HOME, ALGORITHM to GAME, the last row, **OCT+**) rolls a song to start from
+(`firmware/src/boot_song.c`):
+
+* **A party:** four classes within the 12 points, at least one rogue, in class order (rogues on the first tracks).
+* **A sound for each track** from its class's own list, any engine: a rogue a kit (GEN KIT's, or MOD KIT's three
+  times in ten), a fighter a bass, a cleric a pad or keys, a mage a lead.
+* **A whole song in the PATTERN BANK:** a tempo (96–128), a key and mode, and four 32-step patterns:
+  **A** an intro (drums and bass, the pad held), **B** a verse (the whole party), **C** a chorus (another progression,
+  a busier beat, the lead higher) and **D** a break (a kick, held chords and roots, a fill to end). The tracks are left
+  on **B**, to jam on; ENV held + F3..B3 switch between them live.
+* **SONG's arrangement:** A ×2, B ×2, C ×2, B ×2, C ×2, D, C ×2 (about 50 seconds). **PLAY SONG** plays it through.
+* **Two of a class** get different parts: a second rogue plays percussion around the beat, a second cleric an
+  arpeggio, a second fighter the roots held low, a second mage an answer in the chorus.
+* The parts stay sparse on purpose: short motifs, plenty of rests.
+
+It works as NEW + DEFAULT SOUNDS first (the arrangement and the name cleared), so **hold SAVE** to undo it and get
+your song back. Press OCT+ again for another roll; the MENU stays open. If the bank holds patterns of yours besides the
+one playing, the first OCT+ says **REPLACES PATTERNS A-F** and a second within 4 seconds rolls: those patterns are
+written over (the undo brings back your song and its current pattern, not them). Save to a song slot first to keep
+them.
+
+In the dungeon a rolled song has a hard time on purpose: short and sparse, its party falls often. Build it out (more
+notes, chords, accents, ratchets, longer parts) and the party fights better (*HOME: the dungeon*, below).
 
 ### Starting from scratch: NEW
 
@@ -57,6 +93,48 @@ before), the next **NEW**, the next **NEW+S**; turning left steps back. OCT+ ask
 too. The undo is there until you change something (a note, a sound, the tempo). A SONG playing has to be stopped
 first; a pattern playing keeps playing, now empty.
 
+### Keeping your work
+
+Your music is kept in the **autosave**: the flash copy that comes back at the next power-on (MENU > SYSTEM > RESTORE
+LAST, ON by default). Writing the flash stops the audio for ~40 ms, so the autosave **never writes while anything
+plays**: it writes **3 seconds after you STOP**, once nothing sounds and no key is held (at most once every 20 s).
+
+* **The header's mark.** While your latest changes are not in the autosave yet, an asterisk follows the pattern letter
+  (`A*`, or `A>C*` with C queued). Switch off then and those changes are lost. STOP, wait for the mark to go, then
+  switch off.
+* **QUICK** (SAVE > PROJECT, the slot **Q** above A–K) is the autosave itself. **LOAD** brings it back (SAVE held
+  undoes, as any load); **SAVE** writes it at once, no name, no dialog (stopped, as every save). It works with RESTORE
+  LAST OFF too: nothing then comes back at power-on, but QUICK SAVE / LOAD still do. QUICK can't be erased or renamed.
+* **Song slots A–K** are the place for music you want to keep for good: the autosave follows whatever you play next.
+
+### Song slots A–K
+
+SAVE > PROJECT keeps **eleven songs**, A–K (SLOT: Q, then A..K; the list scrolls). Each one is the **whole song**: the
+sounds and the mix, the tempo and the settings, SONG's arrangement, and **all six patterns of the PATTERN BANK** (A–F)
+with which one you were on. **LOAD** brings all of it back; the bank's six keys become the song's.
+
+* **SAVE** (stopped) writes the song as it is now, the pattern you're on included. **NAME**, **ERASE** and the overwrite
+  dialog work as before; a rename keeps the song's patterns.
+* **Loading over other patterns asks first.** If the bank holds patterns besides the one you're on, LOAD asks
+  `LOAD SONG B? REPLACES PATTERNS A-F` (OCT+ yes, OCT− no), since those keys get the song's patterns. Save what you're
+  working on to a slot first if you want to keep it.
+* **Power cuts are safe.** A save writes into a free part of the flash and switches over only once it's complete; switch
+  off mid-save and the slot still holds what it held before.
+* **Size.** A song takes up to 12 KB packed. Patterns are stored as their differences from each other, so a typical song
+  uses 3–5 KB. Six completely different patterns full of random notes, chances and drum hits on every step can be too
+  much: SAVE then says **SONG TOO BIG** and writes nothing (clear a key or two you don't need, and save again).
+* **From Felucca:** your projects A–D move into song slots A–D at the first power-on. They have no patterns of their
+  own, so they load the way Felucca's did (the steps into the current pattern, the other keys untouched) until you
+  save over them.
+* **The flash** came from Felucca's user sample slots: **USR2 and USR3 are retired**; USR1 keeps its 80 KiB. A sample
+  that was in USR2 or USR3 is gone, and the editor refuses uploads there. Going back to Felucca after saving songs:
+  it can't read the song slots (its projects A–D and USR2 come back empty); come back and they're all there.
+* **The web editor** lists A–K, and its complete backup holds the projects of A–K (not the patterns: the PATTERN
+  BANK was never in it).
+
+(Felucca waits 10 s of quiet and says nothing: a song built while it played was lost when the FM-1 went off soon
+after STOP. `tests/persistence_test.c` replays exactly that.)
+
 ## Playing it
 
 **MIDI:** channels **1–4 play tracks 1–4** (Felucca's default `MENU > MIDI > MIDI IN: CH1-4`), over USB or the TRS input
@@ -64,6 +142,13 @@ first; a pattern playing keeps playing, now empty.
 KIT uses the General MIDI drum map, so the QY70's drum notes play as they are), chords to 2, bass to 3, lead to 4.
 For tempo sync, have the QY70 send MIDI clock and set the FM-1's CLOCK page (on HOME, tap HOME twice) to `CLK TRS`.
 The per-track channels can also be set one by one: `MENU > MIDI > MIDI IN: TRACK`, then `T1..T4 CHANNEL`.
+
+**The pitch wheel records.** A controller's pitch bend (a KeyStep's strip, a keyboard's wheel) moves the track's
+**BEND**, as a MIDI-learned knob would: with the track armed (**REC**) and selected, while playing, the bend is recorded
+as automation, one value a step, and plays back gliding between them (about 20 ms, so a recorded bend sweeps rather
+than steps). It shows on AUTOMATION and in the tracker's FX column as BEND, where it can be edited or locked on a step
+like any value: −64..63 of the channel's bend range (2 semitones unless the controller sends another by RPN). Drum
+tracks ignore the wheel. A project load centres it; a sound load leaves it as it is.
 
 **Getting around.** Dungeon Tracker gives each knob of the left-hand trio one job everywhere:
 
@@ -78,64 +163,158 @@ The **tempo** is **GLO + SELECT**, HOME > CLOCK's **KNOB 1**, or TAP (GLO + F4).
 (SELECT always the tempo), set `MENU > CONTROL > SELECT` to BPM; PAGE is Dungeon Tracker's default (a setting saved
 by Felucca reads PAGE here unless it was set to PAGE, which reads BPM).
 
-**The panel** works as in Felucca otherwise. On a FMKIT track, tap **EDIT** to walk its pages:
+**The panel** works as in Felucca otherwise. The sound is shaped on **EDIT > DICE** (*DICE*, below); the kits keep
+their four voices on the EDIT layer (hold **EDIT**: black keys 1–4 mute KICK, SNARE, HAT, PERC), and everything can be
+**parameter-locked per step** (hold a step in SEQ, turn a knob), as in Felucca.
+
+**The kits** (GEN KIT, MOD KIT) play the GM drum map: 35/36 KICK, 38/40 SNARE, 42/44 closed HAT, 46 open HAT (OPEN
+sets its length; a closed hat chokes it), cymbals a long open HAT, toms, rim, clap, cowbell and the rest PERC at their
+own pitches. Each voice has PITCH, DECAY, COLOR, SWEEP, SHAPE and LEVEL; the kit TUNE, DECAY, COLOR, OPEN, CLICK,
+VELO, DRV and VARI. On GEN KIT, COLOR is the FM index (the snare's and the hats' PSG noise rate) and SHAPE the kick's
+drive, the snare's noise mix, the hat's and the perc's operator ratios; on MOD KIT, COLOR is the LED filter, DECAY how fast
+the hit's looped tail fades and SHAPE picks the hit: KICK 909 808 TIGHT GABBER DUSTY DOOM ELECTRO SOFT, SNARE 909 808
+LOFI CRACK CLAP CLANG BREAK SNAP, HAT CLOSED DUSTY OPEN RIDE CRASH CHAIN SHAKER TAMB, PERC TOM CONGA COWBELL BONE RIM
+TOLL ZAP BLOCK.
+
+**MOD**: SMPL (SQUARE PULSE SAW TRI SINE BASS SYNC ORGAN EPIANO PLUCK STRINGS CHOIR HOOVER STAB BELL NOISE), OFS (where
+it starts, the trackers' 9xx), ARP (a chord stepped at the trackers' 50 Hz tick, 0xy: MAJ MIN SUS 5TH OCT 7TH MAJ7 DIM),
+VIB, LED (the Amiga's low-pass; the filter envelope moves it), CRSH (8 bits down to 3), RATE (a lower output rate),
+DTUN (the note on two channels, a little apart). Every sample is synthesized (`tools/gen_mod.py`), 64 KB in all.
+
+**WAVE 32**: BANK, POS (the place in the bank, two frames cross-faded), PENV (the envelope on POS), DTUN (a second
+oscillator a few cents up), CUT, RES (ANALOG's filter), SUB (a sine an octave down), WARP (the frames read at a bent
+phase: brighter, a little grit). Each frame is kept at seven sizes and a note reads the fullest that stays under
+11.5 kHz, so even C7 keeps its aliasing under -30 dB (`tests/wt32_test.c`).
+
+**Presets** — GENESIS: GEN BASS, SLAP BASS, SUB THUMP, ROCK BASS, GEN PIANO, CLAV, ORGAN, MUSIC BOX, HARP, MARIMBA, SITAR, GUITAR, SQUARE LEAD, SAW LEAD, HERO LEAD, SYNC SCREAM, FLUTE, HARMONICA, BRASS, STRINGS, CHOIR, WARM PAD, BELL PAD, LASER. GEN KIT: CYCLE KIT, 808ISH, 909ISH, GRIT KIT, METAL KIT, DUB KIT, BOOM BAP, TECHNO KIT, ELECTRO KIT, DUSTY KIT, TRIBAL KIT, MINIMAL KIT, FORGE KIT, CHIP KIT 2, CAVE KIT, DISCO KIT. MOD KIT: TRACKER, DUNGEON KIT, LOFI KIT, ACID HOUSE, JUNGLE, HARDCORE, ELECTRO, CHIPTUNE. MOD: TRACKER BASS, ACID MOD, SUB SINE, SYNC BASS, MOD PIANO, MOD ORGAN, RAVE STAB, CHORD KEYS, MOD PLUCK, MOD BELL, CHIP ARP, PLUCK ARP, SQUARE LEAD, PULSE LEAD, SAW LEAD, HOOVER, SYNC LEAD, TRI LEAD, CHIP SOLO, MOD STRINGS, MOD CHOIR, WARM PAD, HOOVER PAD, NOISE SWEEP. WAVE 32: HIFI BASS, GROWL BASS, FORMANT BASS, SYNC BASS, WT EPIANO, DRAWBARS, GLASS KEYS, DIGI KEYS, PPG PLUCK, VOWEL PLUCK, GLASS HARP, SYNC PLUCK, HIFI LEAD, SYNC LEAD, PWM LEAD, VOX LEAD, WARP LEAD, DIGI SOLO, ORGAN LEAD, FORMANT PAD, GLASS PAD, PWM STRINGS, DIGI PAD, DIMENSION. ANALOG: SAW LEAD, SOFT PAD, SQR BASS, PWM STR, ACID, SINE KEY, RAVE, SUB BASS, PLUCK, BRASS, WIND, STRINGS, MOOG BASS, SYNC LEAD, PWM BASS, REESE, SUPERSAW, POLY KEYS, BLIP, DARK PAD, SWEEP PAD, ACID 2, SUB SWEEP, NOISE HIT, SOLO SQUARE.
+
+## The party (MENU > GAME)
+
+Every track is played by one of eight classes, and **the class is the track's job**: how many notes it can sound at
+once, and which sounds it can load.
+
+| Class | Plays | Voices (points) | Sounds in its list |
+|---|---|---|---|
+| ROGUE | drums | 4, one per drum | DRUM |
+| CLERIC | chords, pads | 4 | PAD, KEYS, PLUCK, other |
+| FIGHTER | bass | 1, mono and legato | BASS |
+| MAGE | lead | 3 | LEAD, PLUCK, FX, other |
+| BARD | arpeggios, plucks | 4 (an arp's notes ring into each other) | PLUCK, LEAD, KEYS |
+| PALADIN | bass in two voices | 2 | BASS |
+| DRUID | pads, textures | 3 | PAD, KEYS, FX, other |
+| MONK | a light kit | 2 | DRUM |
+
+**Picking the party.** Hold **HOME** for the MENU and turn **ALGORITHM** to **GAME**. Below DUNGEON are **T1 .. T4**,
+one row per track, and **PARTY**, the points it uses: `12/12`. Pick a row, turn KNOB 1 through ROGUE, CLERIC, FIGHTER,
+MAGE, BARD, PALADIN, DRUID and MONK. Any class on any track, as many of one as you like: two rogues are two drum kits (4 + 4), and with the
+fighter (1) and the mage (3) that is still 12.
+
+* **Turning shows, resting takes.** KNOB 1 turns the row's class round all eight (MONK wraps to ROGUE). Nothing changes
+  while you turn, so the classes you pass on the way never touch the sound; the one you stop on takes when the knob
+  rests (under a second), when you move to another row, or when you leave the MENU: `PARTY SET`.
+* **12 points.** A class costs its voices. One that puts the party over waits: PARTY reads e.g. `15/12 !` and nothing
+  changes yet, so you can swap a mage for a fighter on the way to two clerics. The change that brings it back to 12
+  or under puts them all in together. Leave the MENU while it's still over and the waiting changes are dropped:
+  `PARTY NOT CHANGED`.
+* **A new class, a new job.** The track lets go of its notes. If its sound belongs to the new class (a PLUCK going from
+  cleric to mage) it keeps it; otherwise it takes the class's default sound (CYCLE KIT, FM PAD, FM BASS, FM LEAD).
+  Its steps stay.
+* **Saved** with the song, in every slot and the autosave. NEW+S goes back to the default party (rogue, cleric,
+  fighter, mage on T1..T4). The party is the song's, with the DUNGEON on or off.
+
+**PRESETS shows the class's sounds.** On PRESETS, **LIST** (KNOB 4) starts at **CLASS**: the presets, across every
+engine, that fit the track's class (a rogue's track lists the 19 drum kits and drum sounds, nothing else). Scrolling
+while the song plays can't land a drum track on a bass patch. ENG skips the engines that have nothing for the class,
+and picking one of those on the EDIT layer says e.g. `ROGUE: NOT ON THIS ENGINE`.
+
+**The escape hatch: LIST ALL.** Turn LIST one step right, to **ALL**, and every sound is there again for any track,
+a pad on the fighter if you want it (it plays with the fighter's one voice). FAV and the categories follow, as before.
+The LIST you pick stays for every track until you change it.
+
+DICE rolls a sound for the class (a rogue or a monk rolls a kit, a fighter or a paladin a bass), and in the dungeon
+each track fights as its class (*HOME: the dungeon*, below). The HOME slots show it: `RGE FTR RGE MAG`, `MNK DRU PAL
+BRD`. Old songs keep their party (a 1.0 project has none of the new four).
+
+## WAVES
+
+The digital oscillators of Mutable Instruments' Ambika and Shruthi-1 (Emilie Gillet), through ANALOG's filter: 8-bit
+waves with a gritty, glassy edge. In the WAVE family, with WAVE 32.
 
 | Page | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
-|---|---|---|---|---|
-| KIT (EDIT 1) | TUNE (all) | DECAY (all) | COLOR (all) | OPEN (open-hat length) |
-| FEEL (EDIT 2) | CLICK | VELO (velocity sensitivity) | DRV | VARI (per-hit variation) |
-| KICK / SNARE / HAT / PERC | PITCH | DECAY | COLOR | SWEEP |
-| SHAPE | KICK drive | SNARE noise mix | HAT metal ratio | PERC FM ratio |
-| LANES | KICK level | SNARE level | HAT level | PERC level |
+| --- | --- | --- | --- | --- |
+| EDIT 1 (WAVE) | SHAPE | PRM | PENV (the envelope to PRM) | SUB (the sub's level) |
+| EDIT 2 (FLTR) | CUT | RES | SUBT (the sub's shape) | GRIT |
+| HOME | PRM | CUT | RES | PENV |
 
-Everything on those pages can be **parameter-locked per step** (hold a step in SEQ, turn a knob), as in Felucca.
-Hold **EDIT**: black keys 1–4 mute KICK, SNARE, HAT, PERC.
+* **SHAPE** picks the oscillator, **PRM** what it does: **WT 1–16** the wavetables (PRM moves through each table's
+  waves; WT 1, 12 and 15 open up as PRM rises, WT 13 peaks in the middle like a vowel, WT 7 closes to nearly a sine),
+  **WAVEQ** one of the 80 waves the tables are made of, **8BIT** bit-twiddled saws, **DPWM** a raw pulse (PRM its
+  width), **QSAW** four saws drifting apart.
+* **SUB** adds a square, triangle or pulse an octave down (two with the "2" shapes); **GRIT** holds and roughens the
+  output, like a lower sample rate.
+* **Presets** (each suggests a pattern in SAVE > PHRASES): WT PAD, WT SWEEP, WT KEYS, WAVEQ BASS, 8BIT LEAD, DIRTY
+  BASS, QUAD PAD, GRIT KEYS, and the dungeon set: **TORCHLIGHT** (a warm pad, a flicker of grit), **CRYSTAL CAVE**
+  (a glass bell), **COIN GET** (a blip), **ACID WAVE** (a squelching pulse bass), **BOSS FIGHT** (the big lead),
+  **GHOST CHOIR** (a vowel pad), **DEEP DELVE** (a sub bass), **LASER ZAP**, **ARP RUNES** (a pluck for the ARP
+  pattern) and **MANA POOL** (a pad that opens slowly); basses WT BASS, 8BIT BASS, QSAW BASS, RUBBER, SUB WAVE, GRIT
+  BASS, ACID PULSE; pads DUSK PAD, VOWEL PAD, GLASS WT, DRONE, CRYPT PAD, SHIMMER WT; keys WT PIANO, LOFI KEYS, TOY
+  PIANO; plucks WT PLUCK, 8BIT PLUCK, HARP RUNE; leads WT LEAD, QSAW LEAD, PULSE HERO, CHIP SOLO, VOWEL LEAD, DRAGON;
+  and PORTAL, TRAPDOOR, ROBOT TALK.
+* It costs about what ANALOG does per voice (`tests/waves_test.c`). WAVES presets can't be starred, like the other
+  Dungeon Tracker engines' (14 on).
 
-MIDI notes follow the GM drum map: 35/36 KICK, 38/40 SNARE, 42/44 closed HAT, 46 open HAT (OPEN sets its length; a
-closed hat chokes it), cymbals a long open HAT, toms, rim, clap, cowbell and the rest PERC at their own pitches.
+## SID
 
-**FMTONE** pages:
+A voice after the MOS 6581, the Commodore 64's sound chip (written for Dungeon Tracker from how the chip behaves; no
+emulator's code). In the SUB family, with ANALOG.
 
 | Page | KNOB 1 | KNOB 2 | KNOB 3 | KNOB 4 |
-|---|---|---|---|---|
-| TONE (EDIT 1) | RATIO (modulator : carrier) | COLOR (FM index) | CNTR (how fast the index falls) | MSUS (where it rests) |
-| BODY (EDIT 2) | FDBK (modulator feedback) | SWEEP (pitch blip, ±) | STACK (detuned 2nd carrier) | SUB (octave-down sine) |
+| --- | --- | --- | --- | --- |
+| EDIT 1 (OSC) | WAVE | PW (pulse width) | PWM (its sweep) | MOD |
+| EDIT 2 (MOD) | TUNE | SWEEP | CUT | RES |
+| HOME | PW | CUT | RES | SWEEP |
 
-ENV / LFO DEST *SHP* and the matrix's SHAPE move COLOR. STACK and SUB share an oscillator: with STACK above 0, SUB
-is off.
+* **WAVE**: **TRI**, **SAW**, **PLS** (pulse), **NSE** (the chip's noise: clocked by the note, so low notes rumble and
+  high ones hiss), and the chip's **combined** waves **ST PT PS PST**: thin, buzzy, the growl of many C64 basses.
+  **DRM** is a C64 drum: a burst of noise, then the pulse falling in pitch (SWEEP sets how far).
+* **PW** is the pulse's width (50 % at the middle); **PWM** sweeps it slowly, the classic moving C64 lead and bass.
+* **MOD** brings in a second oscillator playing the note: **SYNC** restarts the voice every cycle of it (with TUNE the
+  voice above it: the sync lead), **RING** rings the triangle against it (bells), **S+R** both.
+* **TUNE** (0..48 semitones): with MOD, the voice above the modulator; without, a transpose. **SWEEP** lets the
+  envelope move TUNE: sync sweeps, zaps, drums.
+* **CUT** / **RES**: the chip's 12 dB filter, driven a little first as the 6581's is (FILTER TYPE picks LP, BP, HP...).
+* **Presets**: MONTY BASS (a PWM bass), GROWL BASS (combined waves), SAW BASS, SYNC LEAD, PWM LEAD, TRI FLUTE, RING
+  BELL, SID STRINGS, C64 ARP (hold a chord with the ARP on), FILTER SWEEP, SID KICK, SID SNARE, SID HAT, ZAP, POWER
+  UP, NOISE WIND, TITLE SCREEN and SPELLBOOK (sync and ring together); drums SID TOM, SID CLAP, SID COWBELL, SID
+  BOOM; basses SID PULSE, SID TRI BASS, SYNC BASS, BUZZ BASS, FUNK BASS, DEEP PULSE, RING BASS; pads SID CHOIR, SAW
+  PAD, DREAM PAD; keys SID ORGAN, SID KEYS; plucks SID PLUCK, HARPSI; leads SID SOLO, SAW SOLO, RING LEAD, SYNC
+  SCREAM, HOLLOW LEAD, ARCADE LEAD; and EXPLOSION, LASER, TELEPORT, ALARM.
+* It costs about half of ANALOG per voice (`tests/sid_test.c`).
 
-**Presets** — FMKIT: CYCLE KIT, 808ISH, 909ISH, GRIT KIT, METAL KIT, DUB KIT. FMTONE: FM PAD, CHORD EP, STAB,
-GLASS PAD, ORGAN, FM BASS, SUB BASS, PLUCK BASS (the three basses are mono), FM LEAD, SYNC LEAD, BRASS, BELL.
+## The DUNGEON KIT and the LOFI KIT (MOD KIT)
 
-**CHIP** (Felucca's LOFI engine: MODE WAVE DUTY CRSH / SWP VIB ARP TONE; Felucca calls MODE "CHIP") — Felucca's five (PULSE LD, WAVE BASS,
-ARP 8BIT, WAVE LEAD, STEP LEAD) and Dungeon Tracker's chip set:
-
-| Preset | What it is |
-|---|---|
-| SQUARE 50 | MODE STEP, a 50 % square lead with vibrato |
-| TRI BASS | the 32-step staircase triangle, mono |
-| PULSE BASS | 25 % pulse with a stepped decay (DCY D10) |
-| CHIP PLUCK | 25 % pulse, a short stepped decay (D3), poly |
-| FAST ARP | 8BIT pulse, ARP MIN: one note plays a minor chord |
-| LASER ZAP | square swept down fast, short decay |
-| CHIP KICK | the triangle swept down, a very short decay (play it low, about C2–C3) |
-| NOISE HAT | 1-bit noise, a tick (higher notes are brighter) |
-| NOISE SNR | 1-bit noise, held longer and crushed darker |
-| WAVE ORGAN | wave RAM ORGN table |
-| 8BIT SAW | an 8-bit saw lead |
-| VOX CHOIR | wave RAM VOXA ("ah") with a slow attack and vibrato |
+Until 1.5 these were SAMPLE's sets 1 and 3, recordings from Versilian's free library (VCSL, CC0). 1.5 retires SAMPLE
+(its 106 KB of samples made room for WAVE 32 and the AMIGA'D family) and rebuilds both as **MOD KIT** kits from
+synthesized 8-bit hits on the same notes: the DUNGEON KIT a DOOM kick, a CLANG anvil snare, CHAIN hats and a tolling
+TOLL on the toms; the LOFI KIT a DUSTY kick, a LOFI snare, dusty hats and a soft tom, driven a little. A song or a sound
+that used either loads on MOD KIT's kit of the name; SAMPLE's PIANO and FLUTE load as GENESIS' GEN PIANO and FLUTE.
+(`DT_SAMPLES=1 python3 tools/build.py` still builds the old sets, for a build that brings SAMPLE back.)
 
 ## DICE (EDIT > DICE)
 
-On an FMTONE, FMKIT or CHIP track, tap **EDIT** until **DICE** (after EDIT 1 and EDIT 2). Each die is one part of the sound:
+**EDIT** opens on **DICE**, on every engine (1.1: the engines' own pages, EDIT 1 and 2 and the kits' voice pages, are
+gone; ENV, VOICE, MORPH and the rest stay, HOME's four knobs still turn an engine's main values and the web editor
+reaches every one). Each die is one part of the sound:
 
-* FMTONE: RATIO, COLOR, CNTR, MSUS, FDBK, SWEEP, STACK, SUB and ENV (the amplitude envelope).
-* CHIP: MODE, WAVE, DUTY, CRSH, SWEEP, VIB, ARP, TONE and ENV. DUTY follows the WAVE just rolled (a wave-RAM table
-  for WRAM, a pulse width for PLS) and CRSH follows the MODE (on STEP it is the stepped decay, DCY). Chords and bass
-  never roll NOISE or a chord ARP; only a lead with a short STEP decay rolls a SWEEP (a zap). MODE, WAVE, DUTY, CRSH,
-  ARP and ENV are choices, so at a WILD below 100 % they change or not (by that chance) rather than part way.
-* FMKIT: BD, SD, HH, PC (each voice's pitch, decay, color, sweep and shape together), MIX (the four levels) and FEEL
-  (open-hat length, click, drive, variation).
+* The kits, GEN KIT and MOD KIT: BD, SD, HH, PC (each voice's pitch, decay, color, sweep and shape together), MIX (the
+  four levels) and FEEL (open-hat length, click, drive, variation).
+* GENESIS (ALG FB MUL OP1 OP2 OP3 OP4 GRIT: an operator a die, its envelope and level), WAVES (SHAPE PRM PENV SUB CUT
+  RES GRIT ENV), WAVE 32 (BANK POS PENV DTUN FILTR SUB WARP ENV), MOD (SMPL OFS ARP VIB LED CRUSH DTUN ENV), ANALOG
+  (WAVE DTN MIX NOIS CUT RES DRIVE ENV), SID (WAVE PW PWM MOD TUNE SWEEP FILTR ENV): **bred from the engine's
+  presets**. A roll picks two factory presets of the track's class as parents (a bass track's basses, a rogue's
+  kits; never a sound effect) and each die takes its value from one of them, nudged a little. Both parents are of one
+  species (the same wave, shape, set, model or source; a PHYS body bowed or struck), an off value stays off and a filter
+  keeps its own envelope, so every roll stays an instrument.
 
 | Control | Does |
 |---|---|
@@ -145,11 +324,19 @@ On an FMTONE, FMKIT or CHIP track, tap **EDIT** until **DICE** (after EDIT 1 and
 | KNOB 3 WILD | 100 %: a fresh roll; lower: each die only moves part of the way, for small variations |
 | KNOB 4 HIST / **OCT−** | step back through the last eight sounds before each roll (and forward again) |
 
-Play the keys between rolls to hear each one. The dice are weighted by the track's role: T2 rolls pad and chord
-sounds, T3 bass sounds (low ratios, often a sub, short envelopes), T4 leads. A rolled COLOR never goes past what its
-RATIO keeps musical; if you hold a bright COLOR, RATIO rolls only among ratios that suit it. Successive rolls are one
-undo (SAVE held); `tests/dice_test.c` listens to 900 rolls per engine (FMTONE, CHIP) and checks none clip, carry DC,
-hang or turn harsh.
+**Setting a held die by hand** (1.5). While the selected die is held, KNOBS 3 and 4 work on that die instead:
+
+| Control (die held) | Does |
+|---|---|
+| KNOB 3 VALUE | turns the die's value by hand (its name, value and bar shown, as on any page; recorded as automation while recording) |
+| KNOB 4 PART | which of the die's values KNOB 3 turns (PART 2/5: a die holding several, e.g. an operator's level, ratio and envelope) |
+
+The die's tile on the graph shows the value. KNOB 2 left lets the die go (back to WILD and HIST on KNOBS 3 and 4); a
+die set by hand stays as set through every roll while it is held. OCT− (HIST) still steps back, set values included.
+
+Play the keys between rolls to hear each one. Successive rolls are one undo (SAVE held); `tests/dice_test.c` strikes
+200 kit rolls on each kit and listens to 160 rolls on each of the bred engines against that engine's own presets,
+checking none clip, hang, carry DC or turn harsh.
 
 ## Live effects
 
@@ -168,7 +355,7 @@ there, and Dungeon Tracker adds three:
 | **DUCK** | DEPTH | REL (release) | SHAPE | the track dips at every kick of T1 and comes back over REL; SHAPE holds it down longer (a pump) |
 | **REPT** | RATE (1/8 1/8T 1/16 1/16T 1/32 1/64) | DECAY | PITCH (−4 … +4 semitones a pass) | a beat repeat of this track only |
 
-* **DUCK**'s kick: on an FMKIT T1, the KICK voice; a DRUM kit, its kick; any other engine on T1, every note.
+* **DUCK**'s kick: on a GEN KIT or MOD KIT T1, the KICK voice; a DRUM kit, its kick; any other engine on T1, every note.
 * **REPT** starts when MIX comes up from 0: at the next RATE boundary it grabs one RATE of the track and repeats it,
   each pass DECAY quieter and PITCH higher or lower. MIX back to 0 lets the live sound back in. Picking REPT sets MIX to
   0, so it waits for you. (It shares the SLICER's buffer: with the track's SLICER on STUT, or one of FX's buffer
@@ -194,7 +381,7 @@ saved with the project). The pool:
 | ISOLATR | left takes the lows away, right the highs (a DJ kill) |
 | WASH | the mix into the reverb, and the reverb bigger |
 | PUMP | the whole mix ducks on every beat, in time |
-| RIDE | every FMKIT / FMTONE track brighter (COLOR and FDBK up) |
+| RIDE | every kit track brighter (COLOR up) |
 
 **The knobs stay where you leave them** when you let go of FX (through the menu too), so you can build up and hold a
 drop. The FX button stays lit while any master effect is on. **FX + OCT−** sets all of them back to rest.
@@ -206,7 +393,7 @@ before.
 ## HOME: the dungeon
 
 HOME's view is a first-person dungeon corridor. While the transport runs, the party walks one square per beat at the
-song's tempo, and the four slots along the bottom show which tracks are in the party and each one's level.
+song's tempo, and the four slots along the bottom show which tracks are in the party and the party's level.
 
 **Crossroads.** Every other phrase (a pass of the longest pattern playing), a crossroads comes up the corridor, placed
 so the party reaches it as that phrase ends. There it goes straight on, turns left or turns right, a third each; a
@@ -219,32 +406,60 @@ Dungeon Tracker is a plain four-track FM groovebox.
 
 **To play:** hold **HOME** for the MENU, turn **ALGORITHM** to the **GAME** tab (one step left from DISPLAY), and
 switch **DUNGEON** on with KNOB 1 or OCT+. A run starts at B1. Goblins, skeletons and slimes come up the corridor
-and are fought in turns, played by your song (below), and every fifth floor has an ogre in the middle. The game then runs on every page,
+and are fought in turns, played by your song (below); **ten slain on a floor and its boss comes** (the OGRE at first,
+deeper a MINOTAUR, a LICH, a DRAGON, a DEMON). The game then runs on every page,
 whatever HOME shows. Switch DUNGEON off to end the run: every cut track comes back at once. It is off again after
 every power-on; it is not saved.
 
-| Track | Adventurer | Fights with |
-|---|---|---|
-| T1 | RGE rogue | a sword; dodges when the drums leave a gap |
-| T2 | CLR cleric | heals the party when it is hurt, otherwise a strike; heals over time while a note is held; raises the fallen |
-| T3 | FTR fighter | an axe, more health |
-| T4 | MAG mage | bolts that ignore armour; stores power while a note is held |
+Each track fights as its class (*The party*, above; by default T1 rogue, T2 cleric, T3 fighter, T4 mage):
+
+| Class | Fights with |
+|---|---|
+| RGE rogue | a sword; dodges when its drums leave a gap |
+| CLR cleric | heals the party when it is hurt, otherwise a strike; heals over time while a note is held; raises the fallen |
+| FTR fighter | an axe, more health |
+| MAG mage | bolts that ignore armour; stores power while a note is held |
+
+Two of a class fight side by side, each on its own track's notes.
 
 * Every track that has steps and is not muted joins the party. With no steps anywhere the view reads NO PARTY.
-* Each adventurer's level (L1–L9, in the HUD) is how much its track does. Levels rise with:
-  * notes on, and distinct pitches (on a kit, distinct drums);
-  * chords and parameter locks;
-  * chances, conditions, ratchets and nudges.
-* **Health is hidden.** It is 6 + 4 per level (the fighter gets 4 more), so a simple kick loop has 10 and a busy track
-  42. A wounded adventurer's name blinks (under a third of its health). Make a track busier mid-fight and it gains the
-  extra health at once.
-* After 24 squares the party takes the stairs one floor down (B1, B2, …). Monsters grow with depth **and match your
-  party**: their health and blows scale with the adventurers' average level, with how many there are, and with how
-  much they play. Walking heals a little every other square (more when there is no cleric in the party). Expect push
-  and pull: with a typical song, in ten minutes, around eight falls and one whole-party fall, the first about five
-  minutes in, and fights of about six beats.
+* **Levels.** The whole party starts every run at **L1** (in the HUD). Every boss slain, **everyone levels up once**
+  (`LEVEL UP: L2`), up to **L9**. A level is health and a harder hit.
+* **Health is hidden.** It is 6 + 4 per level (the fighter gets 4 more): 10 at L1, 42 at L9. A level up adds its 4 at
+  once. A wounded adventurer's name blinks (under a third of its health).
+* **Floors and bosses.** Monsters come up the corridor until **ten are slain on the floor** (a pair counts two). Then
+  nothing else comes but the floor's **boss**: three times a monster's health and a heavier blow. Slay it and
+  the party levels up and takes the stairs two squares on, one floor down (B1, B2, …), where the count starts again.
+* **The bestiary (1.5).** What comes up the corridor changes every three floors. Each tier has three monsters that
+  fight the three ways the game knows: plain, **armoured** (a blade glances off, `BLOCK`; a slide, a spell or the
+  druid's vines go through) and **frail** (less health):
 
-### Fighting in turns (1.0)
+  | Floors | Plain | Armoured | Frail | Boss |
+  |---|---|---|---|---|
+  | B1–B2 | GOBLIN | SKELETON | SLIME | OGRE |
+  | B3–B5 | KOBOLD | ARMOUR | BAT | MINOTAUR |
+  | B6–B8 | ORC | GARGOYLE | WISP | LICH |
+  | B9–B11 | DARK ELF | BONE KNIGHT | CUBE | DRAGON |
+  | B12 on | (as B9) | | | DEMON |
+
+  Every boss fights the ogre's way; under half its health it **rages** (`DRAGON RAGES`: it flickers, its eyes burn).
+  The rules and the balance are those of 1.1: the bestiary is how the fight looks.
+* **How a fight looks (1.5).** The monsters are 16 × 16 sprites in four inks from the palette, with a shadow. Close up
+  they breathe with the beat; when one strikes it lunges at you, its eyes light up, and it strikes its own way: claws
+  across the view, a slam that jolts the floor, a bolt at one of the party (WISP, DARK ELF, LICH) or fire (DRAGON,
+  DEMON). Hit, it flashes and is knocked back; the damage rises over it, with `CRIT` (an accent's double blow: it
+  shakes), `BLOCK` or `MISS`. Slain, it crumbles away where it stood.
+* **Every class its weapon (1.5).** The rogue's sword, the fighter's axe, the mage's bolt, the bard's rings and the
+  monk's fists, and now the **cleric's mace** (high from the right, down on it), the **paladin's warhammer** (up and
+  over from the left) and the **druid's staff** (raised, its stone aglow, leaves rising).
+* Monsters grow with depth **and match your party**: their health and blows scale with the party's level, with how
+  many there are, and with how much they play. Walking heals a little every other square (more when there is no cleric
+  in the party). How hard it is depends on your song. A rolled song (RANDOM SONG) is short and sparse on purpose: in
+  ten minutes, around sixteen falls and three or four whole-party falls, the first about two minutes in. A busy
+  four-track song falls about once in that time and goes deeper. Fuller, more intricate parts make a stronger party. A lone simple loop has the floor's ten and its boss to
+  beat alone: it often stays near the top.
+
+### Fighting in turns
 
 A fight is played by the song, sixteenth by sixteenth. A **round is five sixteenths**: the monster's turn first,
 then T1's, T2's, T3's and T4's, one each. A beat has four sixteenths, so the rounds turn against the beat
@@ -255,6 +470,12 @@ out.
 On its turn, each hero does what **its track played since its last turn**: only notes that actually sounded count (a
 step whose chance skipped it is nothing), and a fallen hero's turn simply passes.
 
+**Every track's own DIV.** The turns run on one sixteenth clock from the tempo, whatever each track's division. A
+fast track (1/32, 16T, ratchets) may land several notes in one turn: the strongest sets the blow, each more adds a
+little. A 1/8 track still acts most turns. A slow one (1/4, 1/2, a bar a step) leaves turns empty: its hero charges
+and hits rarely but hard, and its long notes count as held while they ring. Monsters match how often the party gets
+to act, so a slow party meets smaller ones. Triplets and swing land in whichever sixteenth they fall in.
+
 * **A note: the action.** The rogue and the fighter strike, the mage bolts, the cleric heals whoever is under 60 %
   (or strikes when nobody is). The strongest note since the last turn sets how strong:
   * velocity scales it, an **accent** adds half again and may land a critical hit;
@@ -263,13 +484,27 @@ step whose chance skipped it is nothing), and a fallen hero's turn simply passes
   * a **ratchet** is a flurry of hits, a **slide** cuts through a skeleton's armour;
   * a **chance** below 100 % hits harder when it does play, a **nudge** off the grid is a sneak attack (the rogue's best);
   * more notes in the same window add a little (+15 % each, up to +45 %).
-* **A held note (tie).** The rogue and the fighter follow through, weaker each turn (half, then a quarter). The
-  cleric heals over time, more each turn the note is held; the mage stores power for its next bolt.
+* **A held note** (a tie, or any note still sounding: a long step at a slow DIV, a whole-bar pad at 1/1). The rogue
+  and the fighter follow through, weaker each turn (half, then a quarter). The cleric heals over time, more each turn
+  the note is held; the mage stores power for its next bolt. (Kits' hits are never held.)
 * **Nothing played: charge.** The hero gathers itself: +100 % on its next action for each turn it waited, up to four.
   Sparse parts hit rarely but hard; busy parts hit often.
 * **An explicit REST step: guard.** The monster hits a guarding hero half as often.
-* **The monster** strikes one standing hero at random each round. If it picks the rogue on a sixteenth where **T1
-  plays no drum**, the rogue isn't there: a dodge. A busy drum part never dodges; a sparse or syncopated one often
+* **Pairs.** From B2 down, now and then (about one encounter in eleven) a second monster joins the one coming
+  up the corridor, and the two stand side by side (HOME says e.g. `ARMOUR AND KOBOLD`, with a health bar each).
+  Each is a little weaker than alone; both strike every round, each a little lighter, so a pair hits about a third
+  harder than one. The party fights the front one (left); the **fighter's axe cleaves**, giving the other half of
+  each blow (`CLEAVED` if it falls to it). When the front one falls, the other steps up and the fight goes on. Never
+  beside a boss.
+* **The 1.1 classes.** The **bard** strikes lightly and inspires: +20 % a note (a held note +10 %, to +75 %), spent by
+  the next other hero's action. The **paladin** strikes as the fighter (a chord, root and fifth, a little harder), has
+  its health, heals itself on a held note, and **a REST shields the party**: that round the monster's blows are its,
+  at two-thirds. The **druid** heals the whole party over four rounds (a chord five; a held note keeps it going) when
+  someone is under 80 %, else lashes with vines that pass armour; it tends on the march as the cleric does, but only a
+  cleric raises the fallen. The **monk** strikes once for each note in its turn (up to four) and harder for each turn
+  in a row it struck; a silent turn ends the run, and it slips away as the rogue does.
+* **The monster** strikes one standing hero at random each round. If it picks a rogue (or a monk) on a sixteenth where
+  **its track plays no drum**, it isn't there: a dodge. A busy drum part never dodges; a sparse or syncopated one often
   does.
 
 ### Falling cuts the track
@@ -281,18 +516,36 @@ tails ring out. Nothing is saved, and the track's MUTE is not touched.
 
 A fallen adventurer gets back up:
 
-* when the cleric raises it: a 1 in 5 chance each beat the party walks, while T2's cleric stands. The view says
+* when the cleric raises it: a 1 in 5 chance each beat the party walks, while a cleric stands. The view says
   T1 BACK (etc.).
 * at the stairs: everyone fallen stands up on the next floor, at half health.
 * when the whole party falls: the song is silent for one bar (4 beats), then the party retreats a floor up, healed.
+  It keeps its level, and clears that floor again (its ten and its ogre, another level up).
 * when you stop the transport: the party camps, and the fallen are raised.
 
 Muting and unmuting a fallen track does not raise it.
 
-How often it happens (ten minutes at 120 BPM, 20 runs each): a lone kick loop on the beats reaches about B12 and is
-silent about 1 % of the time (its rogue dodges three monster turns in four). A busy four-track song reaches about B31,
-and its tracks are cut about 0.2 % of the time. The power-on songs fall about eight times in ten minutes at their own
-tempos. `tools/combat_sim.py` models the fight; it was tuned on the power-on songs and a set of styles (sparse,
+**FLOOR FX.** Every time the party takes the stairs down, one track gets one effect for that floor, and HOME
+says which (`STAIRS: T3 ECHO`). The track is one of the party's, at random; the effect is one of
+ten, at random among those that fit the track:
+
+| Effect | What it does |
+|---|---|
+| ECHO, CAVERN, CHORUS | the track's delay, reverb or chorus send raised |
+| DRIVE | its DIST raised a little |
+| CRUSH, PHASER, FLANGER, MUFFLE | its INSERT (8-bit crush; a phaser; a flanger; a resonant low-pass) |
+| PUMP | its INSERT DUCK, pumping to T1's kick (not on T1) |
+| SLICER | its SLICER gating a random rhythm on 1/16s |
+
+It never takes an INSERT or SLICER you are using, nor a value that automation, a lock or SOUND MORPH moves, and never
+the same effect on the same track twice running. The next floor, a retreat, STOP (the camp) or the game switched off
+lifts it: each value goes back, unless you turned it meanwhile (then your turn stays). It only lives while the music
+plays, so nothing you save ever holds it.
+
+How often it happens (ten minutes at 120 BPM, 20 runs each): a lone kick loop on the beats reaches about B2 and is
+silent about 0.6 % of the time (its rogue dodges three monster turns in four). A busy four-track song reaches about
+B8, and its tracks are cut about 0.4 % of the time. Rolled songs (RANDOM SONG) fall about sixteen times in ten minutes
+at their own tempos, on purpose: a starter loop gets your toes wet and shows that a sparse song has a hard time. `tools/combat_sim.py` models the fight; it was tuned on rolled songs and a set of styles (sparse,
 busy, syncopated, drones, drums and bass only) so the music decides more: syncopated and expressive parts fall least,
 and nobody is left out.
 
@@ -431,13 +684,14 @@ audio for ~40 ms, so never while anything sounds). The pattern you're on is also
 is, so a power cycle puts you back where you were. Its key's own copy is refreshed at most once a minute.
 
 **Where the flash came from.** Every sector of the FM-1 was already taken, so the bank uses the top 48 KiB of the
-third user sample slot. **USR3 now holds samples up to 32 KiB** (USR1 and USR2 stay at 80 KiB). A larger upload to
-USR3 is refused, and a USR3 sample over 32 KiB from before shows as empty (re-upload a shorter one).
+third user sample slot (the rest of USR3, with USR2, holds the song slots).
 
 ## SOUND MORPH (EDIT > MORPH)
 
-Each track can blend its sound toward a **target**: another preset of the same engine. KNOB 1 picks the target
-(OFF, then the engine's presets as P1, P2…), KNOB 2 the **AMOUNT** 0–100 %. At 0 % you hear the sound as it is; at
+Each track can blend its sound toward a **target**: another preset of the same engine, or (1.5) a sound you saved
+in SAVE > USER on the same engine. KNOB 1 picks the target (OFF, then the engine's presets as P1, P2…, then your saved
+sounds of that engine as U01, U02…), KNOB 2 the **AMOUNT** 0–100 %. To blend two of your own sounds: load one (it is
+the sound, A), pick the other as the target (B), turn AMOUNT. At 0 % you hear the sound as it is; at
 100 % the target's values; in between, everything that glides is part way: envelopes, filter, the engine's eight
 EDIT values, the sends, a kit's pitches and decays. What doesn't glide stays the sound's own: the engine, its lists
 and switches (waveforms, modes, the voice mode), an FM6 patch's operators, the mix (LEVEL, PAN, MUTE).
@@ -451,16 +705,32 @@ marker where it is now.
 * **Per pattern: the MORPH command.** In the TRACKER's FX column, after SPEED LOOP PITCH, MORPH sets the amount from
   that step on (shown M0 … M100). Put M100 on step 1 of the chorus pattern and M0 on the verse's, and switching
   patterns switches the lead from soft to bright, with the same four sounds.
-* **Saved** with the project and the autosave: the amount, the target, and your sound as it is without the morph.
+* **Saved** with the project and the autosave: the amount, the target, and your sound as it is without the morph. A
+  saved-sound target is kept by its slot: erase that slot (or save another engine's sound there) and the morph lets
+  go of it (no target, your sound as it is).
 
 Switching a track to another engine lets go of the morph (the target named a preset of the old engine).
+
+## GLIDE (EDIT > VOICE)
+
+On the melodic engines, **VOICE** (tap EDIT, SELECT to VOICE) sets how a track plays its notes: KNOB 1 **VCE**
+(POLY, MONO, LEG legato, UNI unison), KNOB 2 **GLD** the glide, KNOB 3 **GLMOD**, KNOB 4 **PRIO** (which held key wins).
+
+* **GLD** reads OFF at 0, then the glide's time, 5 ms .. 4 s (1.5: what you hear; before, it showed the envelope
+  times and a glide could not last past ~140 ms an octave). **GLMOD RATE**: that long for an octave, so a wider jump
+  takes longer; **TIME**: that long for any jump. Slow glides move smoothly, finer than 1/16 semitone.
+* It glides between held notes in **MONO** and **LEG** (LEG: only while the last note is still held). In POLY a voice
+  glides only when it is reused.
+* A tracker step's **SLIDE** flag slides into its note even with GLD OFF, in 60 ms (a 303's slide); with GLD set, in
+  its time.
+* Kit tracks (GEN KIT, MOD KIT) play one-shot hits: no VOICE page there (1.5).
 
 ## The web editor (web/editor.html)
 
 Felucca's desktop editor, brought up to Dungeon Tracker. Open `web/editor.html` in Chrome or Edge (it talks to the FM-1 over
-USB MIDI; add `?mock=1` to try it without hardware). It knows FMKIT and FMTONE (their presets, an FMKIT track's
-KICK / SNARE / HAT / PERC / SHAPE / LANES pages, its steps as drum hits), CHIP's chip presets, the three new track
-effects (FILTR DUCK REPT), and lists the engines in Dungeon Tracker's order. Its Song panel arranges Dungeon Tracker's sections: a
+USB MIDI; add `?mock=1` to try it without hardware). It knows the eight engines (their presets; a kit track's
+KICK / SNARE / HAT / PERC / SHAPE / LANES pages, its steps as drum hits; an older firmware's FMKIT and FMTONE too), the
+three new track effects (FILTR DUCK REPT), and lists the engines in Dungeon Tracker's order. Its Song panel arranges Dungeon Tracker's sections: a
 pattern A–F or – (silent) per track, and the repeats. It groups every parameter by page on current firmware
 (Felucca's editor fell back to one long list there). The four master effects (FX held) are set on the device.
 
@@ -468,11 +738,16 @@ pattern A–F or – (silent) per track, and the repeats. It groups every parame
 
 * SEQ's STEP and DETAIL pages (piano roll, drum grid, per-step detail lanes) are replaced by the TRACKER; AUTOMATION
   stays, and VARY joins it. The TRACKER's commands are step records on ids past the parameters (`CMD_*`, core.h). Felucca's own UI tests that drive the grid or the roll no longer apply.
-* Engines 14 and 15 added; SLICE (13) is no longer offered in the engine lists (so all engines still fit the EDIT
-  layer's 16 white keys) but still plays in projects and user presets that use it.
-* Presets of the CYC engines cannot be starred as favourites (Felucca's settings keep rows 14 and 15 of the
+* Engines 14 (GEN KIT), 16 (WAVES), 17 (SID), 18 (GENESIS), 19 (MOD KIT), 20 (WAVE 32) and 21 (MOD) added; ANALOG
+  kept, Felucca's others retired (their numbers kept, never offered; a sound of one loads as its substitute's, *Changes*
+  1.1 and 1.5). The EDIT layer's white keys hold the eight engines, INIT and CLEAN.
+* The four tracks' voices and sound lists come from their classes (*The party*); PRESETS' LIST starts at CLASS
+  (Felucca's starts at ALL, and ALL is one step right).
+* Presets of Dungeon Tracker's engines (14 on) cannot be starred as favourites (Felucca's settings keep rows 14 and 15 of the
   favourites for MIDI LEARN and other settings).
-* HOME shows the dungeon corridor instead of the scope (MENU > DISPLAY > HOME: DUNGEON, TRACKS, LEVELS).
+* HOME shows the dungeon corridor instead of the scope (MENU > DISPLAY > HOME: DUNGEON, TRACKS, LEVELS). With MENU >
+  LARGE ON the dungeon takes the whole screen under the header; turning a knob brings LARGE's tall cards back,
+  and the dungeon returns 2 s after the last turn.
 * A sixth MENU tab, GAME, holds DUNGEON OFF / ON: the dungeon's game, where a fallen adventurer cuts its track. Off at
   power-on, not saved. (Felucca's tests that count five tabs fail in a Dungeon Tracker build; they pass with `RONDO_LAYOUT=0`.)
 * INSERT gains FILTR, DUCK and REPT; INSERT 2 is A B C MIX. ARP held is a layer (the track's effect to ride); a
@@ -483,7 +758,8 @@ pattern A–F or – (silent) per track, and the repeats. It groups every parame
   pool and the layer are left out and those tests pass.
 * SONG plays the PATTERN BANK A–F instead of the four project slots A–D (a section's byte keeps 0–3 for A–D and 4
   for "-", and takes 5 and 6 for E and F), with SONG's keys on F3..D4. ENV held is the bank's layer. User sample slot 3
-  keeps 32 KiB; its top 48 KiB are the bank's. Felucca's tests of songs from project slots, of the header's slot
+  keeps 32 KiB; its top 48 KiB are the bank's. SAVE > PROJECT has eleven slots, A–K, each a whole song with the bank's
+  patterns (song_store.c, in user sample slots 2 and 3's flash and the four project objects' sectors). Felucca's tests of songs from project slots, of the header's slot
   letter and of slot 5 being refused fail in a Dungeon Tracker build. On SONG, REC records the arrangement (Felucca: "[SEQ] TO
   RECORD"). A Program Change on channel 16 picks a pattern; on the track channels it loads nothing (as before in Dungeon Tracker).
 * EDIT > MORPH and the MORPH command; a project keeps the morph in 8 of FUN10's spare bytes (`PROJ_MORPH_OFF`) and the
@@ -512,22 +788,22 @@ Exactly as Felucca (see `BUILDING.md`): Linux x86-64 natively, or macOS with Doc
 tools/get_toolchain.sh                                  # JieLi pi32v2 toolchain
 git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
 git submodule update --init                             # firmware/engines (Felucca-Engines)
-./build.sh --release 1.0                                # build/dungeon-tracker-1.0.fwsc
+./build.sh --release 1.5                                # build/dungeon-tracker-1.5.fwsc
 ```
 
 ### Tests
 
 ```sh
-sh tests/run_rondo.sh          # Dungeon Tracker's checks (engines, tracker, commands, vary, dice, dungeon, live effects,
-                               # the pattern bank and its flash, the arrangement, MIDI
-                               # program changes, sound morph, NEW), demo WAVs
+sh tests/run_rondo.sh          # Dungeon Tracker's checks (engines: GEN KIT and MOD KIT, GENESIS, WAVES, WAVE 32, MOD, SID;
+                               # tracker, commands, vary, dice, dungeon, live effects, the pattern bank and its flash,
+                               # the arrangement, MIDI program changes, sound morph, NEW), demo WAVs
 ```
 
 `tests/run_tests.sh` is Felucca's full suite; build it with `CC="cc -DRONDO_LAYOUT=0"` to check Felucca's behaviour
 is unchanged outside the new engines. Felucca's `tests/ui_test.c` runs to the end in both layouts (and clean under
 AddressSanitizer); its failures are Felucca behaviour Dungeon Tracker changes on purpose (TRACKER in place of STEP / DETAIL and
-the DRUM grid, the two new engines in the lists, the header's pattern letter, step entry adding drums on T1's kit): 56 with `RONDO_LAYOUT=0`, 192 in the
-Dungeon Tracker layout. A change should leave those lists exactly as they are.
+the DRUM grid, the new engines in the lists and the retired ones out of them, the header's pattern letter, step entry
+adding drums on T1's kit): 56 with `RONDO_LAYOUT=0`, 223 in the Dungeon Tracker layout (1.5). A change should leave those lists exactly as they are.
 
 ## Flashing (at your own risk)
 
@@ -536,9 +812,41 @@ Dungeon Tracker layout. A change should leave those lists exactly as they are.
    **OCT−** + **OCT+** held 5 s enters UPDATE MODE, and two failed boots in a row enter it by themselves (Felucca's
    boot guard). If a build cannot reach either, recovery needs
    [FM-1 Transporter](https://github.com/kurogedelic/FM-1-transporter) (a Seeed XIAO RP2040).
-3. Install `dungeon-tracker-1.0.fwsc` with `python3 tools/fm1_install.py build/dungeon-tracker-1.0.fwsc` over USB, or a local copy of
+3. Install `dungeon-tracker-1.5.fwsc` with `python3 tools/fm1_install.py build/dungeon-tracker-1.5.fwsc` over USB, or a local copy of
    the web installer (`web/make_site.py`, see BUILDING.md).
 4. To go back: install M-VAVE's `FM-1.fwsc` the same way.
+
+## Changes
+
+* **1.5**: four engine families, two engines each: **FM** GENESIS and GEN KIT, **WAVE** WAVES and WAVE 32,
+  **AMIGA'D** MOD and MOD KIT, **SUB** ANALOG and SID, in that order in PRESETS and on the EDIT layer (whose ENG card names
+  the family). New: **GEN KIT** (FMKIT's interface and kits, its voices now YM2612-style FM with the SN76489 PSG's noise),
+  **WAVE 32** (morphing band-limited 16-bit tables, eight banks), **MOD** and **MOD KIT** (synthesized 8-bit samples
+  played the Amiga's way; the DUNGEON KIT and the LOFI KIT rebuilt in MOD KIT), **ANALOG** back with 13 more presets.
+  Retired: FMTONE (its sounds as GENESIS'), CHIP (WAVES'), SAMPLE (its kits MOD KIT's, its PIANO and FLUTE GENESIS'; its
+  106 KB of samples gone), GRAIN (WAVE 32's), PHYS (MOD's; its drums MOD KIT's). The parts power on as GEN KIT, GENESIS
+  WARM PAD, GEN BASS and HERO LEAD. DICE on the new engines (the kits' dice on MOD KIT; WAVE 32, MOD and ANALOG bred from
+  their presets); a held die set by hand (KNOB 3 VALUE, KNOB 4 PART); SOUND MORPH's target can be a saved sound (U01..) of the engine, so two of your own sounds blend. The BARD plays 4 voices (2 before: an arp of two notes ping-ponged). MENU > GAME picks all eight classes (1.1 to 1.4 could only reach ROGUE, CLERIC, FIGHTER and MAGE there: the new four folded onto them); a class change that needs a new sound takes its role's default. GLIDE shows its real time (OFF, 5 ms .. 4 s), and glides can be that slow and smooth (they topped out at ~140 ms an octave); a SLIDE with GLIDE OFF takes 60 ms; no VOICE page on the kits. Image 555 KB of 581.
+  The dungeon's bestiary: twelve monsters in four tiers of depth and five bosses (OGRE MINOTAUR LICH DRAGON DEMON), new
+  16 × 16 sprites, each striking its own way; breathing, lunges, knockback, rising damage with CRIT / BLOCK / MISS,
+  a boss's rage, the slain crumbling; the cleric's mace, the paladin's warhammer, the druid's staff (the rules and the
+  balance unchanged: `tests/dungeon_test.c` 17).
+* **1.1**: DICE on every engine, the engines' own EDIT pages gone (WAVES SID SAMPLE PHYS GRAIN bred from their presets).
+  Eight engines kept (FMKIT FMTONE WAVES SID CHIP SAMPLE PHYS GRAIN): DRUM, FM6, ANALOG, PHASE, VOICE, TRIO, WHEEL and
+  NOISE retired for ~46 KB of flash; a song, user preset, favourite or library file of one loads as its substitute's
+  sound of the same category (DRUM FMKIT; FM6, WHEEL FMTONE; ANALOG, PHASE, VOICE WAVES; TRIO SID; NOISE GRAIN), the
+  rest of the track kept. On the EDIT layer INIT and CLEAN follow the eight engines' keys. Four more classes, the same
+  12 points: BARD, PALADIN, DRUID, MONK (balanced on rolled songs against the first four: `tests/dungeon_test.c` 16).
+
+* **1.0**: first release. Over Felucca 1.6.1: the FMKIT, FMTONE, WAVES (Ambika's oscillators) and SID engines, the
+  LOFI KIT, CHIP's presets and the dungeon set; DICE sound design; the TRACKER with its commands and VARY; THE PARTY
+  (a class per track: its voices and its sounds, 12 points; PRESETS LIST CLASS, with ALL); the dungeon on HOME, its
+  game (the party from L1, a boss every floor after ten slain, a level each boss), monster pairs and FLOOR FX, MENU > LARGE; the PATTERN BANK and SONG over it; eleven whole-song slots A–K with
+  power-safe saves, and the QUICK slot; the autosave 3 s after STOP with the header's unsaved mark; SOUND MORPH; four
+  track effects and the master FX pool; the web editor and its backup brought up to all of it. SLICE, the SAX
+  samples and user sample slots USR2 and USR3 are retired for the room. The DUNGEON KIT (SAMPLE SET 1) and 96 more
+  presets across FMKIT, FMTONE, WAVES and SID. The pitch wheel records as automation (BEND). A power-on fanfare.
+  MENU > GAME > RANDOM SONG (a party, its sounds and a 16-step loop); a new FM-1 starts on the default song.
 
 ## Licence
 

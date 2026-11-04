@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Dungeon Tracker (RONDO) contributors
 """Dungeon Tracker combat study: today's per-beat combat (ui_dungeon.c dg_fight) against the proposed turn system.
 Turn system: a round is 5 sixteenth steps, M R C F W (monster first); a hero acts on its step only if its track does:
   new note -> attack / heal / bolt, shaped by the note (accent, velocity, chord, ratchet, slide, chance, nudge, lanes)
@@ -10,7 +12,8 @@ from collections import defaultdict
 RGE, CLR, FTR, MAG = range(4)
 NAMES = ["RGE", "CLR", "FTR", "MAG"]
 ST_NOTE, ST_TIE, ST_REST = 0, 1, 2
-FLOOR_LEN, WIPE, RAISE = 24, 4, 5
+WIPE, RAISE = 4, 5
+BOSS_AT, STAIRS, LVMAX, EDGE = 10, 2, 9, 10                # ui_dungeon.c: a floor's boss after ten slain; the party's level
 LANE_W = [1.5, 1.2, 1.2, 0.6, 0.8, 1.2, 0.8, 0.8]          # KICK SNARE CLAP HATCL HATOP TOM RIM BELL
 
 # step: [time, n, accent, slide, ratchet, vel, lanes, lane_acc, nudge, prob, note]
@@ -73,12 +76,13 @@ class Player:
 class World:
     def __init__(self, song, rng, cfg):
         self.song, self.rng, self.cfg = song, rng, cfg
-        self.lv = [t["level"] for t in song["tracks"]]
+        self.lv = [1] * 4                                     # the party starts at L1 (a level each boss slain)
         self.inn = [any((s[0] == ST_NOTE and (s[1] or s[6])) for s in t["steps"]) for t in song["tracks"]]
         self.hpmax = [6 + 4 * self.lv[k] + (4 if k == FTR else 0) for k in range(4)]
         self.hp = self.hpmax[:]
         self.dead = [False] * 4
         self.floor, self.best, self.walked = 1, 1, 0
+        self.fkills, self.boss_up, self.stairs = 0, 0, 0
         self.mon = None
         self.mdist = 0
         self.wipe = 0
@@ -103,11 +107,11 @@ class World:
         return a / max(n, 1)
     def avg10(self):
         n = sum(self.inn)
-        return sum(self.lv[k] for k in range(4) if self.inn[k]) * 10 // max(n, 1)
+        return sum(self.lv[k] for k in range(4) if self.inn[k]) * 10 // max(n, 1) + EDGE
     def up(self): return [k for k in range(4) if self.inn[k] and not self.dead[k]]
 
     def spawn(self):
-        boss = self.floor % 5 == 0 and self.walked == FLOOR_LEN // 2
+        boss = self.boss_up == 1
         kind = "OGRE" if boss else self.rng.choice(["GOBLIN", "SKELETON", "SLIME"])
         hp = (4 + 3 * self.floor + 16 * self.avg10() // 10) * (3 if boss else 1) + (-2 if kind == "SLIME" else 0)
         if self.cfg.get("party_scale"):                       # fewer heroes, a smaller monster
@@ -127,15 +131,22 @@ class World:
         if any(self.dead) and self.inn[CLR] and not self.dead[CLR] and self.roll(100 // RAISE):
             k = self.dead.index(True)
             self.dead[k], self.hp[k] = False, self.hpmax[k] // 2
-        if self.walked >= FLOOR_LEN:
-            self.walked = 0
+        if self.stairs:
+            self.stairs -= 1
+        if self.boss_up == 2 and not self.stairs:
+            self.walked, self.fkills, self.boss_up = 0, 0, 0
             for k in range(4):
                 if self.dead[k]:
                     self.dead[k], self.hp[k] = False, self.hpmax[k] // 2
             self.floor += 1
             self.best = max(self.best, self.floor)
             return
-        if self.roll(12 + self.floor) or (self.floor % 5 == 0 and self.walked == FLOOR_LEN // 2):
+        if self.boss_up == 2:
+            return
+        if self.fkills >= BOSS_AT and not self.boss_up:
+            self.boss_up = 1
+            self.spawn()
+        elif not self.boss_up and self.roll(12 + self.floor):
             self.spawn()
 
     def hurt(self, k, d, beat):
@@ -154,12 +165,21 @@ class World:
         self.fb = 0
         if won:
             self.st["kills"] += 1
+            self.fkills += 1
+            if self.mon and self.mon["kind"] == "OGRE" and self.boss_up == 1:
+                self.boss_up, self.stairs = 2, STAIRS
+                if self.lv[0] < LVMAX:                        # everyone up a level, its four health at once
+                    self.lv = [l + 1 for l in self.lv]
+                    for k in range(4):
+                        self.hpmax[k] += 4
+                        if not self.dead[k]:
+                            self.hp[k] += 4
         self.mon = None
         self.mdist = 0
 
     def retreat(self):
         self.floor = max(1, self.floor - 1)
-        self.walked = 0
+        self.walked, self.fkills, self.boss_up, self.stairs = 0, 0, 0, 0
         self.dead = [False] * 4
         self.hp = self.hpmax[:]
 

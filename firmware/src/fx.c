@@ -1024,8 +1024,16 @@ static const uint16_t ENG_VCOST[NENGINES] = {163, FELUCCA_FM4 ? 181 : 0, 162, 67
                                              181,
 #if FELUCCA_SLICE
                                              129,
+#elif RONDO_LAYOUT
+                                             0,                     /* (13: SLICE retired, reserved: never plays) */
 #endif
-                                             170, 150               /* RONDO: FMKIT, FMTONE (FM6 x their host cost: rondo_test.c) */
+                                             170, 150,              /* RONDO: FMKIT, FMTONE (FM6 x their host cost: rondo_test.c) */
+                                             235,                   /* 1.1: WAVES (host: ~1.4 x ANALOG, two waves a sample) */
+                                             190,                   /* 1.3: SID (two oscillators at twice the rate, the filter) */
+                                             245,                   /* 1.2: GENESIS (four operators a sample: ~1.6 x FMTONE, host) */
+                                             160,                   /* 1.5: MOD KIT (a sample, the filter) */
+                                             260,                   /* 1.5: WAVE 32 (two frames, two oscillators, the filter) */
+                                             150                    /* 1.5: MOD (one or two samples, the filter) */
 };
 #endif
 
@@ -1185,6 +1193,9 @@ static uint32_t mix_split(void)
 }
 #endif
 
+#if RONDO_LAYOUT
+#include "jingle.c"                                 /* Dungeon Tracker 1.0: the power-on fanfare */
+#endif
 static void mix_block(int32_t *out, uint32_t n)
 {
     uint32_t i;
@@ -1225,6 +1236,9 @@ static void mix_block(int32_t *out, uint32_t n)
 #endif
     if (perf)
         perf_pre(mix_l, mix_r, send_d, send_r, n);
+#if RONDO_LAYOUT
+    jingle_render(mix_l, mix_r, send_r, n);             /* (Dungeon Tracker 1.0: the power-on fanfare, jingle.c) */
+#endif
     fx_buses(send_c, send_d, send_r, wet, n);
     if (hl.side)
         rev_side_mix(mix_l, mix_r, n);                  /* HALL: stereo */

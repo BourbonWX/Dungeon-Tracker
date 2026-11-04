@@ -93,7 +93,7 @@ static const page_t *ly_page(uint32_t l) { return l == LAYER_SCL ? &LY_SCL : l =
 #define LY_OPEN 2u                     /* ui.ly_t0: the map opened (no tap any more) */
 #define LY_COMBO 4u                    /* .. by a combo */
 #define LY_DEAD 8u                     /* .. pressed where there is no layer: does nothing */
-#define LY_INIT ((uint32_t)NENG_SHOWN) /* EDIT: the white key of INIT, the one after the engines (13: E5), its map cell */
+#define LY_INIT ((uint32_t)NENG_KEYS)  /* EDIT: the white key of INIT, the one after the engines (13: E5), its map cell */
 #define LY_CLEAN (LY_INIT + 1u)         /* .. and CLEAN INIT's, the next (1.5.5, #190: F5) */
 typedef char ly_init_fits[LY_CLEAN < 16u ? 1 : -1];   /* (a white key: F3 .. G5) */
 #define layer_seen (favorites.factory[15][31])   /* bit l: layer l opened once (a byte no engine uses) */
@@ -626,6 +626,7 @@ static const eqa_t EQA_CKIT[CK_N] = {EQA_CK(0), EQA_CK(1), EQA_CK(2), EQA_CK(3)}
 static const eqa_set_t EQA[] = {
     {ENGI_DRUM, NLANE, EQA_DRUM},
     {ENGI_CKIT, CK_N, EQA_CKIT},
+    {ENGI_MKIT, CK_N, EQA_CKIT},
 };
 typedef char eqa_fits[NLANE <= 11 ? 1 : -1];       /* (11 black keys) */
 
@@ -712,7 +713,7 @@ static void layer_key(uint32_t l, uint32_t k)
     } else if (l == LAYER_SCL) {
         TSEL->p[P_ROOT] = (int16_t)((k + 5u) % 12u);    /* the key's note name (F3 = F) */
     } else if (l == LAYER_EDIT && !key_black(k)) {
-        if (p < NENG_SHOWN && p < LY_INIT)
+        if (p < NENG_KEYS && p < LY_INIT)
             edit_load(eng_vis(p), 0);
         else if (p == LY_INIT && chain_busy())
             ui_message("STOP TO EDIT");
@@ -949,8 +950,8 @@ static uint32_t layer_leds(uint32_t *br)
             on = e == 0u;
             can = (mask >> e) & 1u;
         } else if (l == LAYER_EDIT && !b) {             /* the engine lit, the others and INIT breathe */
-            on = p < NENG_SHOWN && p < LY_INIT && eng_vis(p) == TSEL->eng_req % NENGINES;
-            can = p < NENG_SHOWN && p < LY_INIT ? 1u : (p == LY_INIT || p == LY_CLEAN) && !chain_busy();
+            on = p < NENG_KEYS && p < LY_INIT && eng_vis(p) == TSEL->eng_req % NENGINES;
+            can = p < NENG_KEYS && p < LY_INIT ? 1u : (p == LY_INIT || p == LY_CLEAN) && !chain_busy();
         } else if (l == LAYER_EDIT && (a = eqa_of(TSEL, p)) != 0) {   /* the quick actions: on lit (DRUM: sounding), */
             on = a->on(TSEL, a->arg) != 0u;             /* a HOLD one off breathes, none dark */
             can = a->kind == LK_HOLD;
@@ -1150,7 +1151,7 @@ static void eqa_row(uint32_t n)
 static void layer_edit(void)                            /* the engines from F3, INIT next (LY_INIT), CLEAN INIT after */
 {                                                        /* it (1.5.5), the sound under them (cells show the engine's
                                                          * icon, not the key's note) */
-    uint32_t n = NENG_SHOWN < LY_INIT ? NENG_SHOWN : LY_INIT, cells = n + 2u, i, h = cells > 12u ? 20u : 28u;   /* 4 rows of 20: 8 px clear above the sound row */
+    uint32_t n = NENG_KEYS < LY_INIT ? NENG_KEYS : LY_INIT, cells = n + 2u, i, h = cells > 12u ? 20u : 28u;   /* 4 rows of 20: 8 px clear above the sound row */
     uint32_t na = eqa_count(TSEL);
     for (i = 0; i < cells; i++) {
         int32_t x = LC_X(i % 4u), y = 4 + (int32_t)(h + 4u) * (int32_t)(i / 4u);

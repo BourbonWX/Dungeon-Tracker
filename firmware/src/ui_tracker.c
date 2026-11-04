@@ -57,7 +57,7 @@ static uint32_t tk_fx_list(const track_t *t, uint8_t *ids)
     for (i = 0; i < 8u; i++)
         if (ev_id_ok(t, P_E0 + i))
             ids[n++] = (uint8_t)(P_E0 + i);
-    if (t->eng_req % NENGINES == ENGI_CKIT) {
+    if (ENG_KIT(t->eng_req % NENGINES)) {
         for (i = P_FM1_ATK; i <= P_FM4_LEVEL; i++)
             ids[n++] = (uint8_t)i;
         for (i = 0; i < CK_N; i++)
@@ -81,14 +81,14 @@ static void tk_fx_name(const track_t *t, uint32_t id, char *b)
     b[0] = 0;
     if (id == 0xFFu)
         return;
-    if (t->eng_req % NENGINES == ENGI_CKIT && id >= P_FM1_ATK && id <= P_FM4_LEVEL) {
+    if (ENG_KIT(t->eng_req % NENGINES) && id >= P_FM1_ATK && id <= P_FM4_LEVEL) {
         static const char *const V[5] = {"PIT", "DEC", "COL", "SWP", "SHP"};
         str_cpy(b, N_CK_ABBR[(id - P_FM1_ATK) / 5u], 8);
         str_cpy(b + 2, " ", 6);
         str_cpy(b + 3, V[(id - P_FM1_ATK) % 5u], 4);
         return;
     }
-    if (t->eng_req % NENGINES == ENGI_CKIT && id >= P_LN0 && id < P_LN0 + CK_N) {
+    if (ENG_KIT(t->eng_req % NENGINES) && id >= P_LN0 && id < P_LN0 + CK_N) {
         str_cpy(b, N_CK_ABBR[id - P_LN0], 8);
         str_cpy(b + 2, " LVL", 6);
         return;

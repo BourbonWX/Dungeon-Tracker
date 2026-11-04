@@ -1,20 +1,20 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * RONDO: HOME's dungeon crawl (src/ui_dungeon.c) through ui_test.c's harness.
  *   build/host/dungeon_test             (tests/run_rondo.sh)
- * 1. the party: a track with steps and not muted is an adventurer; muted or empty, none; levels 1..9 grow with what the
- *    track does (a 4-on-the-floor kick against a busy kit with locks, chances and ratchets).
+ * 1. the party: a track with steps and not muted is an adventurer; muted or empty, none; everyone starts at L1, a
+ *    simple loop or a busy song alike.
  * 2. stopped: the party camps (no walking); playing: a beat a square, at the tempo (120 BPM: 2 squares a second).
- * 3. ten minutes at 120 BPM, 20 seeds: a busy four-track song reaches deeper floors than one simple track, on average,
- *    and both go below B1; nothing hangs, the floors stay 1..99.
+ * 3. ten minutes at 120 BPM, 20 seeds: a busy four-track song reaches deeper floors than one simple track, on average
+ *    (a lone kick has the floor's ten and its boss to beat alone: it often stays on B1); nothing hangs, floors 1..99.
  * 4. the drawing: HOME drawn over a minute of play in every palette without a fault (the stub display).
- * 5. health and falls: the most health grows with the track's level, and a track made busier gains it at once; an
+ * 5. health and falls: the most health grows with the party's level, a level up gives it at once; an
  *    adventurer at 0 falls and its track is cut (dg_cut) while DUNGEON plays, not in PEACEFUL nor stopped; muting and
  *    unmuting does not raise it; the cleric raises, the stairs raise; the whole party fallen: a bar (DG_WIPE beats) of
  *    silence, then the retreat a floor up, healed; stopping raises everyone.
  * 6. the sound: a cut track's audio ramps to silence and comes back when raised (perform.c's black-key mute).
  * 7. ten minutes x 20 seeds: the simple loop is cut the most, the busy song now and then (Dungeon Tracker's moderate
  *    DIFFICULTY: the monsters match the party; 1.0: a lone kick on the beats dodges three monster turns in four).
- * 7b. twenty power-on songs (boot_song.c), ten minutes each at 120 BPM: push and pull, a few falls and a whole-party
+ * 7b. twenty rolled songs (boot_song.c, RANDOM SONG: short and sparse on purpose, a hard time against a busy song), ten minutes each at 120 BPM: push and pull, a few falls and a whole-party
  *    fall now and then, the first fall a few minutes in, kills all along.
  * 8. the game off (power-on): the corridor walks a square a beat, the party and levels shown, but no monster in ten
  *    minutes, no floor, nothing cut; MENU > GAME > DUNGEON (a tab of its own, OFF at power-on) switches it: ON a run
@@ -27,10 +27,21 @@
  *    next blow is stronger; a REST guards; a drumless sixteenth, the rogue dodges; a tie: the weapons follow through
  *    weaker, the cleric heals while held (more each turn), the mage stores power and bolts harder; a step that does not
  *    play (chance 0) is nothing to its hero; a party of two still takes five sixteenths a round; a smaller party, a
- *    smaller monster. */
+ *    smaller monster.
+ * 11. 1.1, FLOOR FX: every floor down one track gets one effect (only that track's values change; HOME says which), the
+ *    next floor lifts it and puts another; never the same track and effect twice running; stopped (the camp), a
+ *    retreat or the game off lifts it and every value is back (the autosave's signature as before the run); a value
+ *    turned meanwhile keeps the turn; an INSERT or SLICER in use is never taken, nor a value automation moves; over
+ *    300 floors every effect comes and every adventurer gets some.
+ * 15. the floor's boss: DG_BOSS_AT monsters slain on a floor (a pair counts two) and the ogre comes, nothing else;
+ *    slain, everyone levels up (LEVEL UP: Ln, the health at once), the stairs DG_STAIRS squares on, the count from 0;
+ *    at L9 no higher; a retreat keeps the level and counts the floor again.
+ * 12. 1.1, MENU > LARGE: HOME's dungeon takes the whole screen (no cards); a knob turned brings the tall cards back,
+ *    the dungeon again 2 s after the last turn; HOME > TRACKS, a layer and the other pages keep LARGE's cards. */
+#define RS_PIN_PARTY 1                               /* (16: the balance, a party given; before boot_song.c) */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
-#include "../firmware/src/boot_song.c"           /* (7b: the power-on songs) */
+#include "../firmware/src/boot_song.c"           /* (7b: rolled songs) */
 
 static int fails4;
 static void ok4(const char *what, int ok) { fails4 += check(what, ok); }
@@ -122,7 +133,8 @@ static uint32_t play(uint32_t seconds)               /* the deepest floor reache
 static void fell(uint32_t k)                          /* a fight until adventurer k falls (the others kept at full) */
 {
     uint32_t i, j, f = dg.floor;
-    dg.floor = 60;                                       /* (blows the cleric's healing cannot keep up with) */
+    dg.floor = 20;                                       /* (blows the cleric's healing cannot keep up with, one
+                                                          * short of an L1 hero's full health) */
     for (i = 0; i < 400u && !dg_fallen(k); i++) {
         for (j = 0; j < 4u; j++)
             if (j != k && dg.in[j] && !dg_fallen(j))
@@ -174,6 +186,7 @@ int main(void)
     ok4("the party: T1 with steps is the ROGUE, the empty tracks nobody", dg.in[0] && !dg.in[1] && !dg.in[2] && !dg.in[3]);
     {
         uint32_t lo = dg.lvl[0], hi;
+        ok4("  the rogue starts at L1", lo == 1u);
         trk[0].p[P_MUTE] = 1;
         fm1_ms += 2000u;
         dg_party();
@@ -183,8 +196,8 @@ int main(void)
         fm1_ms += 2000u;
         dg_party();
         hi = dg.lvl[0];
-        snprintf(what, sizeof what, "a busy song: all four in the party; a busier kit, a higher level (%u -> %u)", lo, hi);
-        ok4(what, dg.in[0] && dg.in[1] && dg.in[2] && dg.in[3] && hi > lo && dg.lvl[1] >= 3u);
+        snprintf(what, sizeof what, "a busy song: all four in the party, all at L1 too (%u -> %u)", lo, hi);
+        ok4(what, dg.in[0] && dg.in[1] && dg.in[2] && dg.in[3] && hi == 1u && dg.lvl[1] == 1u && dg.lvl[3] == 1u);
     }
 
     /* 2. */
@@ -222,7 +235,7 @@ int main(void)
     }
     snprintf(what, sizeof what, "10 minutes x 20 seeds: one simple track reaches B%.1f on average (least B%u), a busy song B%.1f (least B%u)",
              deep_simple / 20.0, lo_simple, deep_busy / 20.0, lo_busy);
-    ok4(what, deep_busy > deep_simple + 20u && lo_simple > 1u && lo_simple && lo_busy);
+    ok4(what, deep_busy > deep_simple + 60u && deep_simple > 20u && lo_simple && lo_busy > 2u);
     {   /* 7. (the simple and the busy runs alternate: measured again apart) */
         double simple_cut, busy_cut = 0;
         memset(cut_ms, 0, sizeof cut_ms);
@@ -237,13 +250,31 @@ int main(void)
         snprintf(what, sizeof what, "falls cut the simple loop %.1f %% of the time, a busy song's tracks %.2f %%", simple_cut, busy_cut);
         ok4(what, simple_cut > 0.3 && simple_cut < 25.0 && busy_cut > 0.05 && busy_cut < 8.0 && busy_cut < simple_cut);
     }
-    {   /* 7b. the power-on songs: the push and pull */
-        uint32_t falls = 0, wipes = 0, kills = 0, firsts[20], nf = 0, ms, k;
+    {   /* 7b. rolled songs: short and sparse on purpose, a hard time (a nudge to write fuller songs); a busy song alongside */
+        uint32_t falls = 0, wipes = 0, kills = 0, firsts[20], nf = 0, ms, k, bfalls = 0, bwipes = 0, pass;
+        for (pass = 0; pass < 2u; pass++)
         for (s = 0; s < 20u; s++) {
             uint8_t dead0 = 0, wipe0 = 0;
             uint32_t first = 0;
+            if (pass) {                                  /* (the busy song, the same seeds) */
+                busy_song();
+                reset_game(500 + s);
+                ui_home_view = HV_SCOPE;
+                fm1_ms += 2000u;
+                go();
+                for (ms = 0; ms < 600000u; ms += 33u) {
+                    tick33();
+                    for (k = 0; k < 4u; k++)
+                        bfalls += ((dg.dead >> k) & 1u) && !((dead0 >> k) & 1u);
+                    bwipes += dg.wipe && !wipe0;
+                    dead0 = dg.dead;
+                    wipe0 = dg.wipe;
+                }
+                halt();
+                continue;
+            }
             ui_power_on();
-            boot_song(0xB007u + s * 7919u);
+            random_song_make(0xB007u + s * 7919u);
             boot_song_settle();
             reset_game(500 + s);
             ui_home_view = HV_SCOPE;
@@ -270,29 +301,31 @@ int main(void)
                 for (j = i + 1u; j < nf; j++)
                     if (firsts[j] < firsts[i]) { uint32_t t = firsts[i]; firsts[i] = firsts[j]; firsts[j] = t; }
             med = nf ? firsts[nf / 2u] : 0u;
-            snprintf(what, sizeof what, "20 power-on songs x 10 min: %.1f kills, %.1f falls, %.2f whole-party falls a run; "
-                     "the first fall at %.1f min (median, %u of 20 fell)", kills / 20.0, falls / 20.0, wipes / 20.0,
-                     med / 60000.0, nf);
-            ok4(what, kills >= 40u * 20u && falls >= 3u * 20u && falls <= 15u * 20u && wipes <= 3u * 20u && nf >= 15u &&
-                med >= 90000u && med <= 480000u);
+            snprintf(what, sizeof what, "20 rolled songs x 10 min: %.1f kills, %.1f falls, %.2f whole-party falls a run, "
+                     "the first at %.1f min (median); a busy song %.1f falls, %.2f whole-party", kills / 20.0, falls / 20.0,
+                     wipes / 20.0, med / 60000.0, bfalls / 20.0, bwipes / 20.0);
+            ok4(what, kills >= 30u * 20u && falls >= 8u * 20u && falls <= 30u * 20u && wipes <= 6u * 20u && nf >= 15u &&
+                med >= 60000u && med <= 480000u && falls > bfalls * 2u);
+            ok4("  a rolled song has the harder time: more than twice the busy song's falls, and more whole-party falls",
+                falls > bfalls * 2u && wipes > bwipes);
         }
     }
 
     /* 5. health and falls */
     {
         int16_t lo, hi;
-        simple_song();
+        busy_song();
         reset_game(9);
         fm1_ms += 2000u;
         dg_party();
         lo = dg_hpmax(0);
-        busy_song();
-        fm1_ms += 2000u;
-        dg_party();
+        dg.hp[0] = (int16_t)(lo - 3);
+        dg.boss_up = 1;
+        dg_killed(DM_OGRE);                              /* (the floor's boss slain) */
         hi = dg_hpmax(0);
-        snprintf(what, sizeof what, "hidden health: the simple kick's most %d, the busy kit's %d; the busy kit gained it at once (%d)",
+        snprintf(what, sizeof what, "hidden health: the rogue's most %d at L1, %d at L2; the four gained at once (%d)",
                  lo, hi, dg.hp[0]);
-        ok4(what, hi > 2 * lo && dg.hp[0] == hi);
+        ok4(what, lo == 10 && hi == 14 && dg.hp[0] == lo + 1 && dg_hpmax(2) == 18);
     }
     busy_song();
     reset_game(10);
@@ -309,7 +342,9 @@ int main(void)
     ok4("  HOME showing TRACKS: still cut (the game runs whatever is shown)", dg_cut == 4u);
     ui_home_view = HV_SCOPE;
     trk[2].p[P_MUTE] = 1;
-    ticks(1100);
+    fm1_ms += 1100u;                                     /* (the party counted with T3 muted; no beat walked, so no
+                                                          * cleric's raise in between) */
+    dg_party();
     trk[2].p[P_MUTE] = 0;
     fm1_ms += 1100u;
     dg_party();
@@ -318,10 +353,10 @@ int main(void)
     {
         uint32_t i;
         dg.walked = 0;
-        for (i = 0; i < DG_FLOOR - 1u && dg_fallen(2); i++)
+        for (i = 0; i < 23u && dg_fallen(2); i++)
             dg_walk();
         snprintf(what, sizeof what, "the cleric raises the fighter (%u beats walked), at half health; T3 back", i);
-        ok4(what, !dg_fallen(2) && dg.hp[2] == dg_hpmax(2) / 2 && dg.walked < DG_FLOOR);
+        ok4(what, !dg_fallen(2) && dg.hp[2] == dg_hpmax(2) / 2 && i < 23u);
         ticks(66);
         ok4("  its cut lifted", dg_cut == 0u);
     }
@@ -332,9 +367,10 @@ int main(void)
     {
         uint32_t i, f = dg.floor;
         dg.walked = 0;
-        for (i = 0; i < DG_FLOOR - 1u; i++)
+        for (i = 0; i < 23u; i++)
             dg_walk();
         ok4("no cleric: the rogue stays down the whole floor", dg_fallen(0));
+        dg.stairs = 1;                                   /* (the floor's boss slain: the stairs) */
         dg_walk();
         ok4("  the stairs: up again on the next floor", !dg_fallen(0) && dg.floor == f + 1u);
     }
@@ -405,11 +441,11 @@ int main(void)
         }
         snprintf(what, sizeof what, "off, ten minutes playing: %u squares walked, the party in (levels %u %u %u %u), no monster, nothing cut",
                  dg.cell - c0, dg.lvl[0], dg.lvl[1], dg.lvl[2], dg.lvl[3]);
-        ok4(what, ok && dg.cell - c0 >= 1150u && dg.cell - c0 <= 1250u && dg.in[0] && dg.in[3] && dg.lvl[1] >= 3u);
+        ok4(what, ok && dg.cell - c0 >= 1150u && dg.cell - c0 <= 1250u && dg.in[0] && dg.in[3] && dg.lvl[1] == 1u);
     }
-    ok4("MENU: GAME, a tab of its own after SYSTEM, its one row DUNGEON (OFF / ON, a value)",
+    ok4("MENU: GAME, a tab of its own after SYSTEM, its first row DUNGEON (OFF / ON, a value; 1.0: then THE PARTY's five)",
         MI_TAB[MI_GAME] == MTAB_GAME && MTAB_GAME == MTAB_COUNT - 1u && str_eq(MTAB_NAME[MTAB_GAME], "GAME") &&
-        mtab_rows(MTAB_GAME) == 1u && str_eq(MI_NAME[MI_GAME], "DUNGEON") && menu_valued(MI_GAME) &&
+        mtab_rows(MTAB_GAME) == 7u && str_eq(MI_NAME[MI_GAME], "DUNGEON") && menu_valued(MI_GAME) &&
         !MI_ACTION(MI_GAME) && menu_n(MI_GAME) == 2u && str_eq(menu_vname(MI_GAME, 0), "OFF") &&
         str_eq(menu_vname(MI_GAME, 1), "ON") && MI_ACTION(MI_ABOUT) && !menu_valued(MI_ABOUT));
     dg.floor = 9;
@@ -658,6 +694,34 @@ int main(void)
                      (uint32_t)dgq.b[0][1].on + dgq.b[1][1].on + dgq.b[2][1].on + dgq.b[3][1].on + dgq.b[4][1].on + dgq.b[5][1].on + dgq.b[6][1].on + dgq.b[7][1].on);
             ok4(what, acted == 0u);
         }
+        {   /* 1.0: any DIV: a note still sounding into a sixteenth is held there (T2's pad a whole bar a step, 1/1) */
+            uint32_t ms, held2 = 0, on2 = 0, held1 = 0, n0, st;
+            busy_song();
+            track_defaults_steps(&trk[1]);
+            trk[1].p[P_SDIV] = 7;                       /* (1/1: a step a bar) */
+            trk[1].p[P_SGATE] = 120;
+            trk[1].p[P_SLEN] = 1;
+            trk[1].step[0].time = ST_NOTE; trk[1].step[0].n = 3; trk[1].step[0].vel = 100;
+            trk[1].step[0].note[0] = 60; trk[1].step[0].note[1] = 64; trk[1].step[0].note[2] = 67;
+            reset_game(45);
+            fm1_ms += 2000u;
+            dg_party();
+            go();
+            for (ms = 0; ms < 4000u; ms += 33u) {
+                uint32_t a = dgq.step;
+                tick33();
+                for (n0 = a; n0 != dgq.step; n0++) {
+                    st = n0 % DGQ_N;
+                    held2 += dgq.b[st][1].tie != 0u && !dgq.b[st][1].on;
+                    on2 += dgq.b[st][1].on != 0u;
+                    held1 += dgq.b[st][0].tie != 0u;
+                }
+            }
+            halt();
+            snprintf(what, sizeof what, "any DIV: T2's pad at 1/1 starts %u times in 4 s and is held over %u more sixteenths; "
+                     "the kit on T1 never held (%u)", on2, held2, held1);
+            ok4(what, on2 >= 1u && on2 <= 3u && held2 >= 20u && !held1);
+        }
         {   /* a party of two: still five sixteenths a round; a smaller monster */
             uint32_t at[3], na = 0;
             int32_t big, small;
@@ -707,6 +771,617 @@ int main(void)
             for (k = 0; k < 120u; k++) { ui.force = 1; frame(); }
         }
         ok4("HOME drawn over a minute of play in every palette", 1);
+    }
+
+    /* 11. 1.1: FLOOR FX */
+    {
+        static int16_t snap[NTRK][P_COUNT];
+        uint32_t i, fl, same = 0, changed_ok = 1, msg_ok = 1, twice = 0, lift_ok = 1, seen_fx = 0, seen_trk = 0, pt = 0xFF, pf = 0xFF;
+        uint32_t sig0;
+        busy_song();
+        reset_game(7);
+        dgf.on = 0; dgf.last_trk = dgf.last_fx = 0xFF;
+        dg_party();
+        go();
+        memcpy(snap, trk, 0);                            /* (the values before the run) */
+        for (k = 0; k < NTRK; k++) memcpy(snap[k], trk[k].p, sizeof snap[k]);
+        sig0 = autosave_sig();
+        for (fl = 0; fl < 300u; fl++) {
+            uint32_t nchg = 0, kchg = 0xFF;
+            dg.stairs = 1;
+            dg.mon = DM_NONE;
+            dg_walk();
+            for (k = 0; k < NTRK; k++)
+                for (i = 0; i < P_COUNT; i++)
+                    if (trk[k].p[i] != snap[k][i]) { nchg += kchg != k; kchg = k; }
+            changed_ok &= dgf.on && nchg == 1u && kchg == dgf.trk;
+            msg_ok &= dg.msg == dgf.msg && dg.msg_f > 0 && (str_len(dgf.msg) > 9u);
+            twice += dgf.trk == pt && dgf.fx == pf;
+            pt = dgf.trk; pf = dgf.fx;
+            seen_fx |= 1u << dgf.fx;
+            seen_trk |= 1u << dgf.trk;
+        }
+        printf("dungeon:   (FLOOR FX over 300 floors: effects 0x%X of 0x3FF, tracks 0x%X; last \"%s\")\n", seen_fx, seen_trk, dgf.msg);
+        ok4("1.1 FLOOR FX: each floor down, one track's values change (one effect), HOME says which (STAIRS: Tn ..)",
+            changed_ok && msg_ok);
+        ok4("1.1 .. never the same track and effect twice running; over 300 floors all ten effects, all four adventurers",
+            !twice && seen_fx == 0x3FFu && seen_trk == 0xFu);
+        halt();
+        fm1_ms += 33u;
+        dg_tick();                                       /* stopped: the camp lifts it */
+        for (k = 0; k < NTRK; k++) lift_ok &= !memcmp(snap[k], trk[k].p, sizeof snap[k]);
+        ok4("1.1 .. stopped (the camp): lifted, every value as before the run (the autosave signature unchanged)",
+            lift_ok && !dgf.on && autosave_sig() == sig0);
+        /* a turn meanwhile stays; a retreat and the game off lift it */
+        go();
+        dg.stairs = 1; dg_walk();
+        {
+            uint32_t id = dgf.id[0], tk = dgf.trk;
+            int16_t v = (int16_t)(dgf.set[0] == TP[id].max ? dgf.set[0] - 1 : dgf.set[0] + 1);
+            trk[tk].p[id] = v;                            /* (the user turns it) */
+            dg_retreat();
+            ok4("1.1 .. a retreat lifts it; a value turned meanwhile keeps the turn", !dgf.on && trk[tk].p[id] == v);
+            trk[tk].p[id] = snap[tk][id];
+        }
+        dg.stairs = 1; dg_walk();
+        dg_game_set(0);
+        lift_ok = !dgf.on;
+        for (k = 0; k < NTRK; k++) lift_ok &= !memcmp(snap[k], trk[k].p, sizeof snap[k]);
+        ok4("1.1 .. MENU > GAME > DUNGEON OFF lifts it", lift_ok);
+        /* in use: an INSERT, a SLICER, automation on DLY: never taken */
+        reset_game(9);
+        dgf.last_trk = dgf.last_fx = 0xFF;
+        for (k = 0; k < NTRK; k++) {
+            trk[k].p[P_ITYPE] = 1;                       /* (SOFT) */
+            trk[k].p[P_SLCR] = SL_STUT;
+        }
+        motion_active[1][P_DLY / 32u] |= 1u << (P_DLY % 32u);
+        dg_party();
+        same = 1;
+        for (fl = 0; fl < 200u; fl++) {
+            dg.stairs = 1; dg.mon = DM_NONE; dg_walk();
+            same &= dgf.on && dgf.fx <= DGF_DRIVE && !(dgf.trk == 1u && dgf.fx == DGF_ECHO);
+            for (k = 0; k < NTRK; k++) same &= trk[k].p[P_ITYPE] == 1 && trk[k].p[P_SLCR] == SL_STUT;
+        }
+        motion_active[1][P_DLY / 32u] &= ~(1u << (P_DLY % 32u));
+        halt(); fm1_ms += 33u; dg_tick();
+        ok4("1.1 .. an INSERT or SLICER in use is never taken, nor a value automation moves (only the sends then)", same);
+        for (k = 0; k < NTRK; k++) { trk[k].p[P_ITYPE] = 0; trk[k].p[P_SLCR] = SL_OFF; }
+        dg_game_set(0);
+    }
+
+    if (getenv("DG_DEMO")) {   /* (not a test: DG_DEMO=dir build/host/dungeon_test: FLOOR FX heard, dir/floor_fx_demo.wav) */
+        char path[512];
+        FILE *w;
+        uint32_t n = 0, ms, blk = 0, nb, i;
+        int32_t o[2 * CTL];
+        snprintf(path, sizeof path, "%s/floor_fx_demo.wav", getenv("DG_DEMO"));
+        w = fopen(path, "wb");
+        if (w) {
+            static const uint8_t HDR[44] = {'R','I','F','F',0,0,0,0,'W','A','V','E','f','m','t',' ',16,0,0,0,1,0,2,0,
+                                            0x44,0xAC,0,0,0x10,0xB1,2,0,4,0,16,0,'d','a','t','a',0,0,0,0};
+            uint32_t sz;
+            fwrite(HDR, 1, 44, w);
+            busy_song();
+            set_engine_of(&trk[3], ENGI_WAVES); apply_preset_to(&trk[3], 12);   /* T4: WAVES BOSS FIGHT */
+            trk[3].engine = trk[3].eng_req;
+            reset_game(3);
+            dgf.on = 0; dgf.last_trk = dgf.last_fx = 0xFF;
+            song.master_q12 = 2900;                      /* (the MASTER knob most of the way up) */
+            dg_party();
+            go();
+            for (ms = 0; ms < 50000u; ms += 33u) {
+                if (ms % 8000u < 33u && ms > 1000u) {        /* a floor down every 4 bars (the demo) */
+                    dg.stairs = 1;
+                    dg.mon = DM_NONE; dg.mon_dist = 0;
+                }
+                for (k = 0; k < 4u; k++) if (dg.in[k]) dg.hp[k] = dg_hpmax(k);   /* (no falls: the effects heard) */
+                nb = (uint32_t)((uint64_t)(ms + 33u) * FS / 1000u / CTL) - blk;
+                for (i = 0; i < nb; i++, blk++) {
+                    mix_block(o, CTL);
+                    for (k = 0; k < CTL; k++) {
+                        int16_t v[2] = {(int16_t)clamp(o[2 * k], -32767, 32767), (int16_t)clamp(o[2 * k + 1], -32767, 32767)};
+                        fwrite(v, 2, 2, w);
+                        n++;
+                    }
+                }
+                fm1_ms += 33u;
+                {
+                    uint32_t f0 = dg.floor;
+                    dg_tick();
+                    if (dg.floor != f0) printf("dungeon demo: %.1f s B%u %s\n", ms / 1000.0, dg.floor, dg.msg ? dg.msg : "");
+                }
+            }
+            halt();
+            for (i = 0; i < 2u * FS / CTL; i++) {
+                fm1_ms += 1; dg_tick();
+                mix_block(o, CTL);
+                for (k = 0; k < CTL; k++) {
+                    int16_t v[2] = {(int16_t)clamp(o[2 * k], -32767, 32767), (int16_t)clamp(o[2 * k + 1], -32767, 32767)};
+                    fwrite(v, 2, 2, w);
+                    n++;
+                }
+            }
+            sz = n * 4u;
+            fseek(w, 40, SEEK_SET); fwrite(&sz, 4, 1, w);
+            sz += 36u; fseek(w, 4, SEEK_SET); fwrite(&sz, 4, 1, w);
+            fclose(w);
+        }
+    }
+
+    /* 12. 1.1: LARGE, the dungeon whole */
+    {
+        int ok = 1;
+        ui_power_on();
+        ui_prefs |= PREF_LARGE;
+        lg_peek = 0;
+        go_home(); ui_home_view = HV_SCOPE; frame();
+        ok &= dg_full_on();
+        turn(EN_K2, 1);                                  /* a knob: the cards back */
+        frame();
+        ok &= !dg_full_on();
+        frames(1500);
+        ok &= !dg_full_on();                             /* (still within 2 s) */
+        fm1_ms += 2100u; frame();
+        ok &= dg_full_on();
+        ok4("1.1 LARGE: HOME's dungeon whole; a knob turned shows the cards, the dungeon again 2 s after", ok);
+        ui_home_view = HV_TRACKS; frame();
+        ok = !dg_full_on();
+        ui_home_view = HV_SCOPE; ui.layer = LAYER_EDIT; ok &= !dg_full_on(); ui.layer = 0;
+        go_page(GR_ADSR); frame(); ok &= !dg_full_on();
+        ui_prefs &= (uint8_t)~PREF_LARGE; go_home(); frame(); ok &= !dg_full_on();
+        ok4("1.1 .. HOME > TRACKS, a layer, the other pages and LARGE off: as before", ok);
+    }
+    /* 13. 1.1: a monster on its way is never replaced (1.0 rolled a new one over it); now and then a pair */
+    {
+        uint32_t seed, i, kept = 1, enc = 0, pairs = 0, ogre_pair = 0, low_pair = 0, boss_ok = 1, msg_ok = 1;
+        for (seed = 1; seed <= 3000u; seed++) {          /* encounters as played: it spawns 4 away, 3 beats to meet */
+            uint32_t m0;
+            reset_game(seed);
+            dg_party();
+            dg.floor = (uint8_t)(1u + seed % 12u);
+            dg.walked = 3;
+            for (i = 0; i < 200u && !dg.mon; i++) dg_walk();
+            if (!dg.mon) continue;
+            m0 = dg.mon;
+            enc++;
+            while (dg.mon_dist > 1u) { dg.mon_dist--; dg_walk(); }
+            kept &= dg.mon == m0;
+            if (dg.mon2) {
+                pairs++;
+                low_pair |= dg.floor < 2u;
+                ogre_pair |= dg.mon == DM_OGRE;
+                msg_ok &= dg.msg == dg.pair_msg && strstr(dg.pair_msg, " AND ") != NULL &&
+                          dg.mon2_hp > 0 && dg.mon2_hp == dg.mon2_max && dg.mon_hp <= dg.mon_max;
+            }
+        }
+        printf("dungeon:   (pairs: %u of %u encounters, %.1f %%)\n", pairs, enc, 100.0 * pairs / (enc ? enc : 1));
+        ok4("1.1 a monster coming up the corridor stays the one that comes", kept && enc > 2500u);
+        ok4("1.1 .. now and then a second joins it: rare (about 1 in 12), never on floor 1, never beside the ogre",
+            pairs * 100u > enc * 4u && pairs * 100u < enc * 13u && !low_pair && !ogre_pair && msg_ok);
+        /* the boss: due (the floor's tenth slain) with a skeleton on its way: the skeleton stays, the ogre after it */
+        reset_game(7); dg_party();
+        dg.floor = 5; dg.fkills = DG_BOSS_AT;
+        dg.mon = DM_SKEL; dg.mon_dist = 3; dg.mon_max = dg.mon_hp = 9;
+        dg_walk();
+        boss_ok &= dg.mon == DM_SKEL && dg.boss_due && !dg.mon2;
+        for (i = 0; i < 5u; i++) { dg_walk(); boss_ok &= dg.mon == DM_SKEL && !dg.mon2; }
+        dg.mon = DM_NONE; dg.mon_dist = 0;                /* (slain) */
+        dg_walk();
+        boss_ok &= dg.mon == DM_OGRE && !dg.boss_due && dg.mon_dist == 4u;
+        ok4("1.1 .. the boss waits for the monster on its way, then comes (no second beside it)", boss_ok);
+        /* a pair fought: the cleave, the one slain, the other steps up; a wipe clears both */
+        {
+            int ok = 1;
+            reset_game(11); dg_party();
+            dg.floor = 4; dg.mon = DM_GOBLIN; dg.mon_dist = 1; dg.mon_max = dg.mon_hp = 10;
+            dg.mon2 = DM_SLIME; dg.mon2_max = dg.mon2_hp = 6;
+            dg_strike(DG_RGE, 4 << 8, 0);
+            ok &= dg.mon_hp == 6 && dg.mon2_hp == 6;      /* (a rogue's blow: the front one only) */
+            dg_strike(DG_FTR, 4 << 8, 0);
+            ok &= dg.mon_hp == 2 && dg.mon2_hp == 4 && dg.mon2_hit == 6;   /* (the axe: half to the other) */
+            dg_strike(DG_FTR, 8 << 8, 0);
+            ok &= dg.mon2 == DM_NONE && dg.kills == 1u && dg.mon == DM_GOBLIN;   /* CLEAVED */
+            ok4("1.1 .. the fighter's axe cleaves the one beside (half the blow); it can fall to it", ok);
+            dg.mon2 = DM_SKEL; dg.mon2_max = dg.mon2_hp = 5;
+            dg.mon_hp = 0; dg_slain();
+            ok = dg.mon == DM_SKEL && dg.mon_hp == 5 && dg.mon_max == 5 && dg.mon2 == DM_NONE && dg.mon_dist == 1u;
+            dg_slain();
+            ok &= dg.mon == DM_NONE && dg.mon_dist == 0u && dg.kills == 3u;
+            ok4("1.1 .. one slain, the other steps up and the fight goes on; both slain, the party walks on", ok);
+            ok = 1;
+            {
+                uint32_t hits1 = 0, hits2 = 0, t;
+                dgq_t b[4];
+                memset(b, 0, sizeof b);
+                for (t = 0; t < 4u; t++) b[t].on = 1;
+                for (k = 0; k < 4u; k++) dg.lvl[k] = 4;     /* (a party some bosses in: blows big enough to share) */
+                for (t = 0; t < 4000u; t++) {
+                    int32_t before = 0;
+                    for (k = 0; k < 4u; k++) { if (dg.in[k]) dg.hp[k] = 300; before += dg.in[k] ? 300 : 0; }
+                    dg.dead = 0; dg.guard = 0;
+                    dg.mon = DM_GOBLIN; dg.mon2 = (uint8_t)(t & 1u ? DM_SLIME : DM_NONE); dg.mon_dist = 1;
+                    dg_monster(b);
+                    for (k = 0; k < 4u; k++) if (dg.in[k]) before -= dg.hp[k];
+                    if (t & 1u) hits2 += (uint32_t)before; else hits1 += (uint32_t)before;
+                }
+                printf("dungeon:   (damage a turn: one monster %.2f, a pair %.2f)\n", hits1 / 2000.0, hits2 / 2000.0);
+                ok &= hits2 > hits1 * 105u / 100u && hits2 < hits1 * 150u / 100u;
+            }
+            ok4("1.1 .. a pair both strike, each lighter: a little more than one monster, not double", ok);
+            for (k = 0; k < 4u; k++) if (dg.in[k]) dg.hp[k] = 1;
+            dg.mon = DM_GOBLIN; dg.mon2 = DM_SLIME; dg.boss_due = 1;
+            for (i = 0; i < 400u && dg_up(); i++) {
+                dgq_t b[4];
+                memset(b, 0, sizeof b);
+                for (k = 0; k < 4u; k++) b[k].on = 1;
+                dg_monster(b);
+            }
+            ok4("1.1 .. the party falls to a pair: both gone, nothing due", !dg_up() && !dg.mon && !dg.mon2 && !dg.boss_due);
+        }
+    }
+    /* 14. THE PARTY (Dungeon Tracker, core.h): each track a class, its voices and its role; 12 points */
+    {
+        int ok;
+        uint32_t k, n, i, e;
+        step_t keep[NSTEP];
+        ui_power_on();
+        ok = trk_cls(0) == CLS_ROGUE && trk_cls(1) == CLS_CLERIC && trk_cls(2) == CLS_FIGHTER && trk_cls(3) == CLS_MAGE &&
+             trk_cap(0) == 4u && trk_cap(1) == 4u && trk_cap(2) == 1u && trk_cap(3) == 3u;
+        ok4("1.0 THE PARTY: by default T1 ROGUE 4, T2 CLERIC 4, T3 FIGHTER 1, T4 MAGE 3 (the layout as before)", ok);
+        ok4(".. MENU > GAME: T1..T4 and PARTY after DUNGEON", MI_TAB[MI_CLS1] == MTAB_GAME && MI_TAB[MI_PARTY] == MTAB_GAME &&
+            str_eq(MI_NAME[MI_CLS3], "T3") && str_eq(menu_vname(MI_PARTY, 0), "12/12") && menu_n(MI_CLS1) == NCLS && NCLS == 8u);
+        memcpy(keep, trk[2].step, sizeof keep);
+        menu_put(MI_CLS3, CLS_ROGUE);                   /* T3 FIGHTER -> ROGUE: 15 points */
+        ok = trk_cls(2) == CLS_FIGHTER && party_waiting && str_eq(ui.msg, "PARTY 15/12: TOO BIG") &&
+             menu_get(MI_CLS3) == CLS_ROGUE && str_eq(menu_vname(MI_PARTY, 0), "15/12 !");
+        ok4(".. a class that puts the party over waits: nothing changes, PARTY 15/12 says so", ok);
+        menu_put(MI_CLS2, CLS_FIGHTER);                 /* T2 CLERIC -> FIGHTER: 12 */
+        ok = party_waiting && trk_cls(1) == CLS_CLERIC; /* (shown, not yet: the knob still turning) */
+        fm1_ms += PARTY_REST_MS;
+        party_tick();                                   /* (the knob rests) */
+        ok &= !party_waiting && trk_cls(1) == CLS_FIGHTER && trk_cls(2) == CLS_ROGUE && trk_cap(1) == 1u && trk_cap(2) == 4u &&
+             str_eq(ui.msg, "PARTY SET") && cls_allows(CLS_ROGUE, track_cat(&trk[2])) && cls_allows(CLS_FIGHTER, track_cat(&trk[1])) &&
+             trk[2].eng_req == ENGI_CKIT && !memcmp(trk[2].step, keep, sizeof keep);
+        ok4(".. the change that brings it back takes both once the knob rests: T2 FIGHTER (a bass), T3 ROGUE (a kit), the steps kept", ok);
+        menu_put(MI_CLS4, CLS_CLERIC);                  /* 4+1+4+4 = 13: waits */
+        menu_close();
+        printf("dungeon:   (closed: '%s', cls4 %u, waiting %u)\n", ui.msg, trk_cls(3), party_waiting);
+        ok4(".. the MENU closed with the party over: as it was, and said", trk_cls(3) == CLS_MAGE && !party_waiting &&
+            str_eq(ui.msg, "PARTY NOT CHANGED"));
+        /* voices: two rogues, four voices each */
+        go();
+        for (k = 0; k < 4u; k++) trk_note_on(&trk[2], 36u + 2u * k, 100);
+        events_block(CTL);
+        for (k = 0, n = 0; k < NVOICE; k++) n += trk[2].v[k].active != 0;
+        printf("dungeon:   (T3 voices %u, nvoice %u / %u)\n", n, trk_nvoice(&trk[2]), trk_nvoice(&trk[1]));
+        ok4(".. a ROGUE on T3 plays four at once, the FIGHTER on T2 one (its class's voices)", trk_nvoice(&trk[2]) == 4u && trk_nvoice(&trk[1]) == 1u);
+        for (k = 0; k < 4u; k++) trk_note_off(&trk[2], 36u + 2u * k);
+        halt();
+        /* PRESETS > LIST: CLASS first and by default; the escape hatch ALL */
+        song.sel = 2;
+        memset(&favorites, 0, sizeof favorites);         /* (a fresh unit's settings: LIST's default) */
+        ok = list_mode() == LIST_CLASS && str_eq(list_name(list_mode()), "CLASS") && list_pos(LIST_CLASS) == 0u &&
+             list_of(1) == 0u;
+        {
+            uint32_t total, kk, bad = 0;
+            preset_pos(&total);
+            for (i = 0; i < total; i++) { e = preset_at(i, &kk); bad += e < NENGINES && preset_cat(e, kk) != CAT_DRUM; }
+            printf("dungeon:   (CLASS list on a rogue: %u sounds, %u not drums)\n", total, bad);
+            ok &= total >= 15u && !bad;
+            ok &= eng_step_listed(ENGI_CKIT, 1) != 0u;   /* (ANALOG: no drums) */
+            for (e = ENGI_CKIT, i = 0; i < 12u; i++) { e = eng_step_listed(e, 1); ok &= e != 0u && e != 12u && e != 16u; }
+        }
+        ok4(".. PRESETS > LIST CLASS (the default): a ROGUE track sees drums only; ENG skips the engines with none", ok);
+        list_set(0);
+        {
+            uint32_t total;
+            preset_pos(&total);
+            printf("dungeon:   (ALL: %u sounds)\n", total);
+            ok4(".. LIST ALL, the way out: every sound again", total > 100u && str_eq(list_name(list_mode()), "ALL"));
+        }
+        list_set(LIST_CLASS);
+        select_engine(0);                                /* ANALOG on a rogue: refused */
+        ok4(".. on a ROGUE an engine with no drums is refused (the EDIT layer's keys), one with some gives its first",
+            trk[2].eng_req == ENGI_CKIT && (select_engine(ENGI_SID), trk[2].eng_req == ENGI_SID && preset_cat(ENGI_SID, trk[2].preset) == CAT_DRUM));
+        /* the dungeon: roles by class */
+        reset_game(21);
+        dg_party();
+        ok = dg_hpmax(1) == 6 + 4 * dg.lvl[1] + 4 && dg_hpmax(2) == 6 + 4 * dg.lvl[2];   /* (the fighter's +4: T2's now) */
+        ok4(".. the dungeon: the fighter's health with its class (T2), the rogues' on T1 and T3", ok);
+        {   /* both rogues dodge when their own drum leaves the sixteenth empty */
+            dgq_t b[4];
+            uint32_t d0 = 0, t;
+            memset(b, 0, sizeof b);
+            b[0].on = 1; b[1].on = 1; b[3].on = 1;           /* (T3, a rogue, plays nothing here) */
+            for (k = 0; k < 4u; k++) { dg.in[k] = 1; dg.lvl[k] = 3; }
+            dg.dodged = 0;
+            for (t = 0; t < 400u; t++) {
+                for (k = 0; k < 4u; k++) if (dg.in[k]) dg.hp[k] = 300;
+                dg.dead = 0; dg.mon = DM_GOBLIN; dg.mon2 = 0; dg.mon_dist = 1;
+                dg_monster(b);
+            }
+            d0 = dg.dodged;
+            printf("dungeon:   (dodged %u, in %u%u%u%u)\n", d0, dg.in[0], dg.in[1], dg.in[2], dg.in[3]);
+            ok4(".. a ROGUE on T3 dodges on its own track's gaps", d0 > 40u);
+        }
+        /* saved with the song */
+        project_save(0);
+        menu_put(MI_CLS2, CLS_CLERIC);                  /* 4+4+4+3 = 15: waits */
+        menu_put(MI_CLS3, CLS_FIGHTER);                 /* back to 12: the default party */
+        fm1_ms += PARTY_REST_MS;
+        party_tick();
+        ok = trk_cls(1) == CLS_CLERIC && trk_cls(2) == CLS_FIGHTER;
+        project_load(0);
+        ok &= trk_cls(1) == CLS_FIGHTER && trk_cls(2) == CLS_ROGUE;
+        ok4(".. the party is saved with the song (a save, a change, the load: the saved party)", ok);
+        new_song(1);
+        ok4(".. NEW + DEFAULT SOUNDS: the default party", trk_cls(0) == 0u && trk_cls(1) == 1u && trk_cls(2) == 2u && trk_cls(3) == 3u);
+        {   /* a song over the points (damaged): the default party */
+            project_t *q = &proj_scratch;
+            project_capture(q);
+            q->clsx[0] = 0; q->clsx[1] = 1u ^ 0u; q->clsx[2] = 2u ^ 0u; q->clsx[3] = 3u ^ 0u;   /* (all ROGUE: 16) */
+            q->sum = proj_sum(q);
+            project_restore_runtime(q);
+            ok4(".. a stored party over 12 points (damaged) loads as the default", trk_cls(0) == 0u && trk_cls(1) == 1u &&
+                trk_cls(2) == 2u && trk_cls(3) == 3u);
+        }
+        list_set(LIST_CLASS);
+        {   /* by the panel, as on the hardware (1.0's first flash): HOME held, GAME, PRESETS to T2, KNOB 1 turned */
+            uint32_t e2, sw = 0, i2, redraw = 1;
+            ui_power_on();
+            go_home(); frames(100);
+            hold(B_HOME); frames(100);
+            ui.menu_sel = 0;
+            turn(EN_ALGO, -1); frames(50);
+            turn(EN_PRESET, 1); turn(EN_PRESET, 1); frames(50);
+            e2 = trk[1].eng_req;
+            ok = ui.menu_sel == MI_CLS2;
+            for (i2 = 0; i2 < 2u; i2++) {               /* CLERIC -> FIGHTER -> MAGE, quickly: shown, nothing taken */
+                uint32_t sig0 = ui.menu_sig;
+                turn(EN_K1, 1);
+                frame();
+                sw += trk_cls(1) != CLS_CLERIC || trk[1].eng_req != e2;
+                redraw &= ui.menu_sig != sig0;          /* (1.0 on the hardware: the row kept its old word) */
+            }
+            ok &= !sw && menu_get(MI_CLS2) == CLS_MAGE && party_waiting;
+            frames(800);                                /* the knob rests */
+            ok &= !party_waiting && trk_cls(1) == CLS_MAGE && str_eq(ui.msg, "PARTY SET");
+            for (i2 = 0; i2 < 5u; i2++) {               /* MAGE -> BARD PALADIN DRUID MONK -> ROGUE, quickly: round all */
+                turn(EN_K1, 1);                         /* eight (1.5: 1.0's & 3 folded the new four onto the first) */
+                frame();
+                sw += trk_cls(1) != CLS_MAGE;
+            }
+            ok &= !sw && menu_get(MI_CLS2) == CLS_ROGUE;
+            frames(800);
+            ok &= trk_cls(1) == CLS_ROGUE && !party_waiting;
+            turn(EN_PRESET, 1); frames(50);             /* T3 FIGHTER -> MAGE: 14, waits; the cursor on to T4 */
+            turn(EN_K1, 1); frames(50);
+            turn(EN_PRESET, 1); frames(800);
+            ok &= party_waiting && trk_cls(2) == CLS_FIGHTER && menu_get(MI_CLS3) == CLS_MAGE;
+            for (i2 = 0; i2 < 6u; i2++) {               /* T4 MAGE -> BARD 15, PALADIN 13, DRUID 14, MONK 13, ROGUE 15, */
+                turn(EN_K1, 1); frames(50);             /* CLERIC 15: all over, all wait */
+            }
+            ok &= party_waiting && trk_cls(3) == CLS_MAGE;
+            turn(EN_K1, 1); frames(800);                /* -> FIGHTER: 4+4+3+1 = 12: both take */
+            ok &= !party_waiting && trk_cls(2) == CLS_MAGE && trk_cls(3) == CLS_FIGHTER;
+            hold(B_HOME); frames(100);
+            ok4(".. by the panel: KNOB 1 shows each class, takes the one it rests on (none passed on the way), wraps "
+                "round, and an over class waits for another row to bring it within 12", ok && !ui.menu);
+            ok4(".. and each turn redraws its row at once (the class shown, not the old word until the cursor moves)", redraw);
+            ui_power_on();
+        }
+        {   /* 1.5: the four of 1.1 picked in the MENU (T1, beside CLERIC FIGHTER MAGE: 8 + its voices, at most 12) */
+            static const uint8_t NEW4[4] = {CLS_BARD, CLS_PALADIN, CLS_DRUID, CLS_MONK};
+            uint32_t j, okn = 1;
+            for (j = 0; j < 4u; j++) {
+                ui_power_on();
+                menu_put(MI_CLS1, NEW4[j]);
+                fm1_ms += PARTY_REST_MS;
+                party_tick();
+                okn &= trk_cls(0) == NEW4[j] && trk_cap(0) == CLS_VOICES[NEW4[j]] && !party_waiting &&
+                       str_eq(menu_vname(MI_CLS1, menu_get(MI_CLS1)), CLS_NAME[NEW4[j]]) &&
+                       cls_allows(NEW4[j], track_cat(&trk[0]));
+                if (!okn) printf("dungeon:   (%s: cls %u cap %u waiting %u)\n", CLS_NAME[NEW4[j]], trk_cls(0), trk_cap(0), party_waiting);
+            }
+            ok4(".. 1.5: BARD, PALADIN, DRUID and MONK picked in MENU > GAME take (their voices, their sounds)", okn);
+            ui_power_on();
+        }
+    }
+    /* 15. the floor's boss and the party's level */
+    {
+        uint32_t i, ok = 1, f0, n;
+        busy_song();
+        reset_game(31);
+        fm1_ms += 2000u;
+        dg_party();
+        f0 = dg.floor;
+        for (i = 0; i < DG_BOSS_AT - 1u; i++) { dg.mon = DM_GOBLIN; dg_slain(); }
+        for (i = 0; i < 300u; i++) { dg_walk(); ok &= dg.mon != DM_OGRE; if (dg.mon) { dg.mon = DM_NONE; dg.mon2 = DM_NONE; dg.fkills = DG_BOSS_AT - 1u; } }
+        ok4("the boss: nine slain on a floor, no ogre", ok && !dg.boss_up);
+        dg.mon = DM_SKEL; dg.mon2 = DM_GOBLIN; dg.mon2_hp = 5; dg.mon_dist = 1;
+        dg.fkills = DG_BOSS_AT - 2u;
+        dg_slain(); dg_slain();                              /* (a pair: two) */
+        ok4("  a pair slain counts two", dg.fkills == DG_BOSS_AT && !dg.mon);
+        for (i = 0, n = 0; i < 40u && dg.mon != DM_OGRE; i++) { dg_walk(); n += dg.mon && dg.mon != DM_OGRE; }
+        ok4("  the tenth: the ogre comes, nothing before it", dg.mon == DM_OGRE && dg.boss_up == 1u && !n);
+        for (i = 0; i < 30u; i++) { dg_walk(); ok &= dg.mon == DM_OGRE && !dg.mon2; }
+        ok4("  nothing beside it, nothing after it while it stands", ok);
+        dg.mon_hp = 0;
+        dg_slain();
+        snprintf(what, sizeof what, "  slain: everyone L2 (%u %u %u %u), \"%s\"", dg.lvl[0], dg.lvl[1], dg.lvl[2], dg.lvl[3], dg.msg ? dg.msg : "");
+        ok4(what, dg.plv == 2u && dg.lvl[0] == 2u && dg.lvl[1] == 2u && dg.lvl[2] == 2u && dg.lvl[3] == 2u &&
+            dg.msg && str_eq(dg.msg, "LEVEL UP: L2") && dg.floor == f0);
+        dg_walk();
+        ok4("  the stairs two squares on (nothing comes meanwhile)", dg.floor == f0 && !dg.mon);
+        dg_walk();
+        ok4("  .. one floor down, its count from 0", dg.floor == f0 + 1u && !dg.fkills && !dg.boss_up && !dg.stairs);
+        fm1_ms += 2000u;
+        dg_party();
+        ok4("  the level stays (the party's count a second later)", dg.lvl[0] == 2u && dg_hpmax(0) == 14);
+        for (i = 0; i < 12u; i++) { dg.fkills = DG_BOSS_AT; dg.boss_up = 1; dg.mon = DM_OGRE; dg.mon_hp = 0; dg_slain(); dg.stairs = 1; dg_walk(); }
+        ok4("  at most L9 (twelve bosses more: L9, OGRE SLAIN)", dg.plv == 9u && dg.lvl[3] == 9u && dg_hpmax(3) == 42 &&
+            dg.floor == f0 + 13u);
+        dg.fkills = 6;
+        dg_retreat();
+        ok4("  a retreat: a floor up, the level kept, the floor counted again", dg.plv == 9u && !dg.fkills &&
+            dg.floor == f0 + 12u);
+        dg_game_set(1);
+        dg_party();
+        ok4("  a new run: L1 again", dg.lvl[0] == 1u && dg.floor == 1u);
+        dg_game_set(0);
+    }
+    /* 16. 1.1: BARD PALADIN DRUID MONK: their voices and their turns; the class through a project; the balance */
+    {
+        static const uint8_t PARTY[4] = {CLS_MONK, CLS_DRUID, CLS_PALADIN, CLS_BARD};
+        static project_t q, q2;
+        static project_store_t st;
+        dgq_t b[NTRK];
+        uint32_t ok, k, i, d0, hit = 0, other = 0, healed = 0;
+        int16_t h0[4];
+        busy_song();
+        reset_game(77);
+        fm1_ms += 2000u;
+        for (k = 0; k < 4u; k++) song.clsx[k] = (uint8_t)(PARTY[k] ^ k);
+        dg_party();
+        ok = party_points(PARTY) == 11u && trk_cap(0) == 2u && trk_cap(1) == 3u && trk_cap(2) == 2u && trk_cap(3) == 4u &&
+             dg_hpmax(2) == dg_hpmax(1) + 4 && str_eq(CLS_NAME[CLS_PALADIN], "PALADIN");
+        ok4("16. 1.1 the new classes: MONK 2, DRUID 3, PALADIN 2 (+4 health, as the fighter), BARD 4 voices (1.5)", ok);
+        dg.mon = DM_GOBLIN; dg.mon_hp = dg.mon_max = 500;
+        dg_engage();
+        dg.pw[3].on = 3; dg.pw[3].w = 256; dg_hero(3);
+        ok = dg.insp == 153u;
+        dg.pw[3].tie = 1; dg_hero(3);
+        ok &= dg.insp == 179u;
+        dg.pw[0].on = 1; dg.pw[0].w = 256; dg_hero(0);
+        ok &= dg.insp == 0u;
+        ok4("  BARD: a note +20 % inspiration each (three: +60 %), held +10 %; the next hero's action spends it", ok);
+        dg_engage();
+        for (i = 0; i < 3u; i++) { dg.pw[0].on = 1; dg.pw[0].w = 256; dg_hero(0); }
+        ok = dg.combo[0] == 3u;
+        dg_hero(0);
+        ok &= dg.combo[0] == 0u && dg.charge[0] == 1u;
+        memset(b, 0, sizeof b);
+        dg.dead = 0x0E;                                  /* (the monk alone standing, no drum on its sixteenth) */
+        d0 = dg.dodged;
+        for (i = 0; i < 40u; i++) dg_monster(b);
+        ok &= dg.dodged == d0 + 40u && dg.hp[0] == dg_hpmax(0);
+        ok4("  MONK: each turn struck in a row adds to its run, a silent one ends it; it slips away as the rogue does", ok);
+        dg.dead = 0;
+        for (i = 0; i < 40u; i++) {                      /* the paladin rests: the monster's blows are its */
+            for (k = 0; k < 4u; k++) { dg.hp[k] = dg_hpmax(k); b[k].on = 1; }
+            dg.pw[2].rest = 1; dg_hero(2);
+            ok = dg.shield == 3u;
+            dg_monster(b);
+            for (k = 0; k < 4u; k++) {
+                hit += k == 2u && dg.hp[k] < dg_hpmax(k);
+                other += k != 2u && dg.hp[k] < dg_hpmax(k);
+            }
+        }
+        ok4("  PALADIN: a REST shields the party: every blow of that round its own", ok && hit >= 6u && !other && !dg.shield);
+        for (k = 0; k < 4u; k++) dg.hp[k] = (int16_t)(dg_hpmax(k) / 2);
+        dg.pw[1].on = 1; dg.pw[1].w = 256; dg.pw[1].fl = 0; dg_hero(1);
+        ok = dg.regen == 4u && dg.regen_hp == (uint8_t)((3 + dg.lvl[1]) / 2);
+        for (k = 0; k < 4u; k++) h0[k] = dg.hp[k];
+        dg_monster(b);
+        for (k = 0; k < 4u; k++) healed += dg.hp[k] >= h0[k] + (dg.regen_hp > 0 ? 1 : 0);
+        ok4("  DRUID: one under 80 %: four rounds of healing for the whole party", ok && dg.regen == 3u && healed >= 3u);
+        for (k = 0; k < 4u; k++) song.clsx[k] = (uint8_t)(PARTY[k] ^ k);
+        project_capture(&q);
+        ok = proj_pack(&st, &q) && proj_import(&q2, &st, sizeof st) && !memcmp(q2.clsx, q.clsx, sizeof q.clsx);
+        st.raw[PROJ_CLASS2_OFF] = 0;                     /* (a project of 1.0: no third bit; its sum again) */
+        {
+            uint32_t h = proj_hash(st.raw, PROJ_STORE_SIZE - 4u);
+            memcpy(st.raw + PROJ_STORE_SIZE - 4u, &h, 4);
+        }
+        ok &= proj_import(&q2, &st, sizeof st);
+        for (k = 0; k < 4u; k++) ok &= q2.clsx[k] == (q.clsx[k] & 3u);
+        ok4("  the classes through a project (the third bit its own byte, 0 in 1.0's: the four of 1.0)", ok);
+        {   /* the balance (tests/_balance.c's, smaller): each new class in place of its counterpart, rolled songs */
+            static const int8_t PS[5][4] = {{CLS_ROGUE, CLS_CLERIC, CLS_FIGHTER, CLS_MAGE}, {CLS_MONK, CLS_CLERIC, CLS_FIGHTER, CLS_MAGE},
+                                            {CLS_ROGUE, CLS_DRUID, CLS_FIGHTER, CLS_MAGE}, {CLS_ROGUE, CLS_DRUID, CLS_FIGHTER, CLS_BARD},
+                                            {CLS_MONK, CLS_CLERIC, CLS_PALADIN, CLS_BARD}};   /* (1.5: the bard 4, within 12) */
+            uint32_t kl[5], fa[5], p, sd, ms;
+            char line[200];
+            for (p = 0; p < 5u; p++) {
+                kl[p] = fa[p] = 0;
+                for (sd = 0; sd < 12u; sd++) {
+                    uint8_t dead0 = 0;
+                    memcpy(rs_pin, PS[p], 4);
+                    ui_power_on();
+                    random_song_make(0xB007u + sd * 7919u);
+                    boot_song_settle();
+                    reset_game(500 + sd);
+                    ui_home_view = HV_SCOPE;
+                    fm1_ms += 2000u;
+                    go();
+                    for (ms = 0; ms < 600000u; ms += 33u) {
+                        tick33();
+                        for (k = 0; k < 4u; k++)
+                            fa[p] += ((dg.dead >> k) & 1u) && !((dead0 >> k) & 1u);
+                        dead0 = dg.dead;
+                    }
+                    halt();
+                    kl[p] += dg.kills;
+                }
+            }
+            memset(rs_pin, 0xFF, sizeof rs_pin);
+            snprintf(line, sizeof line, "  balance, 12 rolled songs each: kills / falls RGE CLR FTR MAG %u/%u, MONK %u/%u, DRUID %u/%u, "
+                     "BARD %u/%u, PALADIN (with BARD) %u/%u", kl[0], fa[0], kl[1], fa[1], kl[2], fa[2], kl[3], fa[3], kl[4], fa[4]);
+            ok = 1;
+            for (p = 1; p < 5u; p++)                     /* (within reach of the four of 1.0: no class a must, none a waste) */
+                ok &= kl[p] * 10u >= kl[0] * 7u && fa[p] * 10u <= fa[0] * 15u + 10u && fa[p] * 10u >= fa[0] * 4u;
+            ok4(line, ok);
+        }
+    }
+    /* 17. 1.5: the monsters' looks by the depth (the rules the four ways of fighting, unchanged), the bosses by the
+     * depth, the names fitting, the animations' frames (a MISS, a CRIT, a fade, the boss's rage) */
+    {
+        uint32_t ok = 1, f, m, len = 0, miss = 0, crit = 0, poof = 0;
+        for (f = 0; f < 40u; f++)
+            for (m = DM_GOBLIN; m <= DM_OGRE; m++) {
+                uint32_t sk = dg_skin_of(m, f);
+                ok &= sk < DGM_N && (m == DM_OGRE) == (sk >= DGM_BOSS0);
+                ok &= m == DM_OGRE || sk / 3u == (f / 3u < DGM_TIERS ? f / 3u : DGM_TIERS - 1u);
+                len = str_len(DGM_NAME[sk]) > len ? str_len(DGM_NAME[sk]) : len;
+            }
+        ok4("1.5: twelve monsters in four tiers of depth over the goblin's, skeleton's and slime's ways; five bosses", ok &&
+            str_eq(DGM_NAME[dg_skin_of(DM_SKEL, 4)], "ARMOUR") && str_eq(DGM_NAME[dg_skin_of(DM_SLIME, 10)], "CUBE") &&
+            str_eq(DGM_NAME[dg_skin_of(DM_OGRE, 0)], "OGRE") && str_eq(DGM_NAME[dg_skin_of(DM_OGRE, 4)], "MINOTAUR") &&
+            str_eq(DGM_NAME[dg_skin_of(DM_OGRE, 7)], "LICH") && str_eq(DGM_NAME[dg_skin_of(DM_OGRE, 10)], "DRAGON") &&
+            str_eq(DGM_NAME[dg_skin_of(DM_OGRE, 30)], "DEMON"));
+        ok4("  the names fit: 11 letters at most, a pair's under 32 (BONE KNIGHT AND DARK ELF)", len <= 11u &&
+            2u * len + 5u < sizeof dg.pair_msg);
+        busy_song();
+        reset_game(77);
+        ui_home_view = HV_SCOPE;
+        fm1_ms += 2000u;
+        go();
+        for (uint32_t ms = 0; ms < 240000u; ms += 33u) {
+            tick33();
+            miss += dg.miss == 8u;
+            crit += dg.crit == 10u;
+            poof += dg.poof == 12u;
+        }
+        halt();
+        snprintf(what, sizeof what, "  4 min of a busy song: MISSes %u, CRITs %u, the slain fading %u (kills %u)", miss, crit, poof, dg.kills);
+        ok4(what, miss && crit && poof && poof <= dg.kills + 1u);
+        reset_game(78);
+        dg.floor = 4;
+        dg.mon = DM_OGRE;
+        dg.skin = (uint8_t)dg_skin_of(DM_OGRE, 4);
+        dg.mon_dist = 1;
+        dg.mon_max = dg.mon_hp = 40;
+        dg.rage = 0;
+        dg_strike(2, 19 << 8, 1);
+        ok = !dg.rage;
+        dg_strike(2, 5 << 8, 1);
+        ok4("  the boss under half its health rages (looks, a message: MINOTAUR RAGES), once", ok && dg.rage && dg.msg &&
+            str_eq(dg.msg, "MINOTAUR RAGES"));
+        dg.mon_hp = 0;
+        dg_slain();
+        ok4("  slain: MINOTAUR SLAIN, it fades", dg.msg && (str_eq(dg.msg, "MINOTAUR SLAIN") || str_eq(dg.msg, "LEVEL UP: L2")) &&
+            dg.poof == 12u && dg.poof_skin == dg_skin_of(DM_OGRE, 4));
     }
     printf("dungeon: %s\n", fails4 ? "FAILED" : "all checks ok");
     return fails4 != 0;

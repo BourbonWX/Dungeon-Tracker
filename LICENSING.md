@@ -38,6 +38,27 @@ You may use, study, change and share Felucca under the GPL. If you distribute Fe
 firmware derived from it, you must also give your recipients its complete corresponding
 source under the same licence. That includes devices that ship with modified Felucca inside.
 
+## Dungeon Tracker's own work
+
+Dungeon Tracker (formerly RONDO) is a fork of Felucca and is licensed the same way: **GPL-3.0-only**, full text in
+`LICENSE`. Everything it adds to Felucca is its own original work, written for it, and carries the same
+`SPDX-License-Identifier: GPL-3.0-only` header:
+
+- the TRACKER, SEQ's step editor and its commands (`firmware/src/ui_tracker.c`, the `CMD_*` commands in `seq.c`);
+- the FMKIT and FMTONE engines and their presets, CHIP's added presets and the WAVES presets;
+- DICE sound design, the power-on songs (`boot_song.c`), SOUND MORPH, the PATTERN BANK and the added INSERT effects;
+- the dungeon and its game (`firmware/src/ui_dungeon.c`), FLOOR FX, LARGE's full-screen dungeon;
+- the song slots (`firmware/src/song_store.c`);
+- the SID engine (`firmware/src/eng_sid.c`) and the LOFI KIT's and DUNGEON KIT's makers (`tools/make_lofi_kit.py`,
+  `tools/make_dungeon_kit.py`);
+- their host tests (`tests/`) and tools (`tools/`), and the web editor's additions.
+
+Copyright (C) 2026 Dungeon Tracker (RONDO) contributors. Built on Felucca, Copyright (C) 2026 Leo Kuroshita
+(@kurogedelic), Hügelton Instruments. Like Felucca, anyone may use, study, change and share it under the GPL; anyone
+who distributes it, or firmware derived from it, must give its complete source under the same licence. Each release
+offers `dungeon-tracker-X.Y-source.zip` for that. The parts in the sections below (Felucca-Engines, third-party
+material, the JieLi files) keep their own licences.
+
 ## Hügelton Instruments' own work
 
 All by Hügelton Instruments (Leo Kuroshita), in this tree:
@@ -57,9 +78,10 @@ All by Hügelton Instruments (Leo Kuroshita), in this tree:
 | What | Licence | Where |
 | --- | --- | --- |
 | Inter Tight font by The Inter Project Authors: the UI text, rasterised into the firmware at build time (`tools/gen_aa_font.py`; the generated tables are not offered as a font, and the font declares no Reserved Font Name) | SIL OFL 1.1 | `assets/fonts/InterTight[wght].ttf`, `LICENSES/OFL-InterTight.txt` (also `assets/fonts/OFL.txt`) |
-| Instrument samples (Versilian Studios VSCO-2 Community Edition, VCSL): the SAMPLE sets, also the SLICE engine's PIANO (the PIANO set's middle C) | CC0 1.0 | `assets/samples-cc0/`, provenance in `ATTRIBUTION.txt` there |
+| Instrument samples (Versilian Studios VSCO-2 Community Edition, VCSL): the SAMPLE sets, also the SLICE engine's PIANO (the PIANO set's middle C); the LOFI KIT and the DUNGEON KIT (VCSL's recordings through `tools/make_lofi_kit.py` and `tools/make_dungeon_kit.py`: the processed files are CC0 too) | CC0 1.0 | `assets/samples-cc0/`, provenance in `ATTRIBUTION.txt` there |
 | DaisySP by Electrosmith, Corp and Emilie Gillet (<https://github.com/electro-smith/DaisySP>): the PHYS engine's modal and string models and the resonator, ported to fixed point | MIT | `firmware/src/phys_dsp.c`, `LICENSES/MIT-DaisySP.txt` |
 | Rings by Emilie Gillet (<https://github.com/pichenettes/eurorack>): the PHYS engine's sympathetic strings, ported to fixed point | MIT | `firmware/src/phys_symp.c`, `LICENSES/MIT-Rings.txt` |
+| Ambika by Emilie Gillet (<https://github.com/pichenettes/ambika>): the WAVES engine's waves (verbatim) and oscillator models (written again), 1.1 | GPL-3.0-or-later | `firmware/src/mutable/` |
 | msfa by Google Inc. and Pascal Gauthier, from Dexed (<https://github.com/asb2m10/dexed>): the FM6 engine's synthesis, ported to integer C (Dexed itself is GPL-3.0; only msfa is used; the FM6 factory patches are Felucca's own) | Apache-2.0 | `firmware/src/fm6_core.c`, `LICENSES/Apache-2.0-msfa.txt` |
 | klattsch by Tony Gies (<https://github.com/tgies/klattsch>): design reference for the VOICE engine; no code copied. Formant data from Klatt (1980) / Hillenbrand et al. (1995) | MIT (klattsch) | credit only |
 | X0X by charlesvestal (<https://github.com/charlesvestal/fm1-x0x>), a Felucca fork: the design of the browser emulator (the worklet, the device clock driven by its audio, the exports); its files credit it in their headers | GPL-3.0 | `web/emu/` |

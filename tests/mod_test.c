@@ -1,633 +1,289 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* Host test of the modulation matrix (firmware/src/mod.c), same sources as the firmware (through hostsim.c):
- *   build/host/mod_test [DEMO_DIR]      (run_tests.sh builds and runs it; demos in build/mod_demo/)
- * 1. off: slots that do nothing (SRC, DST or AMT at 0) render bit-identically to no matrix at all; the
- *    stored parameters are never left modulated after a block.
- * 2. the math: every source on each kind of destination (per voice: PITCH CUT SHP AMP; per block: PAN, the
- *    sends, RATE, VIB, an engine parameter), bipolar sources and amounts, sums, clamping to the ranges,
- *    per-voice sources on per-block destinations (the latest note-on), RAND without the shared rng.
- * 3. MIDI: CC1 / CC11 / CC121 and channel aftertouch over USB (packets) and TRS (bytes, running status) reach
- *    the matrix of the channel's track (ch 1..4 the parts, others ignored with ROUT CH1-4; with ROUT SEL every
- *    channel the selected track).
- * 4. cost: instructions per sample (kernel-counted) of the heaviest PHYS preset and of a 4-part mix with every
- *    slot of every part active, against the same with the matrix off; fails above MOD_COST_MAX.
- * 5. demos: LFO -> CUT, VEL -> AMP, MODW -> VIB, LFO -> TRIO PW, AT -> WHEEL DRV as WAVs in DEMO_DIR. */
+ * Dungeon Tracker 1.5: the MOD engine (src/eng_mod.c) on the host, through hostsim.c.
+ *   build/host/mod_test [DEMODIR]
+ * 1. every preset sounds, no DC, its voices free; the level near WAVES'. 2. C4 at the root (Paula's periods); ARP
+ * steps through its chord at 50 Hz; LED darkens; CRSH and RATE change it; DTUN beats; OFS starts later. 3. the lists.
+ * 4. cost against WAVES. 5. a demo of every preset. */
 #define main hostsim_main
 #include "hostsim.c"
 #undef main
-#ifdef __APPLE__
-#include <libproc.h>
-#include <sys/resource.h>
+#ifndef CAT_BASS
+#include "category.c"                   /* (preset_cat: hostsim has no ui.c) */
 #endif
 
-#define MOD_COST_MAX 5.0          /* % more instructions per sample with every slot active, at most */
-
-static int bad;
+static int fails;
 static void check(const char *what, int ok)
 {
-    printf("mod: %-74s %s\n", what, ok ? "ok" : "FAIL");
-    bad += !ok;
+    printf("mod: %-92s %s\n", what, ok ? "ok" : "FAIL");
+    fails += !ok;
 }
 
-static int32_t out_buf[2 * CTL];
-static uint64_t hash;
-static void blocks(uint32_t n)
-{
-    uint32_t i, k;
-    while (n--) {
-        mix_block(out_buf, CTL);
-        for (i = 0; i < 2u * CTL; i++)
-            for (k = 0; k < 4u; k++) {
-                hash ^= ((uint32_t)out_buf[i] >> (8u * k)) & 0xFFu;
-                hash *= 0x100000001B3ull;
-            }
-    }
-}
+#define NMAX (FS * 6)
+static float buf[NMAX];
+static uint32_t buf_n;
 
-static void slot(track_t *t, uint32_t k, int32_t s, int32_t d, int32_t a)
+static void parts_clear(void)
 {
-    t->p[P_M1SRC + 3u * k] = (int16_t)s;
-    t->p[P_M1DST + 3u * k] = (int16_t)d;
-    t->p[P_M1AMT + 3u * k] = (int16_t)a;
-}
-
-static uint32_t eng_by_name(const char *n)
-{
-    uint32_t e;
-    for (e = 0; e < NENGINES; e++)
-        if (str_eq(ENGINES[e]->name, n))
-            return e;
-    return 0;
-}
-static uint32_t edit_by_label(uint32_t e, const char *l, uint32_t fallback)   /* E index 0..7 */
-{
-    uint32_t k;
-    for (k = 0; k < 8u; k++)
-        if (str_eq(ENGINES[e]->edit[k].label, l))
-            return k;
-    return fallback;
-}
-static uint32_t preset_by_name(uint32_t e, const char *n)
-{
-    uint32_t k;
-    for (k = 0; k < ENGINES[e]->npresets; k++)
-        if (str_eq(ENGINES[e]->presets[k].name, n))
-            return k;
-    return 0;
-}
-
-static void fresh(uint32_t e, uint32_t pi)        /* the boot state (no FX tails), track 1 = engine e preset pi */
-{
-    uint32_t k;
-    memset(dly_buf, 0, sizeof dly_buf);
-    memset(cho_buf, 0, sizeof cho_buf);
-    memset(rev_comb, 0, sizeof rev_comb);
-    memset(rev_ap, 0, sizeof rev_ap);
-    memset(&fx, 0, sizeof fx);
-    lim_env = LIM_T;
-    memset(trk, 0, sizeof trk);
-    MOD_W_CLEAR();
+    uint32_t p;
     host_tracks_init();
-    for (k = 0; k < NPART; k++)
-        host_preset(&trk[k], k ? 0u : e, k ? 0u : pi);
-    song.sel = 0;
-    hash = 0xCBF29CE484222325ull;
+    memset(eng_mem, 0, sizeof eng_mem);
+    for (p = 0; p < NPART; p++)
+        memset(trk[p].v, 0, sizeof trk[p].v);
 }
-
-/* a phrase on track 1: a chord, a note, releases; the hash of the output */
-static uint64_t phrase(void)
+static int32_t render_part(uint32_t part, uint32_t n)
 {
-    track_t *t = &trk[0];
-    trk_note_on(t, 60, 100);
-    trk_note_on(t, 64, 70);
-    trk_note_on(t, 67, 120);
-    blocks(FS / 2u / CTL);
-    trk_note_on(t, 72, 90);
-    blocks(FS / 4u / CTL);
-    trk_note_off(t, 60);
-    trk_note_off(t, 64);
-    trk_note_off(t, 67);
-    trk_note_off(t, 72);
-    blocks(FS / CTL);
-    return hash;
-}
-
-/* ------------------------------------------------------------------ 1 --- */
-/* the phrase's hash in a fork()ed child (the seeds as they were: the same in each); setup k:
- * 0 no matrix, 1 slots that do nothing, 2 an active matrix. The child answers 0 when p[] was left changed */
-static uint64_t phrase_child(uint32_t k)
-{
-    int fd[2];
-    uint64_t h = 0;
-    pid_t pid;
-    if (pipe(fd))
-        return 0;
-    fflush(stdout);
-    if (!(pid = fork())) {
-        int16_t keep[P_COUNT];
-        fresh(0, 0);
-        if (k == 1u) {
-            slot(&trk[0], 0, MS_LFO, MD_CUT, 0);   /* AMT 0 */
-            slot(&trk[0], 1, MS_OFF, MD_PAN, 40);  /* SRC OFF */
-            slot(&trk[0], 2, MS_VEL, MD_OFF, -30); /* DST OFF */
-        } else if (k == 2u) {
-            slot(&trk[0], 0, MS_LFO, MD_CUT, 40);
-            slot(&trk[0], 1, MS_MODW, MD_PAN, 63);
-            slot(&trk[0], 2, MS_LFO, MD_E1 + 4, -50);
-            slot(&trk[0], 3, MS_ENV, MD_REV, 30);
-            trk[0].mw = 100;
-        }
-        memcpy(keep, trk[0].p, sizeof keep);
-        h = phrase();
-        if (memcmp(keep, trk[0].p, sizeof keep) || MOD(&trk[0]).on)
-            h = 0;
-        if (write(fd[1], &h, sizeof h) != sizeof h)
-            _exit(1);
-        _exit(0);
-    }
-    close(fd[1]);
-    if (read(fd[0], &h, sizeof h) != sizeof h)
-        h = 0;
-    close(fd[0]);
-    waitpid(pid, 0, 0);
-    return h;
-}
-
-static void test_off(void)
-{
-    uint64_t h0 = phrase_child(0), h1 = phrase_child(1), h2 = phrase_child(2);
-    check("slots that do nothing: bit-identical to the matrix off", h0 && h0 == h1);
-    check("an active matrix changes the sound, and leaves no modulated value in p[]", h2 && h2 != h0);
-}
-
-/* ------------------------------------------------------------------ 2 --- */
-static void lfo_at(track_t *t, int32_t v)          /* the LFO value the next block's matrix sees */
-{
-    t->lfo_val = v;
-    t->lfo_fade = 32767;
-}
-
-static void test_math(void)
-{
-    track_t *t = &trk[0];
-    int32_t lfo;
-    vmod_t m;
-    voice_t *v;
-    uint32_t e_trio, k_pw;
-
-    /* per-track sources on per-voice destinations */
-    fresh(0, 0);
-    lfo_at(t, 32767);
-    lfo = mulq15(32767, 32767);
-    slot(t, 0, MS_LFO, MD_CUT, 63);
-    mod_begin(t);
-    check("LFO -> CUT +63: +63 steps at the top of the LFO (as ENV DEST)", MOD(t).on && MOD(t).cut == (lfo * 63) >> 7 && MOD(t).cut / 256 == 62);
-    mod_end(t);
-    slot(t, 0, MS_LFO, MD_PITCH, 63);
-    mod_begin(t);
-    check("LFO -> PITCH +63: +11.8 semitones (as LFO DEST PIT)", MOD(t).pit == (lfo * 63 * 3) >> 15 && MOD(t).pit == 188);
-    mod_end(t);
-    lfo_at(t, -32768);
-    slot(t, 0, MS_LFO, MD_SHP, 63);
-    mod_begin(t);
-    check("LFO bipolar: the bottom of the LFO pulls SHP down", MOD(t).shp < -16000);
-    mod_end(t);
-    slot(t, 0, MS_LFO, MD_SHP, -64);
-    mod_begin(t);
-    check("a negative AMT inverts it", MOD(t).shp > 16000);
-    mod_end(t);
-    lfo_at(t, 0);
-    slot(t, 0, MS_MODW, MD_AMP, 64 - 1);
-    t->mw = 0;
-    mod_begin(t);
-    check("MODW -> AMP +63: the wheel down closes the amp (gain 1.6 %)", MOD(t).amp && MOD(t).gain >= 500 && MOD(t).gain <= 512);
-    mod_end(t);
-    t->mw = 127;
-    mod_begin(t);
-    check("MODW -> AMP +63: the wheel up opens it fully", MOD(t).gain >= 32760);
-    mod_end(t);
-    slot(t, 0, MS_AT, MD_AMP, -64);
-    t->at = 127;
-    mod_begin(t);
-    check("AT -> AMP -64: full pressure closes it", MOD(t).gain < 200);
-    mod_end(t);
-    slot(t, 0, MS_EXPR, MD_AMP, 63);
-    mod_begin(t);
-    check("EXPR before any CC11 is full (the MIDI default): AMP open", MOD(t).gain >= 32760);
-    mod_end(t);
-    slot(t, 0, MS_LFO, MD_AMP, 64 - 1);
-    mod_begin(t);
-    check("LFO -> AMP: bipolar as 0..1 (half way at an LFO of 0)", MOD(t).gain > 16000 && MOD(t).gain < 17000);
-    mod_end(t);
-
-    /* per-voice sources on per-voice destinations (mod_voice) */
-    fresh(0, 0);
-    t->p[P_VOICE] = V_POLY;
-    slot(t, 0, MS_KEY, MD_CUT, 63);
-    slot(t, 1, MS_VEL, MD_AMP, 63);
-    slot(t, 2, MS_ENV, MD_SHP, 40);
-    slot(t, 3, MS_RAND, MD_PITCH, 20);
-    {
-        uint32_t rs = rng_state;
-        trk_note_on(t, 72, 127);
-        trk_note_on(t, 48, 1);
-        check("RAND per note-on: its own generator (the shared rng untouched)", rng_state == rs && t->v[0].mrnd != t->v[1].mrnd);
-    }
-    mod_begin(t);
-    memset(&m, 0, sizeof m);
-    m.envq15 = 16384;
-    m.shape = 64 << 8;
-    m.pitch16 = 1000;
-    m.inc = pitch_inc(1000);
-    m.amp1 = 20000;
-    v = &t->v[0];
-    mod_voice(t, v, &m, 0);
-    check("KEY -> CUT +63: an octave above C4 = +12 steps (key tracking 1:1)", m.cutoff == (12 * 512 * 63) >> 7 && m.cutoff / 256 == 11);
-    check("VEL -> AMP +63: velocity 127 keeps the amplitude", m.amp1 == mulq15(20000, mulq15(32767, mod_gain(MS_VEL, 127 * 258, 63))) && m.amp1 > 19900 && v->env_out == m.amp1);
-    check("ENV -> SHP +40: half the envelope = +20 steps", m.shape == (64 << 8) + ((16384 * 40) >> 7));
-    check("RAND -> PITCH: the voice's own random offset", m.pitch16 == 1000 + ((v->mrnd * 20 * 3) >> 15) && m.inc == pitch_inc(m.pitch16));
-    memset(&m, 0, sizeof m);
-    m.amp1 = 20000;
-    mod_voice(t, &t->v[1], &m, 0);
-    check("KEY below C4 negative, VEL 1 -> AMP almost closed", m.cutoff == -((12 * 512 * 63) >> 7) && m.amp1 < 600);
-    mod_end(t);
-
-    /* clamping of the per-voice sums */
-    fresh(0, 0);
-    lfo_at(t, 32767);
-    for (k_pw = 0; k_pw < 4u; k_pw++)
-        slot(t, k_pw, MS_LFO, k_pw < 2u ? MD_CUT : MD_PITCH, 63);
-    trk_note_on(t, 120, 100);
-    lfo_at(t, 32767);                              /* (a note-on restarts the LFO and its FADE) */
-    mod_begin(t);
-    memset(&m, 0, sizeof m);
-    m.cutoff = 100 << 8;
-    m.pitch16 = 1920;
-    mod_voice(t, &t->v[0], &m, 0);
-    check("CUT sums clamp to what the fixed routings reach (+150), PITCH to 2047", m.cutoff == 150 * 256 && m.pitch16 == 2047);
-    mod_end(t);
-
-    /* per-block destinations: AMT 64 = the whole range, clamped, restored */
-    fresh(0, 0);
-    t->p[P_PAN] = 0;
-    t->mw = 127;
-    slot(t, 0, MS_MODW, MD_PAN, 16);
-    mod_begin(t);
-    check("MODW -> PAN +16: a quarter of the range (+31)", t->p[P_PAN] == ((((127 * 258) * 16) >> 6) * 127 >> 15) && t->p[P_PAN] == 31);
-    mod_end(t);
-    check("PAN restored after the block", t->p[P_PAN] == 0);
-    slot(t, 1, MS_MODW, MD_PAN, 16);
-    mod_begin(t);
-    check("two slots on PAN add up (+62)", t->p[P_PAN] == 62);
-    mod_end(t);
-    slot(t, 1, MS_MODW, MD_PAN, 63);
-    mod_begin(t);
-    check("PAN clamps to +63", t->p[P_PAN] == 63);
-    mod_end(t);
-    slot(t, 1, MS_OFF, MD_OFF, 0);
-    slot(t, 0, MS_AT, MD_REV, -64);
-    t->at = 127;
-    t->p[P_REV] = 50;
-    mod_begin(t);
-    check("AT -> REV -64: the send down to 0 (clamped)", t->p[P_REV] == 0);
-    mod_end(t);
-    lfo_at(t, -32768);
-    slot(t, 0, MS_LFO, MD_DIST, 32);
-    slot(t, 1, MS_LFO, MD_CHO, -32);
-    slot(t, 2, MS_LFO, MD_RATE, 32);
-    slot(t, 3, MS_LFO, MD_VIB, 32);
-    t->p[P_DIST] = t->p[P_CHOR] = 64;
-    t->p[P_LRATE] = 100;
-    t->p[P_LD_PIT] = 0;
-    lfo = mulq15(-32768, 32767);
-    mod_begin(t);
-    {
-        int32_t up = (((lfo * 32) >> 6) * 127) >> 15, dn = (((lfo * -32) >> 6) * 127) >> 15;
-        check("LFO -> DIST / CHO (+-32), RATE, VIB: bipolar, half the range each",
-              up < -30 && dn > 30 && t->p[P_DIST] == 64 + up && t->p[P_CHOR] == 64 + dn && t->p[P_LRATE] == 100 + up &&
-              t->p[P_LD_PIT] == up);
-    }
-    mod_end(t);
-    check("every per-block value restored", t->p[P_DIST] == 64 && t->p[P_CHOR] == 64 && t->p[P_LRATE] == 100 && t->p[P_LD_PIT] == 0);
-
-    /* an engine parameter: its descriptor's range */
-    e_trio = eng_by_name("TRIO");
-    k_pw = edit_by_label(e_trio, "PW", 7);
-    fresh(e_trio, 0);
-    lfo_at(t, 32767);
-    t->p[P_E0 + k_pw] = 100;
-    slot(t, 0, MS_LFO, MD_E1 + (int32_t)k_pw, 40);
-    mod_begin(t);
-    check("LFO -> TRIO PW: clamped to its range (0..127)", t->p[P_E0 + k_pw] == 127);
-    mod_end(t);
-    t->p[P_E0 + 1] = 0;                            /* INT2: -24..24 */
-    slot(t, 0, MS_MODW, MD_E1 + 1, -32);
-    t->mw = 127;
-    mod_begin(t);
-    check("MODW -> E2 -32: half its range down (TRIO INT2 -24..24: -24)",
-          t->p[P_E0 + 1] == (((((127 * 258) * -32) >> 6) * (ENGINES[e_trio]->edit[1].max - ENGINES[e_trio]->edit[1].min)) >> 15) &&
-          t->p[P_E0 + 1] < -10);
-    mod_end(t);
-    check("the engine parameters restored", t->p[P_E0 + k_pw] == 100 && t->p[P_E0 + 1] == 0);
-    check("DST names: E1..E8 by the engine's labels", str_eq(mod_dst_name(t, MD_E1 + (int32_t)k_pw), "PW") &&
-                                                          str_eq(mod_dst_name(t, MD_CUT), "CUT"));
-
-    /* per-voice sources on a per-block destination: the latest note-on */
-    fresh(0, 0);
-    slot(t, 0, MS_VEL, MD_PAN, 63);
-    trk_note_on(t, 60, 20);
-    mod_begin(t);
-    {
-        int32_t p1 = t->p[P_PAN];
-        mod_end(t);
-        trk_note_on(t, 64, 127);
-        mod_begin(t);
-        check("VEL -> PAN: the latest note-on's velocity", p1 == ((((20 * 258) * 63) >> 6) * 127 >> 15) && t->p[P_PAN] == 63);
-        mod_end(t);
-    }
-    slot(t, 0, MS_KEY, MD_DLY, 63);
-    t->p[P_DLY] = 64;
-    mod_begin(t);
-    check("KEY -> DLY: the latest note (E4: +4 semitones)", t->p[P_DLY] == 64 + ((((4 * 512) * 63) >> 6) * 127 >> 15));
-    mod_end(t);
-    slot(t, 0, MS_ENV, MD_PAN, 63);
-    blocks(FS / 10u / CTL);
-    mod_begin(t);
-    check("ENV -> PAN: the latest note's envelope (sounding: > 0)", t->p[P_PAN] > 20 && t->m_env > 0);
-    mod_end(t);
-}
-
-/* ------------------------------------------------------------------ 3 --- */
-static void pkt(uint32_t st, uint32_t d1, uint32_t d2)
-{
-    midi_in_q[mi_w++ % MQ] = (st >> 4) | st << 8 | d1 << 16 | d2 << 24;
-}
-/* fn() in a fork()ed child (the tests' state stays as it was); its result */
-static int in_child(int (*fn)(void))
-{
-    int st = 0;
-    pid_t pid;
-    fflush(stdout);
-    if (!(pid = fork()))
-        _exit(fn() ? 0 : 1);
-    waitpid(pid, &st, 0);
-    return WIFEXITED(st) && WEXITSTATUS(st) == 0;
-}
-static int pan_e2e(void)                       /* MODW -> PAN moves the pan the mix uses */
-{
-    int64_t l = 0, r = 0;
+    int32_t o[CTL], pk = 0;
     uint32_t i, k;
-    fresh(0, 0);
-    slot(&trk[0], 0, MS_MODW, MD_PAN, 63);
-    trk[0].p[P_CHOR] = trk[0].p[P_DLY] = trk[0].p[P_REV] = 0;   /* (the buses are in the middle) */
-    pkt(0xB0, 1, 127);
-    trk_note_on(&trk[0], 60, 100);
-    blocks(FS / 10u / CTL);
-    for (k = 0; k < FS / 10u / CTL; k++) {
-        blocks(1);
-        for (i = 0; i < CTL; i++) {
-            l += labs(out_buf[2u * i]);
-            r += labs(out_buf[2u * i + 1u]);
+    if (n > NMAX)
+        n = NMAX;
+    for (i = 0; i < n; i += CTL) {
+        track_render(&trk[part], o, CTL);
+        for (k = 0; k < CTL && i + k < n; k++) {
+            int32_t a = abs(o[k]);
+            pk = a > pk ? a : pk;
+            buf[i + k] = o[k] / 32768.0f;
         }
     }
-    return r > 20 * l && l > 0 && trk[0].p[P_PAN] == 0;
+    buf_n = n;
+    return pk;
+}
+static double rms(uint32_t a, uint32_t e)
+{
+    double s = 0;
+    for (uint32_t i = a; i < e && i < buf_n; i++)
+        s += (double)buf[i] * buf[i];
+    return sqrt(s / (double)(e > a ? e - a : 1));
+}
+static uint32_t zc(uint32_t a, uint32_t e)
+{
+    uint32_t n = 0;
+    for (uint32_t i = a + 1; i < e && i < buf_n; i++)
+        n += (buf[i] >= 0) != (buf[i - 1] >= 0);
+    return n;
+}
+static double bright(uint32_t a, uint32_t e)     /* the share of the first difference's energy: higher, brighter */
+{
+    double s = 0, d = 0;
+    for (uint32_t i = a + 1; i < e && i < buf_n; i++) {
+        s += (double)buf[i] * buf[i];
+        d += (double)(buf[i] - buf[i - 1]) * (buf[i] - buf[i - 1]);
+    }
+    return s > 0 ? d / s : 0;
+}
+static double dc_from(uint32_t a)
+{
+    double s = 0, pk = 0;
+    for (uint32_t i = a; i < buf_n; i++)
+        s += buf[i], pk = fabs(buf[i]) > pk ? fabs(buf[i]) : pk;
+    return pk > 0 ? fabs(s / (double)(buf_n - a)) / pk : 0;
+}
+static int voices_free(uint32_t part)
+{
+    for (uint32_t i = 0; i < NVOICE; i++)
+        if (trk[part].v[i].active)
+            return 0;
+    return 1;
 }
 
-static void test_midi(void)
+
+static void raw(uint32_t part, int smpl, int arp, int led, int crsh, int rate, int dt)
 {
-    static const uint8_t TRS[] = {0xB0, 1, 0x40, 1, 0x7F, 0xF8, 11, 0x20, 0xD2, 0x33, 0x34, 0x90, 60, 0, 0xB4, 1, 9};
+    host_preset(&trk[part], ENGI_MOD, 0);
+    trk[part].p[P_E0] = (int16_t)smpl; trk[part].p[P_E1] = 0; trk[part].p[P_E2] = (int16_t)arp; trk[part].p[P_E3] = 0;
+    trk[part].p[P_E4] = (int16_t)led; trk[part].p[P_E5] = (int16_t)crsh; trk[part].p[P_E6] = (int16_t)rate; trk[part].p[P_E7] = (int16_t)dt;
+    trk[part].p[P_ATK] = 0; trk[part].p[P_DEC] = 64; trk[part].p[P_SUS] = 127; trk[part].p[P_REL] = 20;
+    trk[part].p[P_ED_FLT] = 0; trk[part].p[P_VOICE] = V_POLY;
+}
+static double rms_of(uint32_t e, uint32_t pi)
+{
+    parts_clear(); host_preset(&trk[1], e, pi); trk_note_on(&trk[1], 57, 127); render_part(1, FS / 2);
+    return rms(FS / 4, FS / 2);
+}
+static void presets(void)
+{
+    static const uint8_t CHORD[3] = {57, 60, 64};
+    uint32_t pi, quiet = 0, dc = 0, held = 0, nw = 0, nv = 0;
+    double w = 0, v = 0;
+    for (pi = 0; pi < ENG_MOD.npresets; pi++) {
+        const preset_t *pr = &MOD_PRESETS[pi];
+        uint32_t part = pr->mono ? 2 : 1, k, rel;
+        int32_t pk;
+        parts_clear();
+        host_preset(&trk[part], ENGI_MOD, pi);
+        if (pr->mono) trk_note_on(&trk[part], 36, 110);
+        else for (k = 0; k < 3u; k++) trk_note_on(&trk[part], CHORD[k], 100);
+        pk = render_part(part, FS * 6 / 10);
+        quiet |= (pk < 2048) << pi;
+        for (k = 0; k < 128u; k++) trk_note_off(&trk[part], k);
+        rel = (uint32_t)(TIME_MS_X10[trk[part].p[P_REL] & 127] / 10u) * FS / 1000u * 2u + FS;
+        render_part(part, rel < NMAX ? rel : NMAX);
+        held |= !voices_free(part) << pi;
+        {   /* DC: one note held, over whole periods of it */
+            double f = 440.0 * pow(2.0, (48 - 69) / 12.0), m = 0, mx = 0;
+            uint32_t a = FS / 2, e = a + (uint32_t)(floor(0.4 * f) * FS / f), i;
+            parts_clear(); host_preset(&trk[1], ENGI_MOD, pi); trk[1].p[P_SUS] = 127; trk[1].p[P_ED_FLT] = 0;
+            trk[1].p[P_E2] = 0; trk[1].p[P_E3] = 0;
+            trk_note_on(&trk[1], 48, 100); render_part(1, FS);
+            for (i = a; i < e; i++) m += buf[i], mx = fabs(buf[i]) > mx ? fabs(buf[i]) : mx;
+            m = mx > 0 ? fabs(m / (e - a)) / mx : 0;
+            dc |= (m > 0.02 && pr->env[2] > 0 && pr->e[0] != 15) << pi;   /* (a one-shot has gone silent by then; NOISE
+                                                             * has no period to measure over) */
+        }
+        printf("mod:   %-12s the part %5d (%.1f dBFS)\n", pr->name, pk, 20.0 * log10((pk + 1) / 32768.0));
+    }
+    for (pi = 0; pi < ENG_MOD.npresets; pi++)
+        if (MOD_PRESETS[pi].env[2] > 60) w += rms_of(ENGI_MOD, pi), nw++;
+    for (pi = 0; pi < ENG_WAVES.npresets; pi++)
+        if (ENG_WAVES.presets[pi].env[2] > 60) v += rms_of(ENGI_WAVES, pi), nv++;
+    w /= nw ? nw : 1; v /= nv ? nv : 1;
+    printf("mod:   (quiet 0x%X, DC 0x%X, held 0x%X; one voice's rms MOD %.3f, WAVES %.3f)\n", quiet, dc, held, w, v);
+    check("every preset sounds, no DC, its voices free after the release; level within 4 dB of WAVES",
+          !quiet && !dc && !held && fabs(20.0 * log10(w / v)) < 4.0);
+}
+static void controls(void)
+{
+    uint32_t z0, z1, a, b;
+    double b0, b1, f;
+    char what[140];
+    parts_clear(); raw(1, 4, 0, 127, 0, 0, 0); trk_note_on(&trk[1], 60, 100); render_part(1, FS);
+    {   /* (the period by autocorrelation: an 8-bit stair has ragged zero crossings) */
+        uint32_t L, best = 0;
+        double bv = -1e30;
+        for (L = 40; L < 400; L++) {
+            double sum = 0;
+            for (uint32_t i = FS / 4; i < FS * 3 / 4; i++) sum += (double)buf[i] * buf[i + L];
+            if (sum > bv) bv = sum, best = L;
+        }
+        f = (double)VOICE_FS / best;   /* (the parts render at the voices' rate) */
+    }
+    snprintf(what, sizeof what, "SINE at C4: %.1f Hz (261.6; Paula's whole periods: within 1 %%)", f);
+    check(what, fabs(f / 261.63 - 1) < 0.01);
+    parts_clear(); raw(1, 0, 0, 127, 0, 0, 0); trk_note_on(&trk[1], 60, 100); render_part(1, FS / 2);
+    a = zc(FS / 4, FS / 4 + 480);
+    parts_clear(); raw(1, 0, 4, 127, 0, 0, 0); trk_note_on(&trk[1], 60, 100); render_part(1, FS / 2);
+    z0 = zc(0, 480); z1 = zc(480, 960); b = zc(960, 1440);
+    snprintf(what, sizeof what, "ARP 5TH: the note, the fifth, the octave, a 50 Hz tick each (%u %u %u crossings a tick)", z0, z1, b);
+    check(what, z1 * 10u > z0 * 13u && b * 10u > z0 * 18u && a > 0);
+    parts_clear(); raw(1, 2, 0, 127, 0, 0, 0); trk_note_on(&trk[1], 57, 100); render_part(1, FS / 2); b0 = bright(FS / 10, FS / 2);
+    parts_clear(); raw(1, 2, 0, 30, 0, 0, 0); trk_note_on(&trk[1], 57, 100); render_part(1, FS / 2); b1 = bright(FS / 10, FS / 2);
+    snprintf(what, sizeof what, "LED 127 -> 30 darkens the SAW (%.4f -> %.4f)", b0, b1);
+    check(what, b1 < b0 * 0.5);
+    parts_clear(); raw(1, 4, 0, 127, 127, 0, 0); trk_note_on(&trk[1], 57, 100); render_part(1, FS / 2); b1 = bright(FS / 10, FS / 2);
+    parts_clear(); raw(1, 4, 0, 127, 0, 0, 0); trk_note_on(&trk[1], 57, 100); render_part(1, FS / 2); b0 = bright(FS / 10, FS / 2);
+    snprintf(what, sizeof what, "CRSH 127: the SINE in 3 bits, brighter (%.4f -> %.4f)", b0, b1);
+    check(what, b1 > b0 * 1.5);
+    parts_clear(); raw(1, 10, 0, 127, 0, 0, 0); trk_note_on(&trk[1], 57, 100); render_part(1, FS);
+    {   /* DTUN: two channels beat */
+        double lo = 1e9, hi = 0;
+        parts_clear(); raw(1, 4, 0, 127, 0, 0, 127); trk_note_on(&trk[1], 69, 100); render_part(1, FS);
+        for (uint32_t fr = FS / 2; fr + FS / 20 <= FS; fr += FS / 20) {
+            double r = rms(fr, fr + FS / 20);
+            lo = r < lo ? r : lo; hi = r > hi ? r : hi;
+        }
+        snprintf(what, sizeof what, "DTUN 127: the two channels beat (frame level %.3f .. %.3f)", lo, hi);
+        check(what, hi > lo * 1.3);
+    }
+}
+static void lists(void)
+{
+    uint32_t n, at = 99, ok = 1;
+    for (n = 0; n < NENG_SHOWN; n++)
+        if (eng_vis(n) == ENGI_MOD) at = n;
+    check("MOD in PRESETS and on an EDIT layer key, beside MOD KIT", at < NENG_KEYS && eng_ok(ENGI_MOD) && at + 1u < NENG_SHOWN &&
+          eng_vis(at + 1u) == ENGI_MKIT);
+    for (n = 0; n < ENG_MOD.npresets; n++) {
+        ok &= preset_cat(ENGI_MOD, n) != 0u;
+        ok &= MOD_PRESETS[n].pat <= NPATTERNS;
+        ok &= str_len(MOD_PRESETS[n].name) <= 12u;
+    }
+    check("its presets: a category each, pattern hints among the PHRASES, names that fit", ok && ENG_MOD.npresets >= 16u);
+}
+static double ns_per(uint32_t e, uint32_t pi)
+{
+    struct timespec a, b;
     uint32_t i;
-    fresh(0, 0);
-    song.sel = 1;
-    pkt(0xB0, 1, 100);                           /* ch 1 CC1 */
-    pkt(0xB2, 11, 40);                           /* ch 3 CC11 */
-    pkt(0xD3, 77, 0);                            /* ch 4 aftertouch */
-    pkt(0xB6, 1, 55);                            /* ch 7: ignored with ROUT CH1-4 (#68) */
-    pkt(0xB0, 7, 10);                            /* other CCs: ignored */
-    blocks(1);
-    check("USB: CC1 ch 1 -> part 1, CC11 ch 3 -> part 3, AT ch 4 -> part 4",
-          trk[0].mw == 100 && trk[2].ex_off == 127 - 40 && trk[3].at == 77 && trk[0].at == 0 && trk[0].ex_off == 0);
-    check("USB: ROUT CH1-4: CC1 on ch 7 reaches no track", trk[1].mw == 0 && trk[2].mw == 0);
-    song.g[G_ROUTE] = 1;
-    pkt(0xB6, 1, 55);                            /* ROUT SEL: ch 7 -> the selected track (2) */
-    blocks(1);
-    check("USB: ROUT SEL: CC1 on ch 7 -> the selected track (2)", trk[1].mw == 55 && trk[2].mw == 0);
-    song.g[G_ROUTE] = 0;
-    pkt(0xB0, 121, 0);                           /* reset all controllers */
-    blocks(1);
-    check("CC121 resets MODW / AT / EXPR of the channel's track", trk[0].mw == 0 && trk[1].mw == 55);
-    fresh(0, 0);
-    song.sel = 1;
-    for (i = 0; i < sizeof TRS; i++)
-        um_byte(TRS[i]);
-    blocks(1);
-    check("TRS: CC1, running status, realtime between, CC11, AT (1 data byte, running status) -> parts",
-          trk[0].mw == 0x7F && trk[0].ex_off == 127 - 0x20 && trk[2].at == 0x34 && trk[0].at == 0);
-    check("TRS: ROUT CH1-4: ch 5 is ignored", trk[1].mw == 0);
-    song.g[G_ROUTE] = 1;
-    for (i = 14; i < sizeof TRS; i++)           /* the ch 5 CC1 again with ROUT SEL */
-        um_byte(TRS[i]);
-    blocks(1);
-    song.g[G_ROUTE] = 0;
-    check("TRS: ROUT SEL: ch 5 -> the selected track (2)", trk[1].mw == 9);
-    check("MODW -> PAN +63 through MIDI: the part is on the right (fresh FX)", in_child(pan_e2e));
+    int32_t o[CTL];
+    parts_clear();
+    host_preset(&trk[1], e, pi);
+    trk[1].p[P_VOICE] = V_POLY;
+    for (i = 0; i < 4u; i++) trk_note_on(&trk[1], 48 + 5 * i, 100);
+    track_render(&trk[1], o, CTL);
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    for (i = 0; i < FS * 2 / CTL; i++) track_render(&trk[1], o, CTL);
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    return ((b.tv_sec - a.tv_sec) * 1e9 + (b.tv_nsec - a.tv_nsec)) / (FS * 2.0 * 4.0);
 }
-/* ------------------------------------------------------------------ 4 --- */
-static uint64_t instr_now(void)
+static void cost(void)
 {
-#ifdef __APPLE__
-    struct rusage_info_v4 ri;
-    if (!proc_pid_rusage(getpid(), RUSAGE_INFO_V4, (rusage_info_t *)&ri))
-        return ri.ri_instructions;
-#endif
-    return 0;
+    double wv = ns_per(ENGI_WAVES, 0), m1 = ns_per(ENGI_MOD, 19), m2 = ns_per(ENGI_MOD, 21);   /* (MOD STRINGS, WARM PAD: DTUN) */
+    char what[160];
+    snprintf(what, sizeof what, "cost per voice-sample: MOD %.1f ns / %.1f (DTUN, LED), WAVES %.1f: %.2f x", m1, m2, wv, m2 / wv);
+    check(what, m2 < 1.2 * wv);
 }
-
-/* instructions per sample: parts[k] = {engine, preset, notes}; on: every slot of every sounding part active
- * (LFO -> CUT, VEL -> AMP, MODW -> VIB, LFO -> E3: per voice and per block) */
-static double cost(const uint8_t parts[NPART][3], int on)
-{
-    static const uint8_t NOTES[8] = {48, 52, 55, 59, 60, 64, 67, 71};
-    uint32_t p, i, rep;
-    double best = 1e30;
-    fresh(0, 0);
-    for (p = 0; p < NPART; p++) {
-        track_t *t = &trk[p];
-        host_preset(t, parts[p][0], parts[p][1]);
-        t->p[P_VOICE] = V_POLY;
-        t->p[P_SUS] = 127;
-        t->p[P_AMODE] = 0;
-        t->mw = 90;
-        if (on && parts[p][2]) {
-            slot(t, 0, MS_LFO, MD_CUT, 30);
-            slot(t, 1, MS_VEL, MD_AMP, 40);
-            slot(t, 2, MS_MODW, MD_VIB, 8);
-            slot(t, 3, MS_LFO, MD_E1 + 2, 20);
-        }
-        for (i = 0; i < parts[p][2]; i++)
-            trk_note_on(t, NOTES[i] + 12u * p, 100);
-    }
-    blocks(FS / 2u / CTL);
-    for (rep = 0; rep < 3u; rep++) {
-        uint64_t i0 = instr_now();
-        double ipc;
-        blocks(FS / CTL);
-        ipc = (double)(instr_now() - i0) / FS;
-        best = ipc < best ? ipc : best;
-    }
-    return best;
-}
-
-static void test_cost(void)
-{
-    uint32_t e_phys = eng_by_name("PHYS"), pp = preset_by_name(e_phys, "BOWED METAL");
-    uint8_t phys[NPART][3] = {{(uint8_t)e_phys, (uint8_t)pp, 8}}, idle[NPART][3] = {{0}};
-    uint8_t mix[NPART][3] = {{1, 0, 8}, {2, 0, 8}, {(uint8_t)e_phys, (uint8_t)pp, 4}, {6, 0, 4}};
-    double c_idle, c0, c1, m0, m1;
-    if (!instr_now()) {
-        printf("mod: cost: no instruction counter on this host (proc_pid_rusage), skipped\n");
-        return;
-    }
-    c_idle = cost(idle, 0);
-    c0 = cost(phys, 0);
-    c1 = cost(phys, 1);
-    m0 = cost(mix, 0);
-    m1 = cost(mix, 1);
-    printf("mod: cost: PHYS %s (plays 4 voices): %.0f -> %.0f instructions / sample with 4 slots (+%.0f, +%.1f %% of "
-           "the part over the idle mix %.0f)\n", ENGINES[e_phys]->presets[pp].name, c0, c1, c1 - c0,
-           (c1 - c0) * 100 / (c0 - c_idle), c_idle);
-    printf("mod: cost: 4 parts (DIGITAL / its FM6 conversion 8 + PHASE 8 + PHYS 4 + TRIO 4 asked, the budget plays 8), every slot of "
-           "every part active: %.0f -> %.0f (+%.1f %%)\n", m0, m1, (m1 - m0) * 100 / m0);
-    check("cost: 4 active slots add at most a few percent (PHYS part, the 4-part mix)",
-          (c1 - c0) * 100 / (c0 - c_idle) <= MOD_COST_MAX && (m1 - m0) * 100 / m0 <= MOD_COST_MAX);
-}
-
-/* ------------------------------------------------------------------ 5 --- */
-static FILE *demo_open(const char *dir, const char *name, uint32_t frames)
+/* 5 */
+static FILE *wav_open(const char *dir, const char *name, uint32_t frames)
 {
     char path[512];
     FILE *f;
-    snprintf(path, sizeof path, "%s/%s.wav", dir, name);
+    snprintf(path, sizeof path, "%s/%s", dir, name);
     f = fopen(path, "wb");
     if (f)
         wav_hdr(f, frames);
     return f;
 }
-static void demo_blocks(FILE *f, uint32_t n)
+static uint32_t mixed;
+static void mix_to(FILE *w, uint32_t frames)
 {
-    uint32_t i;
-    while (n--) {
-        blocks(1);
-        for (i = 0; i < CTL; i++)
-            wav_put(f, out_buf[2u * i], out_buf[2u * i + 1u]);
+    int32_t o[2 * CTL];
+    uint32_t i, k;
+    for (i = 0; i < frames; i += CTL) {
+        mix_block(o, CTL);
+        for (k = 0; k < CTL; k++)
+            wav_put(w, o[2 * k], o[2 * k + 1]);
+        mixed += CTL;
     }
 }
-
-static int demos(const char *dir)
+static void demo_presets(const char *dir)
 {
-    uint32_t e, k, n = 0;
-    FILE *f;
-    track_t *t = &trk[0];
-    /* LFO -> CUT: ANALOG SAW LEAD, a held chord, a slow sine LFO opens and closes the filter */
-    fresh(0, 0);
-    t->p[P_LRATE] = 30;
-    slot(t, 0, MS_LFO, MD_CUT, 48);
-    if ((f = demo_open(dir, "lfo_cut", 6u * FS / CTL * CTL))) {
-        trk_note_on(t, 48, 100);
-        trk_note_on(t, 55, 100);
-        trk_note_on(t, 60, 100);
-        demo_blocks(f, 5u * FS / CTL);
-        trk_note_off(t, 48);
-        trk_note_off(t, 55);
-        trk_note_off(t, 60);
-        demo_blocks(f, FS / CTL);
-        fclose(f);
-        n++;
-    }
-    /* VEL -> AMP: DIGITAL E.PIANO (without FELUCCA_FM4: converted, FM6), the same note at velocities 10 .. 127, twice as much dynamics */
-    fresh(1, 0);
-    slot(t, 0, MS_VEL, MD_AMP, 63);
-    slot(t, 1, MS_VEL, MD_CUT, 30);
-    if ((f = demo_open(dir, "vel_amp", 16u * (FS / 4u / CTL) * CTL + FS / CTL * CTL))) {
-        for (k = 0; k < 16u; k++) {
-            trk_note_on(t, 60u + (k & 3u) * 4u, 10u + k * 117u / 15u);
-            demo_blocks(f, FS / 4u / CTL);
-            trk_note_off(t, 60u + (k & 3u) * 4u);
+    static const uint8_t CHORD[3] = {57, 60, 64}, LINE[8] = {36, 36, 43, 36, 39, 36, 41, 43};
+    uint32_t pi, k;
+    FILE *w = wav_open(dir, "mod_presets.wav", 0x7FFFFFF);
+    if (!w) return;
+    mixed = 0;
+    for (pi = 0; pi < ENG_MOD.npresets; pi++) {
+        const preset_t *pr = &MOD_PRESETS[pi];
+        uint32_t part = pr->mono ? 2 : 1;
+        parts_clear();
+        host_preset(&trk[part], ENGI_MOD, pi);
+        if (pr->mono) {
+            for (k = 0; k < 8u; k++) {
+                trk_note_on(&trk[part], LINE[k], 100);
+                mix_to(w, FS / 5 - FS / 40);
+                trk_note_off(&trk[part], LINE[k]);
+                mix_to(w, FS / 40);
+            }
+        } else {
+            for (k = 0; k < 3u; k++) trk_note_on(&trk[part], CHORD[k], 100);
+            mix_to(w, FS * 6 / 5);
+            for (k = 0; k < 3u; k++) trk_note_off(&trk[part], CHORD[k]);
         }
-        demo_blocks(f, FS / CTL);
-        fclose(f);
-        n++;
+        mix_to(w, FS * 2 / 5);
     }
-    /* MODW -> VIB: CHIP (LOFI) WAVE LEAD, the mod wheel (CC1) rises over 4 s: vibrato from none to deep */
-    e = eng_by_name("CHIP");
-    fresh(e, preset_by_name(e, "WAVE LEAD"));
-    t->p[P_LRATE] = 70;
-    t->p[P_LD_PIT] = 0;
-    t->p[P_LFADE] = 0;
-    slot(t, 0, MS_MODW, MD_VIB, 12);
-    if ((f = demo_open(dir, "modw_vib", 5u * FS / CTL * CTL))) {
-        trk_note_on(t, 69, 100);
-        for (k = 0; k < 4u * FS / CTL; k++) {
-            if (k % 32u == 0u)
-                pkt(0xB0, 1, k * 127u / (4u * FS / CTL));
-            demo_blocks(f, 1);
-        }
-        trk_note_off(t, 69);
-        demo_blocks(f, FS / CTL);
-        fclose(f);
-        n++;
-    }
-    /* LFO -> TRIO PW: TRIO ARP LEAD's pulse width swept by a triangle LFO */
-    e = eng_by_name("TRIO");
-    fresh(e, preset_by_name(e, "ARP LEAD"));
-    t->p[P_LRATE] = 45;
-    t->p[P_LWAVE] = 1;
-    t->p[P_AMODE] = 0;
-    t->p[P_VOICE] = V_POLY;
-    slot(t, 0, MS_LFO, MD_E1 + (int32_t)edit_by_label(e, "PW", 7), 40);
-    if ((f = demo_open(dir, "lfo_trio_pw", 5u * FS / CTL * CTL))) {
-        trk_note_on(t, 57, 100);
-        demo_blocks(f, 4u * FS / CTL);
-        trk_note_off(t, 57);
-        demo_blocks(f, FS / CTL);
-        fclose(f);
-        n++;
-    }
-    /* AT -> WHEEL DRV: an organ chord, channel aftertouch pushes the drive up and down */
-    e = eng_by_name("WHEEL");
-    fresh(e, 0);
-    slot(t, 0, MS_AT, MD_E1 + (int32_t)edit_by_label(e, "DRV", 6), 63);
-    slot(t, 1, MS_AT, MD_CUT, 20);
-    if ((f = demo_open(dir, "at_wheel_drv", 6u * FS / CTL * CTL))) {
-        trk_note_on(t, 48, 100);
-        trk_note_on(t, 55, 100);
-        trk_note_on(t, 64, 100);
-        for (k = 0; k < 5u * FS / CTL; k++) {
-            uint32_t ph = k * 254u / (5u * FS / CTL);
-            if (k % 16u == 0u)
-                pkt(0xD0, ph < 127u ? ph : 254u - ph, 0);
-            demo_blocks(f, 1);
-        }
-        trk_note_off(t, 48);
-        trk_note_off(t, 55);
-        trk_note_off(t, 64);
-        demo_blocks(f, FS / CTL);
-        fclose(f);
-        n++;
-    }
-    printf("mod: %u demos in %s (lfo_cut, vel_amp, modw_vib, lfo_trio_pw, at_wheel_drv)\n", n, dir);
-    return n == 5u;
+    fseek(w, 0, SEEK_SET);
+    wav_hdr(w, mixed);
+    fclose(w);
 }
-
 int main(int argc, char **argv)
 {
-    test_off();
-    test_math();
-    test_midi();
-    test_cost();
-    if (argc > 1)
-        check("demos written", demos(argv[1]));
-    printf("%s\n", bad ? "MOD MATRIX TEST FAILED" : "mod matrix test passed");
-    return bad != 0;
+    presets();
+    controls();
+    lists();
+    if (!getenv("NOCOST"))
+        cost();
+    if (argc > 1) {
+        demo_presets(argv[1]);
+        printf("mod: demos in %s\n", argv[1]);
+    }
+    printf("mod: %s\n", fails ? "FAILED" : "all checks ok");
+    return fails != 0;
 }

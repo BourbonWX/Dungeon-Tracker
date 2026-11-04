@@ -200,6 +200,65 @@ int main(void)
     snprintf(what, sizeof what, "another engine: the morph lets go (%u presets there, target %u)", morph_npresets(t), mo.tgt[3]);
     ok9(what, mo.eng[3] == t->eng_req && mo.tgt[3] <= morph_npresets(t));
 
+    /* 6b. 1.5: a saved sound as the target (SAVE > USER, the track's own engine) */
+    {
+        static int16_t x[P_COUNT], y[P_COUNT], v[P_COUNT];
+        uint32_t n, f, ux = 20u, uy = 21u, um = 22u, okv = 1, stays;
+        ui_power_on();
+        stop_transport();
+        track_select(3);
+        apply_preset_to(t, 4); t->engine = t->eng_req; frames(5);
+        f = (uint32_t)up_store(ux, "SOFT ONE");
+        apply_preset_to(t, 12); t->engine = t->eng_req; frames(5);
+        f |= (uint32_t)up_store(uy, "BRIGHT ONE");
+        set_engine_of(t, ENGI_MOD); t->engine = t->eng_req; frames(5);
+        f |= (uint32_t)up_store(um, "OTHER ENG");     /* (another engine's: never a target here) */
+        set_engine_of(t, ENGI_GENESIS); t->engine = t->eng_req; frames(5);
+        up_load(ux); t->engine = t->eng_req; frames(20);
+        memcpy(x, t->p, sizeof x);
+        up_values_of(uy, y);
+        go_page(GR_MORPH);
+        frames(10);
+        n = morph_npresets(t);
+        snprintf(what, sizeof what, "1.5 saved sounds: KNOB 1's list OFF, %u presets, then this engine's saved sounds (%u in all)",
+                 n, morph_list_n(t));
+        ok9(what, (f == 0u || (f & ~3u) == 0u) && morph_list_n(t) == n + 3u && up_engine_of(um) == (int32_t)ENGI_MOD);
+        turn(EN_K1, (int32_t)n + 2);
+        frames(20);
+        snprintf(what, sizeof what, "  KNOB 1 past the presets: U%02u (%s), the TARGET column U%02u", mo.tgt[3] >= MO_USER ? mo.tgt[3] - MO_USER + 1u : 0u,
+                 morph_tname(t), uy + 1u);
+        ok9(what, mo.tgt[3] == MO_USER + uy && str_eq(morph_tname(t), "BRIGHT ONE"));
+        turn(EN_K1, 3);
+        frames(10);
+        stays = mo.tgt[3] == MO_USER + uy;
+        ok9("  further: the list ends there (another engine's saved sound is not on it)", stays);
+        turn(EN_K2, 100);
+        frames(30);
+        for (id = 0; id < P_COUNT; id++)
+            if (morph_ok(t, id) && !((motion_active[3][id / 32u] >> (id % 32u)) & 1u) && !param_kept(id) && t->p[id] != y[id])
+                okv = 0;
+        ok9("  AMOUNT 100 %: every gliding value the saved sound's", okv && mo.amt[3] == 100u);
+        morph_set(3, mo.tgt[3], 50);
+        frames(20);
+        ok9("  50 %: half way between the two saved sounds", at(t, 50));
+        project_save(2);
+        morph_set(3, 0, 0);
+        frames(20);
+        project_load(2);
+        frames(30);
+        ok9("  saved with the project and loaded back: the same saved target, 50 %", mo.tgt[3] == MO_USER + uy && mo.amt[3] == 50u && at(t, 50));
+        turn(EN_K1, -1);
+        frames(10);
+        ok9("  KNOB 1 back one: the other saved sound", mo.tgt[3] == MO_USER + ux);
+        turn(EN_K1, 1);
+        frames(10);
+        up_put(uy, 0);
+        frames(20);
+        memcpy(v, t->p, sizeof v);
+        ok9("  its saved sound erased: no target, the sound as it was (A)", mo.tgt[3] == 0u && !up_used(uy) && !memcmp(v, x, sizeof v));
+        (void)orig;
+    }
+
     /* 7. drawn */
     {
         uint32_t p;

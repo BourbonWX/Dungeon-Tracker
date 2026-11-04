@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Dungeon Tracker: the combat study's songs (tools/combat_sim.py): N power-on songs (boot_song.c) as JSON, each track's
- * steps as the sequencer holds them and its dungeon level (ui_dungeon.c dg_level).
+ * steps as the sequencer holds them and its dungeon level (1: the party starts at L1, ui_dungeon.c dg_plv).
  *   build/host/combat_export N > songs.json */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
@@ -10,7 +10,7 @@ static void dump_track(const track_t *t)
 {
     uint32_t i, len = (uint32_t)clamp(t->p[P_SLEN], 1, NSTEP);
     printf("{\"len\":%u,\"div\":%d,\"gate\":%d,\"level\":%u,\"kit\":%d,\"steps\":[", len, t->p[P_SDIV], t->p[P_SGATE],
-           dg_level(t), t->eng_req == ENGI_CKIT);
+           1u, t->eng_req == ENGI_CKIT);
     for (i = 0; i < len; i++) {
         const step_t *s = &t->step[i];
         printf("%s[%u,%u,%u,%u,%u,%u,%u,%u,%d,%u,%u]", i ? "," : "", s->time, s->n, s->flags & SF_ACCENT ? 1u : 0u,
@@ -26,7 +26,7 @@ int main(int argc, char **argv)
     printf("[");
     for (s = 0; s < n; s++) {
         ui_power_on();
-        boot_song(0x51ED5u + s * 2654435761u);
+        random_song_make(0x51ED5u + s * 2654435761u);
         boot_song_settle();
         printf("%s{\"name\":\"power-on %u\",\"bpm\":%d,\"tracks\":[", s ? ",\n" : "", s + 1u, song.g[G_BPM]);
         for (k = 0; k < NTRK; k++) {

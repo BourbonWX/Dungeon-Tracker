@@ -55,6 +55,11 @@ static const char *const N_NOTE[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", 
 static const char *const N_DASH[] = {"--"};
 static const char *const N_RTYPE[] = {"ROOM", "SPRING", "HALL"};   /* G_RTYPE: the reverb bus's model (fx.c) */
 static const char *const N_GO[] = {"--", "GO"};
+#if RONDO_LAYOUT                                 /* SAVE > PROJECT's SLOT (1.0.1: QUICK first; Dungeon Tracker: A..K) */
+static const char *const N_PSLOT[] = {"Q", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"};
+#else
+static const char *const N_PSLOT[] = {"Q", "A", "B", "C", "D"};   /* SAVE > PROJECT's SLOT (1.0.1: QUICK first) */
+#endif
 static const char *const N_SLCR[] = {"OFF", "GATE", "STUT"};             /* SL_OFF .. SL_STUT (slicer.c) */
 static const char *const N_SLDIV[] = {"1/8", "1/16", "1/32", "8T", "16T", "32T"};   /* SL_DEN */
 /* the INSERT's types (1.5, fx.c IT_*; append-only: stored). Its three values A B C mean what the type says (ins_desc) */
@@ -78,10 +83,22 @@ static const char *const N_IRATE[] = {"689", "919", "1.1k", "1.4k", "1.8k", "2.2
 static const char *const N_MSRC[] = {"OFF", "LFO", "ENV", "VEL", "KEY", "RAND", "MODW", "AT", "EXPR", "S&H", "SLEW"};
 static const char *const N_MDST[] = {"OFF", "PITCH", "CUT", "SHP", "AMP", "PAN", "DIST", "CHO", "DLY", "REV", "RATE",
                                      "VIB", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "DEPTH", "VEL", "TIME"};
-static const char *const N_ENGNAME[] = {"ANALOG", FELUCCA_FM4 ? "DIGITAL" : "-", "PHASE", "CHIP", "SAMPLE", "VOICE", "TRIO", "WHEEL", "GRAIN", "PHYS",
-                                             "DRUM", "NOISE", "FM6",
+#if DT_RETIRE
+#define DT_GONE(n) "-"                         /* 1.1: a retired engine's number (retire.c): "-", as ENGINES[] names it */
+#else
+#define DT_GONE(n) n
+#endif
+static const char *const N_ENGNAME[] = {"ANALOG", FELUCCA_FM4 ? "DIGITAL" : "-", DT_GONE("PHASE"), DT_GONE("CHIP"), DT_GONE("SAMPLE"),
+                                             DT_GONE("VOICE"), DT_GONE("TRIO"), DT_GONE("WHEEL"), DT_GONE("GRAIN"), DT_GONE("PHYS"),
+                                             DT_GONE("DRUM"), DT_GONE("NOISE"), DT_GONE("FM6"),
                                              FELUCCA_SLICE ? "SLICE" : "-",
-                                             "FMKIT", "FMTONE",   /* RE-1: 14, 15 (the editor picks engines by these) */
+                                             "GEN KIT", DT_GONE("FMTONE"),   /* RE-1 (1.5: FMKIT is GEN KIT): 14, 15 (the editor picks engines by these) */
+                                             "WAVES",             /* Dungeon Tracker: 16 */
+                                             "SID",               /* 1.3: 17 */
+                                             "GENESIS",           /* 1.2 (Dungeon Tracker): 18 */
+                                             "MOD KIT",           /* 1.5: 19 */
+                                             "WAVE 32",           /* 1.5: 20 */
+                                             "MOD",               /* 1.5: 21 */
 };
 
 #define PD(l, f, mn, mx, df) {l, f, mn, mx, df, 0, 0}
@@ -96,7 +113,7 @@ static const param_desc_t TP[P_COUNT] = {
     [P_ED_FLT] = PD("FLT", F_BIPCT, -64, 63, 0),
     [P_ED_PIT] = PD("PIT", F_BIPCT, -64, 63, 0),
     [P_ED_SHP] = PD("SHP", F_BIPCT, -64, 63, 0),
-    [P_ED_FX] = PD("FX", F_BIPCT, -64, 63, 0),
+    [P_ED_FX] = PD("BEND", F_BIPCT, -64, 63, 0),   /* (Dungeon Tracker 1.0: P_BEND, the pitch wheel; Felucca: unused) */
     [P_LRATE] = PD("RATE", F_LFOHZ, 0, 127, 60),
     [P_LWAVE] = PE("WAVE", N_LWAVE, 0),
     [P_LPHASE] = PD("PHS", F_INT, 0, 127, 0),
@@ -216,7 +233,7 @@ static const param_desc_t GP[G_COUNT] = {
      * stored with the project as before. (was "--": stored 0 = CH1-4, as MIDI IN always was) */
     [G_ROUTE] = PE("ROUT", N_ROUTE, 0),
     [G_INFO] = PD("CPU", F_INT, 0, 0, 0),
-    [G_SLOT] = PD("SLOT", F_INT, 1, 4, 1),
+    [G_SLOT] = PE("SLOT", N_PSLOT, 1),            /* 1.0.1: Q (QUICK: the autosave), then A-D */
     [G_NAME] = PE("NAME", N_DASH, 0),
     [G_LOAD] = PE("LOAD", N_GO, 0),
     [G_SAVE] = PE("SAVE", N_GO, 0),
@@ -252,8 +269,13 @@ static const param_desc_t *track_desc(const track_t *t, uint32_t id)
 {
     if (cmd_id(id))
         return &CMD_DESC[id - P_COUNT];
-    if (t->eng_req % NENGINES == ENGI_CKIT && id < P_E0) {   /* RONDO: FMKIT's voice values (eng_cycle.c) */
-        const param_desc_t *d = ck_param_desc(id);
+    if (t->eng_req % NENGINES == ENGI_GENESIS && id < P_E0) {   /* 1.2: GENESIS's operators (eng_genesis.c) */
+        const param_desc_t *d = gen_param_desc(id);
+        if (d)
+            return d;
+    }
+    if (ENG_KIT(t->eng_req % NENGINES) && id < P_E0) {   /* RONDO: FMKIT's voice values (eng_cycle.c) */
+        const param_desc_t *d = kit_param_desc(t->eng_req % NENGINES, id);
         if (d)
             return d;
     }
@@ -340,6 +362,18 @@ static int32_t enum_rank(const param_desc_t *d, int32_t v)   /* v's place in the
     return o ? r + d->min : v;
 }
 /* a knob turned `steps` (signed) from v: clamped, over the shown order, past aliases (enum_step) */
+/* 1.5: GLIDE's times, ms (0 OFF; voice.c glide_set: RATE an octave, TIME any jump) */
+static const uint16_t GLIDE_MS[128] = {
+    0, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 10, 11,
+    11, 12, 12, 13, 14, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 25,
+    26, 27, 29, 30, 32, 34, 36, 38, 40, 42, 44, 46, 49, 52, 54, 57,
+    61, 64, 67, 71, 75, 79, 83, 88, 93, 98, 103, 108, 114, 121, 127, 134,
+    141, 149, 157, 166, 175, 184, 194, 205, 216, 228, 240, 253, 267, 282, 297, 313,
+    330, 348, 367, 388, 409, 431, 454, 479, 505, 533, 562, 592, 625, 659, 695, 732,
+    772, 814, 859, 906, 955, 1007, 1062, 1120, 1181, 1245, 1313, 1384, 1460, 1539, 1623, 1712,
+    1805, 1903, 2007, 2116, 2232, 2353, 2481, 2617, 2759, 2909, 3068, 3235, 3411, 3597, 3793, 4000,
+};
+
 static int32_t param_turn(const param_desc_t *d, int32_t v, int32_t steps)
 {
     const uint8_t *o = enum_order(d);
@@ -377,6 +411,20 @@ static void param_format(const param_desc_t *d, int32_t v, char *val, const char
         break;
     case F_TIME: {
         uint32_t ms10 = TIME_MS_X10[v & 127];
+        if (d == &TP[P_GLIDE]) {                     /* 1.5: GLIDE shows its own time (GLIDE_MS), 0 OFF */
+            uint32_t g = GLIDE_MS[v & 127];
+            if (!g) {
+                str_cpy(val, "OFF", 6);
+                fmt_named = 1;
+            } else if (g < 1000u) {
+                fmt_int(val, (int32_t)g);
+                *unit = "ms";
+            } else {
+                fmt_fix(val, (int32_t)(g / 10u), 2);
+                *unit = "s";
+            }
+            break;
+        }
         if (ms10 < 100u) {
             fmt_fix(val, (int32_t)ms10, 1);
             *unit = "ms";
@@ -479,7 +527,7 @@ typedef struct {
 
 static const page_t PAGES[] = {
     {"ENV", FAM_ENV, SC_TRACK, GR_ADSR, {P_ATK, P_DEC, P_SUS, P_REL}},
-    {"ENV DEST", FAM_ENV, SC_TRACK, GR_NONE, {P_ED_FLT, P_ED_PIT, P_ED_SHP, P_ESYNC}},   /* (P_ED_FX: nothing reads it);
+    {"ENV DEST", FAM_ENV, SC_TRACK, GR_NONE, {P_ED_FLT, P_ED_PIT, P_ED_SHP, P_ESYNC}},   /* (P_ED_FX: 1.0 BEND, the wheel, no page);
                                                                              * 1.5: ESYNC, ENV's times as note values */
     {"LFO", FAM_LFO, SC_TRACK, GR_LFO, {P_LRATE, P_LWAVE, P_LPHASE, P_LFADE}},
     {"LFO 2", FAM_LFO, SC_TRACK, GR_LFO, {P_LSYNC, P_LTRIG, P_LPOL, 0xFF}},   /* 1.2: SYNC TRIG POL */

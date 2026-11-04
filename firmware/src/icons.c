@@ -256,7 +256,11 @@ static uint32_t engine_icon(const char *name)
         {"DRUM", ICON_DRUM},
         {"NOISE", ICON_NOISE},
         {"FM6", ICON_MOD},                    /* (symbol_modular: six operators patched; a glyph of its own wanted) */
-        {"FMKIT", ICON_DRUM}, {"FMTONE", ICON_ALGORITHM},   /* RONDO */
+        {"GEN KIT", ICON_DRUM}, {"FMTONE", ICON_ALGORITHM},   /* RONDO */
+        {"WAVES", ICON_W_RTRP},                            /* 1.1 */
+        {"SID", ICON_W_PLS},                               /* 1.3 */
+        {"GENESIS", ICON_ALGORITHM},                       /* 1.2 */
+        {"MOD KIT", ICON_DRUM}, {"WAVE 32", ICON_W_RTRP}, {"MOD", ICON_SAMPLE},   /* 1.5 */
     };
     uint32_t i;
     for (i = 0; i < sizeof M / sizeof M[0]; i++)

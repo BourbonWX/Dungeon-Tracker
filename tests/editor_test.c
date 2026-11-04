@@ -208,9 +208,9 @@ static int preferences(void)
         host_wire[5] == 2 && host_wire[8] == 9 && host_wire[10] == 127);
     a[0] = 2; request(ED_UI_SET, a, 2);
     bad += check("unsupported preference is reported without applying it", host_wire[5] == 2);
-    a[0] = ENGI_DRUM; a[1] = 0; a[2] = 64; a[3] = 1;
+    a[0] = 0; a[1] = 0; a[2] = 64; a[3] = 1;  /* (1.1: DRUM retired; 1.5: SAMPLE, PHYS too: ANALOG; 14.. hold MIDI LEARN) */
     request(ED_FAV_SET, a, 4);
-    bad += check("FAV_SET marks DRUM as a normal engine", host_wire[5] == 3 && favorite_has(ENGI_DRUM, 0));
+    bad += check("FAV_SET marks ANALOG as a normal engine", host_wire[5] == 3 && favorite_has(0, 0));
     request(ED_FAV_GET, a, 4);
     bad += check("FAV_GET reads the bounded favorite range", host_wire[5] == 0 && host_wire[10] == 1);
     a[0] = NENGINES; a[1] = 31; request(ED_FAV_SET, a, 4);
@@ -434,6 +434,24 @@ static int samples(void)
     bad += check("END cannot change published sample zones without BEGIN",
                  request(ED_SMP_END, a, n) == 8u && host_wire[6] == 2 && host_writes == 2 &&
                  usr_zone[0][0].rate == 65536u);
+#if RONDO_LAYOUT
+    {   /* Dungeon Tracker: USR2's flash holds the song slots: no sample command writes or erases there */
+        uint8_t w[64] = {1, 0, 4, 0};                     /* (slot 2, offset 512) */
+        uint32_t m = pack7(data, 32, w + 4) + 4u;
+        host_erases = host_writes = 0; a[0] = 1;
+        bad += check("1.2: USR2 retired: BEGIN refused (6), nothing erased",
+                     request(ED_SMP_BEGIN, a, 1) == 8u && host_wire[6] == 6 && !host_erases);
+        bad += check("1.2: .. ERASE answers ok (it is empty), nothing erased",
+                     request(ED_SMP_ERASE, a, 1) == 8u && !host_wire[6] && !host_erases);
+        bad += check("1.2: .. WRITE refused (1), nothing written", request(ED_SMP_WRITE, w, m) == 11u && host_wire[9] == 1 &&
+                     !host_writes && !host_erases);
+        a[0] = 1; n = pack7((const uint8_t *)&h, sizeof h, a + 1) + 1u;
+        bad += check("1.2: .. END refused (6), nothing written", request(ED_SMP_END, a, n) == 8u && host_wire[6] == 6 &&
+                     !host_writes && !usr_nz[1]);
+        bad += check("1.2: .. USR1 as before (80 KiB); USR2 none (1.3: USR3 none either)",
+                     smp_user_size(0) == 0x14000u && !smp_user_size(2) && !smp_user_size(1) && !smp_user_ok(1) && !smp_user_ok(2));
+    }
+#endif
     song.playing = 1; host_progress = 0; a[0] = 0; a[1] = 0;
     bad += check("user-preset STORE does not mutate RAM when audio cannot stop",
                  request(ED_UP_STORE, a, 2) == 8u && host_wire[6] == 2 && !up_used(0));
@@ -499,7 +517,7 @@ static int song_protocol(void)
 
 static int malformed_saves(void)
 {
-    static const uint8_t slot[] = {1, 4}, name[] = {0, 'X', 0, 'Y'};
+    static const uint8_t slot[] = {1, NPROJ}, name[] = {0, 'X', 0, 'Y'};   /* (one past the last slot: A..D, Dungeon Tracker A..H) */
     const uint8_t save[] = {1, 0};
     project_store_t old;
     int bad = 0;
@@ -600,8 +618,7 @@ static int fm6_patches(void)
                  host_wire[8 + 14] == 99 && !memcmp(host_wire + 8 + 118, "EDITOR    ", 10));
     fm6_load_slot(2, 0);
     up_load(5);
-    bad += check("  .. UP_LOAD 6 plays it, SLOT OWN", !memcmp(fm6_patch[2] + FP_NAME, "EDITOR    ", 10) &&
-                 trk[2].p[P_E7] == FM6_OWN);
+    bad += check("  .. UP_LOAD 6 (1.1: FM6 retired) plays as GENESIS, its substitute (1.5)", trk[2].eng_req == ENGI_GENESIS);
     up_rename(5, "RENAMED");
     a[0] = ED_FM6_USER; a[1] = 5;
     request(ED_FM6_GET, a, 2);
@@ -748,29 +765,29 @@ static int live_sync(void)
 
     /* PRESET */
     TSEL->p[P_LEVEL] = 33;                               /* pending; a sound load keeps P_LEVEL */
-    a[0] = 0; a[1] = 2;
+    a[0] = ENGI_GENESIS;   /* (1.1: ANALOG retired; 1.5: FMTONE) */  a[1] = 2;
     request(ED_PRESET, a, 2);
     sync_pass();
     bad += check("the editor's own PRESET: no RELOAD, no CHANGED for what it loaded, a pending CHANGED stays",
                  TSEL->preset == 2 && !wire_frames(ED_RELOAD, 0) && wire_frames(ED_CHANGED, &x) == 1u &&
                  x[1] == P_LEVEL && !sync_pass());
     for (i = 0; i < 3u; i++) {                           /* any preset of any engine */
-        a[0] = (uint8_t)(i ? 12u : 4u); a[1] = (uint8_t)i;
+        a[0] = (uint8_t)(i ? ENGI_WAVES : 0u); a[1] = (uint8_t)i;   /* (1.1: WAVES; FM6 retired; 1.5: ANALOG back) */
         request(ED_PRESET, a, 2);
         other += sync_pass() != 0;
     }
     bad += check("PRESET of other engines: no push at all", !other && ed_w.eng == ed_eng(TSEL));
-    a[0] = 1; a[1] = G_ENGSEL; a[2] = (8192 + 5) & 127; a[3] = (8192 + 5) >> 7;
+    a[0] = 1; a[1] = G_ENGSEL; a[2] = (8192 + 0) & 127; a[3] = (8192 + 0) >> 7;
     request(ED_SET, a, 4);
-    bad += check("SET of G_ENGSEL: no RELOAD", ed_eng(TSEL) == 5u && !sync_pass());
+    bad += check("SET of G_ENGSEL: no RELOAD", ed_eng(TSEL) == 0u && !sync_pass());
     sync_reload = 1;                                     /* a load on the device, not pushed yet */
-    a[0] = 0; a[1] = 1;
+    a[0] = ENGI_GENESIS;   /* (1.1: ANALOG retired; 1.5: FMTONE) */  a[1] = 1;
     request(ED_PRESET, a, 2);
     sync_pass();
     bad += check("a RELOAD due before the editor's PRESET still goes out", wire_frames(ED_RELOAD, 0) == 1u);
     a[0] = 0; request(ED_WATCH, a, 1);
     sync_reload = 0;
-    a[0] = 0; a[1] = 3;
+    a[0] = ENGI_GENESIS;   /* (1.1: ANALOG retired; 1.5: FMTONE) */  a[1] = 3;
     request(ED_PRESET, a, 2);
     a[0] = 1; request(ED_WATCH, a, 1);
     bad += check("not watching: PRESET as before, WATCH then starts from it", !sync_pass() && TSEL->preset == 3);
@@ -1095,60 +1112,43 @@ static int menu_protocol(void)
     return bad;
 }
 
-/* DRUM KIT 1..3 (HAND CYM H+CYM until 1.0.4, retired): DESC names them as the kit they play (66 10 77), a SET of
- * one lands on that kit (the reply says so), a user preset sent with one loads as that kit */
+/* 1.1: the retired engines (engines.c ENG_SUBST) through the editor: SET of G_ENGSEL to DRUM, a PRESET of FM6, a user
+ * preset sent as ANALOG, a project of DRUM and WHEEL tracks: each lands on its substitute (FMKIT, FMTONE, WAVES), a
+ * sound of the old one's category; never a silent retired slot */
 static int drum_kit_retired(void)
 {
-    static const uint8_t MAP[4] = {0, 6, 5, 8};
     static uint8_t a[16 + 2u * P_COUNT + 32u];
-    int16_t got[P_COUNT];
     uint32_t r, i, k = 0, ok = 1;
     int bad = 0;
     reset();
     a[0] = 1; a[1] = G_ENGSEL; a[2] = (8192 + ENGI_DRUM) & 127; a[3] = (8192 + ENGI_DRUM) >> 7;
     request(ED_SET, a, 4);
-    a[0] = 0; a[1] = P_E0;
-    request(ED_DESC, a, 2);
-    {   /* scope, id, fmt, min, max, def (v14 each), "KIT", "", then the 9 names */
-        const char *n = (const char *)host_wire + 5 + 3 + 6;
-        static const char *const WANT[9] = {"STD", "66", "10", "77", "80", "10", "66", "55", "77"};
-        n += strlen(n) + 1; n += strlen(n) + 1;
-        for (i = 0; i < 9u; i++, n += strlen(n) + 1)
-            ok &= !strcmp(n, WANT[i]);
-    }
-    bad += check("DESC of DRUM KIT: STD 66 10 77 80 10 66 55 77 (1..3 as the kits they play)", ok);
-    for (r = 1, ok = ed_eng(TSEL) == ENGI_DRUM; r < 4u; r++) {
-        uint32_t u = r + 8192u;
-        a[0] = 0; a[1] = P_E0; a[2] = u & 127u; a[3] = u >> 7;
-        request(ED_SET, a, 4);
-        ok &= TSEL->p[P_E0] == MAP[r] && (int32_t)(host_wire[7] | host_wire[8] << 7) - 8192 == MAP[r];
-    }
-    bad += check("SET of DRUM KIT 1..3 lands on 66 10 77 (and replies it)", ok);
-    a[k++] = 5; a[k++] = ENGI_DRUM;                        /* slot U06, DRUM, KIT 3 (H+CYM) */
-    memcpy(a + k, "OLDKIT", 6); k += 6; a[k++] = 0;
+    bad += check("1.1: SET of G_ENGSEL to DRUM (retired): FMKIT, a kit", ed_eng(TSEL) == ENGI_CKIT &&
+                 preset_cat(ENGI_CKIT, TSEL->preset) == CAT_DRUM);
+    a[0] = ENGI_FM6; a[1] = 2;                             /* FM6's FM BASS */
+    request(ED_PRESET, a, 2);
+    bad += check("  PRESET of FM6's FM BASS: GENESIS (1.5), a bass", TSEL->eng_req == ENGI_GENESIS &&
+                 preset_cat(ENGI_GENESIS, TSEL->preset) == CAT_BASS);
+    a[k++] = 5; a[k++] = 2;                                /* slot U06, PHASE (1.5: ANALOG back) */
+    memcpy(a + k, "OLDPAD", 6); k += 6; a[k++] = 0;
     for (i = 0; i < P_COUNT; i++) {
-        uint32_t u = (uint32_t)((i == P_E0 ? 3 : param_desc_of(ENGI_DRUM, i)->def) + 8192);
+        uint32_t u = (uint32_t)(TP[i].def + 8192);
         a[k++] = u & 127u; a[k++] = (u >> 7) & 127u;
     }
     for (i = 0; i < 16u; i++) { a[k++] = 0; a[k++] = 0; }
     request(ED_UP_PUT, a, k);
-    up_values(up_rec(5), got);
-    bad += check("a user preset of DRUM KIT 3 (H+CYM) loads as 77", up_used(5) && got[P_E0] == 8);
-    {   /* a project whose DRUM tracks hold KIT 0..3: loaded (and bounded, as from flash) as STD 66 10 77 */
+    ok = up_used(5) && !up_load(5);
+    bad += check("  a user preset sent as PHASE: stored, it loads on WAVES (and names it)", ok && TSEL->eng_req == ENGI_WAVES &&
+                 up_engine(5) == ENGI_WAVES);
+    {   /* a project of DRUM, WHEEL, FM6 and PHASE tracks: loaded as GEN KIT, GENESIS, GENESIS, WAVES (1.5) */
         static project_t p;
-        for (r = 0; r < NTRK; r++) {
-            set_engine_of(&trk[r], ENGI_DRUM); apply_preset_to(&trk[r], 0);
-            trk[r].engine = trk[r].eng_req;
-        }
+        static const uint8_t OLD[4] = {ENGI_DRUM, 7u, ENGI_FM6, 2u}, NEW[4] = {ENGI_CKIT, ENGI_GENESIS, ENGI_GENESIS, ENGI_WAVES};
         project_capture(&p);
-        for (r = 0; r < NTRK; r++) p.t[r].p[P_E0] = (int16_t)r;
+        for (r = 0; r < NTRK; r++) { p.t[r].engine = OLD[r]; p.t[r].preset = 0; }
         p.sum = proj_sum(&p);
         ok = !project_restore_runtime(&p);
-        for (r = 0; r < NTRK; r++) ok &= trk[r].p[P_E0] == MAP[r];
-        for (r = 0; r < NTRK; r++) p.t[r].p[P_E0] = (int16_t)r;
-        proj_bound(&p);
-        for (r = 0; r < NTRK; r++) ok &= p.t[r].p[P_E0] == MAP[r];
-        bad += check("a project of DRUM KIT 1..3 loads as 66 10 77 (STD stays)", ok);
+        for (r = 0; r < NTRK; r++) ok &= trk[r].eng_req == NEW[r] && !eng_retired(trk[r].eng_req);
+        bad += check("  a project of DRUM WHEEL FM6 PHASE tracks loads as GEN KIT GENESIS GENESIS WAVES", ok);
     }
     return bad;
 }

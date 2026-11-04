@@ -106,7 +106,19 @@ static void host_preset_values(track_t *t, uint32_t e, uint32_t pi, const preset
     for (i = 0; i < 4u; i++)
         t->p[P_DIST + i] = (int16_t)(p->fx[i] ? p->fx[i] - 1 : FX_DEF[i]);
     fm6_track_loaded(t);                          /* FM6: the preset's patch (ui.c apply_preset_to) */
+#ifdef ENGI_GENESIS
+    if (e == ENGI_GENESIS)                        /* 1.2: GENESIS's operators (ui.c apply_preset_to) */
+        gen_ops_load(t, pi);
+#endif
+#ifdef ENGI_MKIT
+    if (ENG_KIT(e))                               /* 1.5: a kit's voices (ui.c apply_preset_to: ck_kit_load) */
+        eng_own_values(e, pi, t->p);
+#endif
 }
+#if DT_RETIRE && defined(ENGI_WT32)
+#include "category.c"                             /* (1.5: a retired engine's preset plays as its substitute's, as */
+#include "retire.c"                               /* ui.c apply_preset_to) */
+#endif
 static void host_preset_req(track_t *t, uint32_t e, uint32_t pi)
 {
     uint32_t n = ENGINES[e]->npresets;
@@ -119,6 +131,13 @@ static void host_preset_req(track_t *t, uint32_t e, uint32_t pi)
         t->eng_req = ENGI_FM6;
         fm6_set_patch(tr, v);
         fm6_slot[tr] = (uint8_t)t->p[P_E7];
+        return;
+    }
+#endif
+#if DT_RETIRE && defined(ENGI_WT32)
+    if (!n && eng_retired(e) && e != ENGI_DIGITAL) {   /* 1.5: as the device: the substitute's of the same category */
+        uint32_t c = preset_cat(e, pi), ne = eng_subst_k(e, pi), k = eng_subst_preset(e, pi);
+        host_preset_values(t, ne, k, &ENGINES[ne]->presets[k]);
         return;
     }
 #endif

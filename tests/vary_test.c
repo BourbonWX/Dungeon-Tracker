@@ -181,7 +181,7 @@ int main(void)
         for (i = 0; i <= (uint32_t)TP[P_SCALE].max && !str_eq(TP[P_SCALE].names[i], "MAJ") && !str_eq(TP[P_SCALE].names[i], "MAJOR"); i++)
             ;
         t->p[P_SCALE] = (int16_t)(i <= (uint32_t)TP[P_SCALE].max ? i : 1u);
-        motion_set_lock(t, 4, P_E1, 30);
+        motion_set_lock(t, 4, P_E6, 30);   /* (1.5: T2 GENESIS: E6, DTUNE, 0 .. 127) */
         open_vary(1);
         vary.wild[1] = 101;
         for (k = 0; k < 20u; k++) {
@@ -190,7 +190,7 @@ int main(void)
                 if (t->step[i].time == ST_NOTE && t->step[i].n)
                     inscale &= scale_snap(t, t->step[i].note[0]) == t->step[i].note[0];
         }
-        locks = motion_lock_get(t, 4, P_E1, &v) && v == 30;
+        locks = motion_lock_get(t, 4, P_E6, &v) && v == 30;
         snprintf(what, sizeof what, "melodic, WILD 100, 20 rolls: every note on C %s; the lock on step 4 stays",
                  TP[P_SCALE].names[t->p[P_SCALE]]);
         ok7(what, inscale && locks);

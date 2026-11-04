@@ -225,19 +225,30 @@ static void fm1_main(void)
         panel_setup();                        /* OCT- + OCT+ held at power-on */
         settings_save();
     }
+#if RONDO_LAYOUT
+    if (boot_clean)                           /* Dungeon Tracker 1.0: the fanfare under the splash (jingle.c); not
+                                               * after a crash, a hang or a failed boot (straight to work) */
+        jingle_start();
+#endif
     {
         int restored = autosave_boot(boot_clean);   /* (1.2) the last session's music, under the splash */
 #if RONDO_LAYOUT
         bank_boot();                          /* RONDO: the PATTERN BANK A..F (project.c) */
 #endif
-        if (boot_song_wanted(restored)) {     /* Dungeon Tracker: none of the user's: a song of its own (boot_song.c) */
-            boot_song(boot_entropy());
-            boot_song_settle();
-        }
+        (void)restored;                       /* (Dungeon Tracker 1.0: none of the user's: the default song; a song
+                                               * of its own is MENU > GAME > RANDOM SONG's, boot_song.c) */
     }
-    for (ms = 0; ms < 400u; ms += 10u) {      /* the splash; the pot followed (MIDI IN plays under it) */
+    for (ms = 0; ms < 400u
+#if RONDO_LAYOUT
+                 || (jingle_on() && ms < 4000u)       /* (the fanfare to its end, ~3.2 s; a key or a button cuts it short) */
+#endif
+         ; ms += 10u) {                       /* the splash; the pot followed (MIDI IN plays under it) */
         fm1_delay_ms(10);
         master_poll();
+#if RONDO_LAYOUT
+        if (ms > 150u && (fm1_in.notes || fm1_in.buttons))
+            jingle_stop();
+#endif
     }
     kb_boot_hold = 0;
     lcd_fill(0, 0, 240, 240, T_BG);

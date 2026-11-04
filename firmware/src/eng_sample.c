@@ -49,7 +49,11 @@ static uint32_t pow2_q16(int32_t d16)
 #define SMP_USER_MAGIC 0x504D5346u                  /* "FSMP" */
 /* RONDO: slot 3 (USR3) keeps its first 32 KiB; the 48 above are the PATTERN BANK's (storage.c ST_BANK_BASE) */
 #define SMP_USER_TOP (RONDO_LAYOUT ? 0x8000u : SMP_USER_SIZE)
-static uint32_t smp_user_size(uint32_t k) { return k == 2u ? SMP_USER_TOP : SMP_USER_SIZE; }
+/* Dungeon Tracker: USR2's flash holds the song slots (song_store.c), 1.3 USR3's too: no sample there, nothing
+ * written there (USR1 keeps its 80 KiB) */
+#define SMP_USER_GONE(k) (RONDO_LAYOUT && ((k) == 1u || (k) == 2u))
+static uint32_t smp_user_size(uint32_t k) { return SMP_USER_GONE(k) ? 0u : k == 2u ? SMP_USER_TOP : SMP_USER_SIZE; }
+static int smp_user_ok(uint32_t k) { return k < SMP_USER_SLOTS && smp_user_size(k) > SMP_USER_DATA; }
 #define SMP_NALL (SMP_NSETS + SMP_USER_SLOTS)
 typedef struct {
     uint32_t magic;
@@ -85,7 +89,7 @@ static void smp_user_scan(uint32_t k)
     smp_user_gen++;
     usr_nz[k] = 0;
     slc_user_scan(k, 0);
-    if (h->magic == SMP_USER_MAGIC && h->version == 1 && h->nz && h->nz <= 16u &&
+    if (smp_user_ok(k) && h->magic == SMP_USER_MAGIC && h->version == 1 && h->nz && h->nz <= 16u &&
         h->data_len <= smp_user_size(k) - SMP_USER_DATA) {
         base = (uint32_t)(uintptr_t)(smp_user_xip(k) + SMP_USER_DATA) - (uint32_t)(uintptr_t)SMP_DATA;
         for (nz = h->nz, i = 0; i < nz; i++) {

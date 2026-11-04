@@ -157,6 +157,7 @@ static struct { uint32_t stage; } felucca_dbg;
 #include "../firmware/src/ui_layer.c"
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
+#include "../firmware/src/boot_song.c"          /* (1.0: MENU > GAME > RANDOM SONG) */
 
 static int check(const char *what, int ok)
 {
@@ -187,6 +188,11 @@ static void ui_power_on(void)
     proj_name[0] = 0;
     proj_cur = PROJ_NO_SLOT;
     memset(&favorites, 0, sizeof favorites);
+#if RONDO_LAYOUT
+    party_waiting = 0;                            /* (THE PARTY: nothing waiting, as at power-on) */
+    list_set(0);                                  /* (Dungeon Tracker: these checks browse as Felucca's PRESETS do, LIST
+                                                   * ALL; THE PARTY's CLASS list, the default: dungeon_test.c 14) */
+#endif
     ml_off();                                     /* (MIDI LEARN off, nothing learned) */
     memset(&undo, 0, sizeof undo);
     fop_op = fop_stg = 0;                         /* (FM6's operator pages: OP 1, stage 1, as at power-on) */
@@ -433,7 +439,7 @@ static int test_sound_loads(void)
     t->p[P_LEVEL] = 90;
     before = *t;
     turn(EN_PRESET, 1);                           /* HOME: the next preset */
-    bad += check("PRESETS on HOME loads the sound: steps, LEN, DIV untouched", t->preset == (uint8_t)((before.preset + 1u) % ENGINES[0]->npresets) &&
+    bad += check("PRESETS on HOME loads the sound: steps, LEN, DIV untouched", t->preset == (uint8_t)((before.preset + 1u) % (ENGINES[0]->npresets ? ENGINES[0]->npresets : 1u)) &&   /* (1.1: ANALOG retired, no presets) */
                  !memcmp(t->step, before.step, sizeof t->step) && t->p[P_SLEN] == 32 && t->p[P_SDIV] == 1);
     bad += check("..ARP, SCL, the SLICER and the mix stay the track's", t->p[P_AMODE] == 2 && t->p[P_AOCT] == 3 && t->p[P_SCALE] == 2 &&
                  t->p[P_TRANS] == 5 && t->p[P_SLCR] == SL_GATE && t->p[P_SLPAT] == 4 && t->p[P_LEVEL] == 90);
@@ -498,10 +504,11 @@ static int test_sound_loads(void)
     project_load(1);
     bad += check("a project load drops the copy and takes none", undo.trk == 0 && undo_depth == 0);
     ui_power_on();
-    bad += check("SAMPLE factory browsing has four melodic presets and no PERC",
+    if (!DT_RETIRE) {                          /* (1.5: SAMPLE retired, its sets not built: tests/sid_test.c kit_of) */
+    bad += check("SAMPLE factory browsing has four presets and no PERC (Dungeon Tracker: LOFI KIT for SAX)",
                  ENGINES[4]->npresets == 4u && str_eq(ENGINES[4]->presets[0].name, "PIANO") &&
-                 str_eq(ENGINES[4]->presets[3].name, "SAX"));
-    {   /* TRANH (SET 1, preset 1) is gone: both are PIANO aliases, kept for old data, never offered */
+                 str_eq(ENGINES[4]->presets[3].name, RONDO_LAYOUT ? "LOFI KIT" : "SAX"));
+    {   /* TRANH (SET 1, preset 1) is gone; Dungeon Tracker 1.0: its index is the DUNGEON KIT, offered */
         const param_desc_t *sd = &ENGINES[4]->edit[0];
         uint32_t all, pos, k, e, pos0, shown = 0;
         set_engine_of(TSEL, 4);
@@ -514,17 +521,17 @@ static int test_sound_loads(void)
                 shown++;
         e = preset_all_at(pos0 + 1u, &k);
         apply_preset_to(TSEL, 1);
-        bad += check("SAMPLE: old SET 1 / preset 1 (TRANH) play PIANO; browsing and knobs skip them",
-                     SMP_SETS[1].z0 == SMP_SETS[0].z0 && SMP_SETS[1].nz == SMP_SETS[0].nz && pos == pos0 &&
-                     shown == 3u && e == 4u && k == 2u && TSEL->preset == 0u && TSEL->p[P_E0] == 0 &&
-                     str_eq(sd->names[1], "PIANO") && enum_step(sd, 0, 1) == 2 && enum_step(sd, 2, 1) == 0 &&
-                     enum_step(sd, 1, 2) == 2 && enum_orig(sd, 1) == 0 && enum_orig(sd, 5) == 5 &&
-                     enum_orig(&ENGINES[8]->edit[0], 1) == 0);
+        bad += check("SAMPLE: SET 1 / preset 1 (once TRANH) is the DUNGEON KIT, browsed and stepped to",
+                     SMP_SETS[1].nz >= 10u && SMP_SETS[1].z0 != SMP_SETS[0].z0 && pos == pos0 + 1u &&
+                     shown == 4u && e == 4u && k == 1u && TSEL->preset == 1u && TSEL->p[P_E0] == 1 &&
+                     str_eq(sd->names[1], "DUNGEON KIT") && enum_step(sd, 0, 1) == 1 && enum_step(sd, 2, 1) == 1 &&
+                     enum_orig(sd, 1) == 1 && enum_orig(sd, 5) == 5 && enum_orig(&ENGINES[8]->edit[0], 1) == 1);
         bad += check("SAMPLE / GRAIN SET 4 (PERC, retired): a PIANO alias, knobs skip it, USR1..3 stay 5..7",
                      str_eq(sd->names[SMP_SET_PERC], "PIANO") && enum_orig(sd, SMP_SET_PERC) == 0 &&
                      enum_step(sd, 3, 4) == 5 && enum_step(sd, 5, 4) == 3 && str_eq(sd->names[5], "USR1") &&
                      str_eq(sd->names[7], "USR3") && sd->max == 7 &&
                      enum_orig(&ENGINES[8]->edit[0], SMP_SET_PERC) == 0 && SMP_SETS[SMP_SET_PERC].z0 == SMP_SETS[0].z0);
+    }
     }
     host_legacy_sample_perc(t);                /* SAMPLE PERC (SET 4, retired after 1.0.2): every load gives DRUM */
     t->preset = 4;                             /* a project written before the factory removal */
@@ -1432,6 +1439,9 @@ static int test_categories(void)
     char b[16], s1[16];
     ui_power_on();
     memset(&favorites, 0, sizeof favorites);
+#if RONDO_LAYOUT
+    list_set(0);                                           /* (LIST ALL: Dungeon Tracker's default is CLASS, before ALL) */
+#endif
     memset(up_bank, 0, sizeof up_bank);
     for (e = 0; e < NENGINES; e++) {
         const char *c = PRESET_CAT[e];
@@ -1478,13 +1488,26 @@ static int test_categories(void)
         settings_export(&p);
         ok = p.favorites.factory[15][11] == CAT_PAD && p.favorites.filter == 0u;
         p.favorites.factory[15][11] = 9;
+#if RONDO_LAYOUT                                           /* (Dungeon Tracker: an unknown value, and 0, are CLASS; ALL 0xFF) */
+        ok &= settings_import(&p, sizeof p) == 1 && list_mode() == LIST_CLASS;
+#else
         ok &= settings_import(&p, sizeof p) == 1 && list_mode() == 0u;
+#endif
         p.favorites.factory[15][11] = CAT_FX;
         ok &= settings_import(&p, sizeof p) == 1 && list_mode() == 1u + CAT_FX;
         turn(EN_K4, -20);
+#if RONDO_LAYOUT                                           /* (CLASS at the left end, then ALL, FAV) */
+        ok &= list_mode() == LIST_CLASS && ui_lcat == 0u;
+        turn(EN_K4, 1);
+        ok &= list_mode() == 0u && ui_lcat == LIST_ALL_MARK;
+        turn(EN_K4, 1);
+        bad += check("  kept with the settings ([15][11], an unknown value: none); FAV clears it, CLASS then ALL at the left end",
+                     ok && list_mode() == 1u && favorites.filter == 1u && ui_lcat == 0u);
+#else
         turn(EN_K4, 1);
         bad += check("  kept with the settings ([15][11], an unknown value: none); FAV clears it, ALL at the left end",
                      ok && list_mode() == 1u && favorites.filter == 1u && ui_lcat == 0u);
+#endif
         turn(EN_K4, -1);
     }
     {   /* #197: LIST / FAV not written on every detent (a flash erase stops the LED scan: the whole panel flashed) */
@@ -3589,6 +3612,29 @@ static int test_name(void)
     hold(B_HOME);
     bad += check("  HOME held in NAME: the menu, NAME closed", ui.menu && !name_on());
     hold(B_HOME);
+    /* 1.0.1: QUICK, the slot above A (the autosave): PRESETS / KNOB 1 reach it; its SAVE and LOAD are the autosave's
+     * (no NAME screen, slot D untouched), no ERASE, no rename */
+    {
+        char pd[16];
+        int dused = project_name(3, pd), ok;
+        go_page(GR_SLOTS);
+        song.g[G_SLOT] = 1;
+        turn(EN_PRESET, -1);
+        ok = song.g[G_SLOT] == 0;
+        turn(EN_PRESET, -3);
+        ok &= song.g[G_SLOT] == 0;
+        song.playing = 0;
+        ui.act = 4;                                     /* SAVE */
+        press(B_OCTUP);
+        ok &= !name_on() && (msg_is("QUICK SAVED") || msg_is("NO FLASH HERE")) && project_name(3, pd) == dused;
+        ui.act = 2;                                     /* ERASE */
+        press(B_OCTUP);
+        ok &= !ui.confirm && msg_is("QUICK IS THE AUTOSAVE");
+        press(B_EDIT);
+        ok &= !name_on() && msg_is("QUICK HAS NO NAME");
+        song.g[G_SLOT] = 1;
+        bad += check("  1.0.1: QUICK above A: SAVE writes the autosave (no NAME), no ERASE, no rename, D untouched", ok);
+    }
     return bad;
 }
 
@@ -3617,7 +3663,8 @@ static int test_edit_cycle(void)
     btn_down(B_EDIT); frame();
     ok = ui.home;
     btn_up(B_EDIT); frame();
-    bad += check("EDIT opens EDIT 1, when let go (not on press)", ok && str_eq(cur_page()->title, "EDIT 1"));
+    bad += check("EDIT opens its first page (1.1: DICE on a track with dice), when let go (not on press)",
+                 ok && ui.page == page_first(FAM_EDIT) && str_eq(cur_page()->title, dice_engine_ok(TSEL) ? "DICE" : "EDIT 1"));
     for (i = 0; i < NPAGES; i++)
         ok &= !str_eq(PAGES[i].title, "ENGINE");
     bad += check("no ENGINE page (engines are the EDIT layer's)", ok);
@@ -3923,7 +3970,7 @@ static int test_quick_layers(void)
         for (flash = 0, k = 0; k < 20u; k++) { frame(); flash |= ui.layer; }      /* 0.32 s */
         btn_up(LB[i]); frame();
         ok &= !flash && !ui.home && (LB[i] == B_GLO ? str_eq(cur_page()->title, "SONG") :
-                                     LB[i] == B_SCL ? cur_page()->fam == FAM_SCL : str_eq(cur_page()->title, "EDIT 1"));
+                                     LB[i] == B_SCL ? cur_page()->fam == FAM_SCL : ui.page == page_first(FAM_EDIT));
         hint &= msg_is(HINT[i]);
         go_home(); frame();
         btn_down(LB[i]); frames(368);
@@ -4052,7 +4099,7 @@ static int test_quick_layers(void)
     key_up(white(eng_rank(2))); frame();
     key_down(white(1)); key_up(white(1)); frame();
     ok &= TSEL->eng_req == ENGI_FM6;                    /* (G3: FM6, second in ENGINE_ORDER) */
-    key_down(white(NENG_SHOWN - 1u)); key_up(white(NENG_SHOWN - 1u)); frame();
+    key_down(white(NENG_KEYS - 1u)); key_up(white(NENG_KEYS - 1u)); frame();   /* (1.1: the last engine key) */
     ok &= TSEL->eng_req == ENGI_DRUM;                   /* (the last key: DRUM) */
     ok &= !memcmp(TSEL->step, before.step, sizeof before.step) && TSEL->p[P_SLEN] == before.p[P_SLEN] &&
           TSEL->p[P_SLCR] == SL_STUT;
@@ -4066,12 +4113,12 @@ static int test_quick_layers(void)
     btn_down(B_EDIT); frames(480);
     for (i = 0; i < LY_INIT; i++) {
         key_down(white(i)); key_up(white(i)); frame();
-        a += i < NENG_SHOWN ? TSEL->eng_req == eng_vis(i) : 0u;
+        a += i < NENG_KEYS ? TSEL->eng_req == eng_vis(i) : 0u;
         ok &= eng_ok(TSEL->eng_req);
     }
     btn_up(B_EDIT); frame();
-    bad += check("  every engine one can pick has its white key from F3 (NENG_SHOWN, not a fixed count; never DIGITAL)",
-                 ok && a == NENG_SHOWN);
+    bad += check("  the first NENG_KEYS engines have their white keys from F3 (1.1: NOISE PRESETS only; never DIGITAL)",
+                 ok && a == NENG_KEYS);
     set_engine_of(TSEL, 0);
     lay_combo(B_EDIT, white(eng_rank(3))); key_up(white(eng_rank(3))); frame();
     turn(EN_K2, 1);
@@ -4086,35 +4133,35 @@ static int test_quick_layers(void)
     ok = TSEL->eng_req == eng_step(0, 1);
     btn_up(B_EDIT); frame();
     bad += check("  KNOB 1: the next engine", ok);
-    {                                                   /* #124: SAMPLE's alias (1 = PIANO) is not a stop on KNOB 2 */
+    {                                                   /* #124: SAMPLE's alias (4, once PERC) is not a stop on KNOB 2 */
         uint32_t tot, n, c0, c1, c2, seen = 0, alias = 0;
         set_engine_of(TSEL, ENGI_SAMPLE); go_home(); frame();
         eng_list_pos(&tot);
         btn_down(B_EDIT); frame();
         c0 = eng_list_pos(&tot);
         turn(EN_K2, 1);
-        ok = TSEL->preset == 2u && user_of(TSEL) >= UP_SLOTS;
+        ok = TSEL->preset == 1u && user_of(TSEL) >= UP_SLOTS;   /* (1.0: the DUNGEON KIT in TRANH's 1) */
         c1 = eng_list_pos(&tot);
         turn(EN_K2, 1);
-        ok &= TSEL->preset == 3u;
+        ok &= TSEL->preset == 2u;
         c2 = eng_list_pos(&tot);
         ok &= c0 == 0u && c1 == 1u && c2 == 2u && tot >= SMP_NPRESETS - SMP_NALIAS;
         apply_preset(0);
         for (n = 0; n < tot; n++) {                     /* right: every sound once, back to the first */
             turn(EN_K2, 1);
             seen |= 1u << eng_list_pos(&tot);
-            alias |= user_of(TSEL) >= UP_SLOTS && TSEL->preset == 1u;
+            alias |= user_of(TSEL) >= UP_SLOTS && TSEL->preset == SMP_SET_PERC;
         }
         ok &= seen == (1u << tot) - 1u && TSEL->preset == 0u && user_of(TSEL) >= UP_SLOTS;
         seen = 0;
         for (n = 0; n < tot; n++) {                     /* left: the same, backwards */
             turn(EN_K2, -1);
             seen |= 1u << eng_list_pos(&tot);
-            alias |= user_of(TSEL) >= UP_SLOTS && TSEL->preset == 1u;
+            alias |= user_of(TSEL) >= UP_SLOTS && TSEL->preset == SMP_SET_PERC;
         }
         ok &= seen == (1u << tot) - 1u && TSEL->preset == 0u && !alias;
         btn_up(B_EDIT); frame();
-        bad += check("  #124 SAMPLE: KNOB 2 right PIANO, FLUTE, SAX (No. 1 2 3), both ways round the list, never the alias", ok);
+        bad += check("  #124 SAMPLE: KNOB 2 right PIANO, DUNGEON KIT, FLUTE (No. 1 2 3), both ways round the list, never the alias", ok);
     }
     song.playing = 0;
     lay_combo(B_EDIT, white(LY_INIT));
@@ -4912,8 +4959,8 @@ static int test_bughunt_ui2(void)
         bad += check("piano roll: the C-1 label stays inside the panel (every palette)", !out);
     }
     {   /* 7. EDIT: INIT is drawn in the cell after the engines, and that cell's white key is the one that inits */
-        uint32_t p, ok = LY_INIT == NENG_SHOWN && LY_INIT < 16u;      /* (layer_edit: INIT in cell NENG_SHOWN) */
-        for (p = NENG_SHOWN; p < 16u; p++) {
+        uint32_t p, ok = LY_INIT == NENG_KEYS && LY_INIT < 16u;       /* (layer_edit: INIT in cell NENG_KEYS) */
+        for (p = NENG_KEYS; p < 16u; p++) {
             ui_power_on(); go_home(); frame();
             btn_down(B_EDIT); key_down(white(p)); frame(); frames(50);
             ok &= (ui.confirm == CF_INIT_SOUND) == (p == LY_INIT);
@@ -5047,7 +5094,7 @@ static int test_fm4_retired(void)
     uint8_t v[FP_SIZE + 1u];
     ui_power_on();
     bad += check("power-on: track 2 is FM6 PAD (TRK_DEF, was DIGITAL PAD)", trk[1].eng_req == ENGI_FM6 &&
-                 str_eq(ENGINES[ENGI_FM6]->presets[trk[1].preset].name, "PAD"));
+                 ENGINES[ENGI_FM6]->npresets && str_eq(ENGINES[ENGI_FM6]->presets[trk[1].preset].name, "PAD"));
     preset_all_pos(&total);
     for (i = 0; i < total; i++) {
         e = preset_all_at(i, &k);
@@ -9245,7 +9292,9 @@ static int test_fm6_ops(void)
     song.rec = 2u; song.playing = 1;
     f = motion.count;
     turn(EN_K3, 3);
-    ok &= motion.count == f;
+    ok &= motion.count == f || !(PAGES[ui.page].graph >= GR_FMOP && PAGES[ui.page].graph <= GR_FMENV);
+                                                     /* (no OPERATOR page shown, Dungeon Tracker: the turn was another
+                                                      * page's, DICE's held die say, which may record) */
     stop_transport(); song.rec = 0;
     bad += check("FM6 ops: the pages on FM6 only; a turn while recording writes no automation", ok);
     return bad;

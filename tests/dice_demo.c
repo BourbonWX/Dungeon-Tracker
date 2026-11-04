@@ -205,9 +205,15 @@ static void report(uint32_t k, const char *title)
         fprintf(rep, "  %-8s %s%s\n", d->label, v, u ? u : "");
     }
 }
+static int eng_plan[4][NTRK];                           /* DEMO_ENG: each section's engine per track (-1: as it is) */
+static uint32_t cur_sec;
 static void roll(uint32_t k)
 {
     track_select(k);
+    if (eng_plan[cur_sec][k] >= 0 && trk[k].engine != (uint8_t)eng_plan[cur_sec][k]) {
+        set_engine_of(&trk[k], (uint32_t)eng_plan[cur_sec][k]);
+        trk[k].engine = trk[k].eng_req;
+    }
     dice.wild[k] = 0;                                   /* (WILD 100 %: a fresh roll) */
     dice_roll();
     trk[k].engine = trk[k].eng_req;
@@ -230,6 +236,20 @@ int main(int argc, char **argv)
     uint32_t k, p, b, s, sec, step;
     char path[600], t[80];
     compose(seed);
+    {   /* DEMO_ENG="e,e,e,e[;e,e,e,e x3]": the engines (numbers) of T1..T4, one group a section (the last repeats);
+         * the role demos use section 2's */
+        const char *pl = getenv("DEMO_ENG");
+        uint32_t q, j;
+        for (q = 0; q < 4u; q++) for (j = 0; j < NTRK; j++) eng_plan[q][j] = -1;
+        for (q = 0; pl && *pl && q < 4u; q++) {
+            int a[4], used = 0;
+            if (sscanf(pl, "%d,%d,%d,%d%n", &a[0], &a[1], &a[2], &a[3], &used) < 4) break;
+            for (j = 0; j < NTRK; j++) eng_plan[q][j] = a[j];
+            pl += used;
+            if (*pl == ';') pl++;
+        }
+        for (; q > 0u && q < 4u; q++) memcpy(eng_plan[q], eng_plan[q - 1u], sizeof eng_plan[q]);
+    }
     step = step_frames();
     snprintf(path, sizeof path, "%s/patches.txt", dir);
     if (!(rep = fopen(path, "w"))) { fprintf(stderr, "cannot write %s\n", path); return 1; }
@@ -245,6 +265,7 @@ int main(int argc, char **argv)
         if (!(w = fopen(path, "wb"))) return 1;
         wav_hdr(w, 6u * (64u * step + 4u * step));
         fresh(seed + 977u * k);
+        cur_sec = 1u;
         for (p = 0; p < 6u; p++) {
             roll(k);
             snprintf(t, sizeof t, "%s roll %u", ROLE[k], p + 1u);
@@ -268,10 +289,12 @@ int main(int argc, char **argv)
         wav_hdr(w, 4u * 128u * step + 16u * step);
         fresh(seed ^ 0x5EC7u);
         for (sec = 0; sec < 4u; sec++) {
+            cur_sec = sec;
             for (k = 0; k < NTRK; k++) {
                 off_all(k);
                 roll(k);
                 snprintf(t, sizeof t, "SONG section %u, %s", sec + 1u, ROLE[k]);
+                fprintf(rep, "%s: %s\n", t, ENGINES[trk[k].engine]->name);
                 report(k, t);
             }
             for (b = 0; b < 8u; b++)

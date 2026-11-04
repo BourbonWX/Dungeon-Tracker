@@ -37,10 +37,17 @@ static uint32_t midi_targets(uint32_t ch)
 
 static void midi_expression(track_t *t, const midi_channel_t *c)
 {
-    int32_t range = ((int32_t)c->semis * 100 + c->cents) * 256 / 100;
+    int32_t range = ((int32_t)c->semis * 100 + c->cents) * 256 / 100, v;
+    uint32_t ti = trk_index(t);
     if (drum_track(t))
         return;
-    midi_bend_target[trk_index(t)] = (int32_t)c->bend * range / (c->bend < 0 ? 8192 : 8191);
+    midi_bend_range[ti] = range;
+    v = c->bend < 0 ? (int32_t)c->bend * 64 / 8192 : (int32_t)c->bend * 63 / 8191;   /* (P_BEND: -64..63) */
+    midi_bend_live[ti] = (uint16_t)(FS * 3u / 10u / CTL);   /* (~0.3 s of blocks: the wheel's quick follow) */
+    if (t->p[P_BEND] != v) {                            /* 1.0: as a learned knob: REC + playing records it */
+        t->p[P_BEND] = (int16_t)v;
+        (void)motion_capture(t, P_BEND, (int16_t)v);
+    }
 }
 
 static void midi_expression_channel(uint32_t ch)
@@ -178,6 +185,7 @@ static void __attribute__((noinline)) midi_forget_track(uint32_t track)
     midi_owners[track] = 0;
     mchord_forget(track);
     midi_bend_q8[track] = midi_bend_target[track] = 0;
+    trk[track].p[P_BEND] = 0;                          /* (1.0: the wheel's value too) */
 }
 
 static void midi_silence_track(uint32_t track)
@@ -224,8 +232,16 @@ static const uint8_t MIDI_CC_ENG[NENGINES] = {
     0x80, 0x30, 0x30, 0x34, 0x30,                     /* GRAIN TONE, PHYS BRIT, DRUM TONE, NOISE FREQ RES, FM6 MLVL */
 #if FELUCCA_SLICE
     0x80,                                             /* SLICE TONE */
+#elif RONDO_LAYOUT
+    0x00,                                             /* (13: SLICE retired, reserved) */
 #endif
     0x32, 0x25,                                       /* RONDO: FMKIT COLOR DECAY, FMTONE COLOR FDBK */
+    0x56,                                             /* 1.1: WAVES CUT RES */
+    0x78,                                             /* 1.3: SID CUT RES */
+    0x00,                                             /* 1.2: GENESIS (its brightness is the operators' levels) */
+    0x32,                                             /* 1.5: MOD KIT COLOR DECAY */
+    0x56,                                             /* 1.5: WAVE 32 CUT RES */
+    0x50,                                             /* 1.5: MOD LED */
 };
 /* a CC sets parameter id of track t as a knob would: 0..127 over its range */
 static void midi_cc_set(track_t *t, uint32_t id, uint32_t value)

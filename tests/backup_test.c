@@ -37,6 +37,11 @@ static void fl_plain_window_init(void) {}
 #include "../firmware/src/storage.c"
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
+#if PROJ_SONGS                                  /* Dungeon Tracker: a slot's project in the song store */
+#define BK_SLOT_LOAD(s) sg_get_project((s), &proj_wire, sizeof proj_wire)
+#else
+#define BK_SLOT_LOAD(s) st_load(OBJ_PROJECT0 + (s), &proj_wire, sizeof proj_wire)
+#endif
 #include "old_pack.h"
 
 enum { ED_BACKUP_LIST = 65, ED_BACKUP_GET, ED_BACKUP_PUT };
@@ -83,6 +88,12 @@ static void reset(void)
     panel = PANEL_DEFAULT;
     settings_init();
     host_tracks_init();
+    {   /* (1.1: the tracks on a kept engine: engine 0, ANALOG, is retired, a project of it converts as it loads) */
+        uint32_t k;
+        for (k = 0; k < NTRK; k++)
+            if (eng_retired(trk[k].eng_req))
+                trk[k].eng_req = trk[k].engine = ENGI_GENESIS;   /* (1.5: FMTONE retired too) */
+    }
     fm1_ms = 0;
     transport_req = 0;
     usb.resets = 0;
@@ -178,8 +189,8 @@ int main(void)
 
     reset();
     trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 96, 0, 0};
-    bad += check("LIST captures the runtime: 13 objects (id 8 empty, id 9 the FM6 patches), runtime 3840 B (FUN10)",
-                 list(0, &len, &crc) == 0 && rep[2] == 13u && len == sizeof(project_store_t) && len == 3840u &&
+    bad += check("LIST captures the runtime: 13 objects (id 8 empty, id 9 the FM6 patches; Dungeon Tracker 20, projects E..K "
+                 "10..16), runtime 3840 B (FUN10)", list(0, &len, &crc) == 0 && rep[2] == ED_BK_N && ED_BK_N == (RONDO_LAYOUT ? 20u : 13u) && len == sizeof(project_store_t) && len == 3840u &&
                  crc == st_crc32(ED_BK_RAW, len));
     bad += check("an empty project slot lists as length 0", list(2, &len, &crc) == 0 && len == 0);
     bad += check("GET of the runtime copy", get(0, 0, 64) == 0);
@@ -279,7 +290,7 @@ int main(void)
     proj_pack(&st, &proj_scratch);
     bad += check("a FUN10 project restores into slot 3 (flash and RAM)",
                  put_all(4, &st, sizeof st, st_crc32(&st, sizeof st)) == 0 && project_used(2) &&
-                 !memcmp(&proj_slot[2], &st, sizeof st) && st_load(OBJ_PROJECT0 + 2, &proj_wire, sizeof proj_wire) == (int)sizeof st);
+                 !memcmp(&proj_slot[2], &st, sizeof st) && BK_SLOT_LOAD(2) == (int)sizeof st);
     {   /* FUN8 of 1.0.x (3584 bytes, 91 parameters) and FUN9 of 1.1 (3648, 99): restore as FUN10, E0 at P_E0, lanes
          * 100 %, the four 1.2 parameters at their defaults; a FUN9 with 64 motion records keeps them all */
         static uint8_t v8[3584], v9[3648];
@@ -355,11 +366,10 @@ int main(void)
         bad += check("  .. written to flash (the user presets' FM6 patches)",
                      st_load(OBJ_UPFM6, &got, sizeof got) == (int)sizeof got && !memcmp(&got, &upf, sizeof got));
         up_load(0);
-        bad += check("  .. and the B3 preset loads it, SLOT OWN", TSEL->eng_req == ENGI_FM6 &&
-                     !memcmp(fm6_patch[song.sel] + FP_NAME, "BANK B3", 7) && TSEL->p[P_E7] == FM6_OWN);
+        bad += check("  .. and the B3 preset (1.1: FM6 retired) loads as GENESIS (1.5), its patch still stored",
+                     TSEL->eng_req == ENGI_GENESIS && !upf_get(0, pk) && !memcmp(pk + 118, "BANK B3", 7));
         up_load(1);
-        bad += check("  .. the F2 preset loads the factory patch, SLOT F2", TSEL->p[P_E7] == 1 &&
-                     !memcmp(fm6_patch[song.sel] + FP_NAME, FM6_FACTORY[1] + 118, 10));
+        bad += check("  .. the F2 preset loads as GENESIS too", TSEL->eng_req == ENGI_GENESIS);
         bad += check("a restore of id 8 twice moves nothing more (idempotent)",
                      put_all(8, &bk, sizeof bk, st_crc32(&bk, sizeof bk)) == 0 && !memcmp(&got, &upf, sizeof got));
         bad += check("an empty id 8 (a 1.0.3 archive) is taken and ignored", put_all(8, 0, 0, st_crc32(0, 0)) == 0 &&
@@ -377,7 +387,7 @@ int main(void)
         bad += check("an id 9 of another layout is refused (2), the patches kept",
                      put_all(9, &got, sizeof got, st_crc32(&got, sizeof got)) == 2u && !upf_get(0, pk));
         bad += check("an id 9 of the wrong size is refused at begin (1)", put_begin(9, sizeof got - 4u, 0) == 1u);
-        bad += check("an id 10 is refused (1)", put_begin(10, 0, 0) == 1u);
+        bad += check("an id 17 is refused (1) (10..16: Dungeon Tracker's projects E..K)", put_begin(RONDO_LAYOUT ? 17 : 10, 0, 0) == 1u);
     }
     memcpy(&st, &proj_slot[2], sizeof st);
     erase_error = 1;

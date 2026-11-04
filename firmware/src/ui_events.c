@@ -58,11 +58,13 @@ static int ev_id_ok(const track_t *t, uint32_t id)
     if (ev_sid(id))
         return 1;
     if (id >= P_FM1_ATK && id <= P_FM4_LEVEL)          /* RONDO: FMKIT's voice values, on a FMKIT track */
-        return t->eng_req % NENGINES == ENGI_CKIT;
-    if (id >= P_COUNT || !motion_param(id) || id == P_ED_FX)
+        return ENG_KIT(t->eng_req % NENGINES);
+    if (id >= P_COUNT || !motion_param(id))
         return 0;
+    if (id == P_BEND)                                   /* (1.0: the pitch wheel: a melodic track's; voice.c) */
+        return !drum_track(t) && !ENG_KIT(t->eng_req % NENGINES);
     if (id >= P_LN0 && id <= P_LN7)
-        return t->eng_req % NENGINES == ENGI_CKIT ? id < P_LN0 + CK_N : drum_track(t);
+        return ENG_KIT(t->eng_req % NENGINES) ? id < P_LN0 + CK_N : drum_track(t);
     d = track_desc(t, id);
     return d && d->label && d->label[0] && d->label[0] != '-' && d->max > d->min;
 }

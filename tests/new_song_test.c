@@ -66,7 +66,7 @@ static void do_new(uint32_t which)                     /* 1 NEW, 2 NEW + DEFAULT
 static void a_song(void)
 {
     ui_power_on();
-    boot_song(4242u);
+    random_song_make(4242u);
     boot_song_settle();
     frames(2);
     chain_config.count = 2;

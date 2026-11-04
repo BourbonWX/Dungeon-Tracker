@@ -114,6 +114,52 @@ static int32_t ck_velo(const int16_t *p, uint32_t vel)
     return target * 32767 / v;
 }
 
+/* GEN KIT (Dungeon Tracker 1.5): the drums of a Mega Drive, each voice a YM2612-style FM voice (its plain 10-bit
+ * sine, operator 1's feedback, a 9-bit DAC) beside the SN76489 PSG's noise: its 16-bit shift register clocked at a
+ * rate (the snare's and the hat's grain), at the PSG's 2 dB volume steps. The operators' phases in the part's engine
+ * memory */
+typedef struct {
+    uint32_t ph[4];                                       /* the operators */
+    int32_t fb1, fb2;                                     /* operator 1's last two outputs */
+    uint32_t nclk;                                        /* the PSG noise's clock */
+    int32_t nout;                                         /* .. its output (+-1) */
+} gk_note_t;
+ENG_MEM_FITS("GEN KIT", sizeof(gk_note_t) * NVOICE);
+static gk_note_t *gk_note_of(track_t *t, voice_t *v)
+{
+    uint32_t i;
+    if (t < &trk[0] || t >= &trk[NPART])
+        return 0;
+    i = (uint32_t)(v - t->v);
+    return i < NVOICE ? (gk_note_t *)ENG_MEM(t - trk) + i : 0;
+}
+static inline int32_t gk_sin(uint32_t ph) { return SINE[ph >> 22]; }   /* (the chip's table, not interpolated) */
+static inline int32_t gk_pm(uint32_t ph, int32_t md, int32_t k) { return gk_sin(ph + (uint32_t)(md * k)); }
+/* the PSG's volumes: 2 dB steps, 15 = off */
+static const uint16_t GK_PSG_VOL[16] = {32767, 26028, 20675, 16422, 13045, 10362, 8231, 6538,
+                                        5193, 4125, 3277, 2603, 2067, 1642, 1304, 0};
+static int32_t gk_psg_vol(int32_t a)                     /* a Q15 level at the nearest step at or under it */
+{
+    uint32_t k = 0;
+    while (k < 15u && GK_PSG_VOL[k] > a)
+        k++;
+    return GK_PSG_VOL[k];
+}
+/* the PSG's noise, one sample: its register clocked at inc (2^32 = the sample rate), white (taps 0 and 3) */
+static inline int32_t gk_noise(gk_note_t *g, int32_t *lfsr, uint32_t inc)
+{
+    uint32_t c = g->nclk;
+    g->nclk = c + inc;
+    if (g->nclk < c) {                                    /* (overflow: one clock) */
+        uint32_t r = (uint32_t)*lfsr & 0xffffu, f = (r ^ (r >> 3)) & 1u;
+        r = (r >> 1) | (f << 15);
+        *lfsr = (int32_t)(r ? r : 0x8000u);
+        g->nout = (r & 1u) ? 32767 : -32767;
+    }
+    return g->nout;
+}
+#define GK_HZ(f) ((uint32_t)(f) * 178957u)                /* a clock rate in Hz as a phase increment at 24 kHz */
+
 static void ck_note_on(track_t *t, voice_t *v)
 {
     const int8_t *g = ck_gm(v->note);
@@ -128,13 +174,22 @@ static void ck_note_on(track_t *t, voice_t *v)
     v->s[1] = 1 << 30;
     v->s[2] = 1 << 30;
     v->s[3] = lane == CK_HAT ? 0 : 1 << 30;
-    v->s[4] = (int32_t)(r | 1u);
+    v->s[4] = (int32_t)((r & 0xffffu) | 0x8000u);   /* (the PSG's noise register) */
     v->s[5] = 0;
     v->s[6] = g[1] * 16 + (vari ? (int32_t)((r >> 8) % (uint32_t)(2 * vari + 1)) - vari : 0) / 8;
     v->s[7] = dofs + (vari ? (int32_t)((r >> 20) % (uint32_t)(vari / 8 + 1)) - vari / 16 : 0);
-    v->ph[0] = 0;                                         /* every hit from a zero crossing (CLICK is the snap) */
+    v->ph[0] = 0;
     v->ph[1] = 0;
     v->ph[2] = 0;
+    {                                                     /* every hit from a zero crossing (CLICK is the snap) */
+        gk_note_t *G = gk_note_of(t, v);
+        if (G) {
+            G->ph[0] = G->ph[1] = G->ph[2] = G->ph[3] = 0;
+            G->fb1 = G->fb2 = 0;
+            G->nclk = 0;
+            G->nout = 32767;
+        }
+    }
     v->env = 1 << 24;                                     /* the ADSR held at full: a hit, not a note */
     v->env_out = mulq15(ck_velo(p, v->vel), v->vel * 258);   /* (no ramp up from 0) */
 }
@@ -159,16 +214,19 @@ static int32_t ck_amp(track_t *t, voice_t *v, int32_t adsr)
 static void ck_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vmod_t *m)
 {
     const int16_t *p = t->p;
+    gk_note_t *G = gk_note_of(t, v);
     uint32_t lane = (uint32_t)v->s[0] & 3u, i, pi = (uint32_t)(t - trk) % NPART;
     int32_t a0 = v->s[1], pe0 = v->s[2], me0 = v->s[3], ns = v->s[4], flt = v->s[5];
-    uint32_t ph0 = v->ph[0], ph1 = v->ph[1], ph2 = v->ph[2];
+    uint32_t ph2 = v->ph[2];
     int32_t col = clamp(p[CK_COLOR(lane)] + p[P_E2] + mk_x[3] * 2 / 5, 0, 127), shp = clamp(p[CK_SHAPE(lane)], 0, 127);   /* (RIDE) */
     int32_t didx = p[CK_DECAY(lane)] * 120 / 127 + 12 + p[P_E1] * 24 / 64 + v->s[7];
     int32_t a1 = cyc_mul30(a0, cyc_kb(didx)), pe1, me1, p16, sw16, lv = clamp(p[P_LN0 + lane], 0, 127);
     int32_t click = lane == CK_HAT ? 0 : clamp(p[P_E4], 0, 127), drv = clamp(p[P_E6], 0, 127), g = 0, mk = 0;
-    int32_t y[CTL], da, k0, k1, mute = (drum_mute[pi] >> lane) & 1u;
+    int32_t y[CTL], da, k0, k1, dk, pv0, pv1, mute = (drum_mute[pi] >> lane) & 1u;
     uint32_t inc;
     vmod_t ml;
+    if (!G)
+        return;
     if (n > CTL)
         n = CTL;
     /* pitch: the voice's, the kit's TUNE, the hit's, then SWEEP's drop on top */
@@ -176,7 +234,7 @@ static void ck_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
     pe1 = cyc_mul30(pe0, cyc_kb((lane == CK_KICK ? 48 : lane == CK_SNARE ? 48 : 54) + (p[CK_DECAY(lane)] - 64) / 6));
     p16 = (int32_t)CK_BASE[lane] * 16 + (p[CK_PITCH(lane)] - 64) * 6 + p[P_E0] * 3 + v->s[6];
     inc = pitch_inc((uint32_t)clamp(p16 + (int32_t)(((int64_t)sw16 * pe0) >> 30), 0, 2047));
-    /* the index envelope (not HAT's: its s[3] is the feedback) */
+    /* the index envelope (HAT: none, its metal rings with the hit) */
     me1 = lane == CK_HAT ? me0 : cyc_mul30(me0, cyc_kb(didx - (lane == CK_PERC ? 12 : 30)));
     if (lv < 127) {                                       /* the voice's LEVEL on the block's amplitude ramp */
         int32_t gl = lv * lv * 2 + (lv * lv >> 6);
@@ -186,88 +244,107 @@ static void ck_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
         m = &ml;
     }
     da = (a1 - a0) / (int32_t)n;
+    pv0 = gk_psg_vol(a0 >> 15);                           /* (the PSG's volume: stepped, once a block) */
+    pv1 = 0;
     switch (lane) {
-    case CK_KICK: {                                       /* sine, FM at 1:1 with a fast index envelope, SHAPE drive */
-        int32_t ki = cyc_idx(col), sg = 4096 + shp * 229, nk = 0;
+    case CK_KICK: {                                       /* 3 > 2 > 1: a sine kick, 2 its index envelope, 3 (x2,
+                                                           * feedback) a little edge; SHAPE drive */
+        int32_t ki = cyc_idx(col), sg = 4096 + shp * 229, nk = 0, k3 = cyc_idx(col / 3);
         k0 = (int32_t)(((int64_t)ki * me0) >> 30);
         k1 = (int32_t)(((int64_t)ki * me1) >> 30);
+        dk = (k1 - k0) / (int32_t)n;
         if (shp)
             nk = (int32_t)((32767u << 15) / (uint32_t)softclip((32767 * sg) >> 12));
         for (i = 0; i < n; i++) {
-            int32_t md = sine_i(ph1), s = cyc_pm(ph0, md, k0 + (k1 - k0) * (int32_t)i / (int32_t)n);
+            int32_t o3 = gk_pm(G->ph[2], (G->fb1 + G->fb2) >> 1, 2400), o2, s;
             int32_t a = (a0 + da * (int32_t)i) >> 15;
-            ph0 += inc;
-            ph1 += inc;
+            G->fb2 = G->fb1;
+            G->fb1 = o3;
+            o2 = gk_pm(G->ph[1], (o3 * (me0 >> 16)) >> 14, k3);
+            s = gk_pm(G->ph[0], o2, k0 + dk * (int32_t)i);
+            G->ph[0] += inc;
+            G->ph[1] += inc;
+            G->ph[2] += inc << 1;
             if (shp)
                 s = (softclip((s * sg) >> 12) * nk) >> 15;
             y[i] = (s * a) >> 15;
         }
         break;
     }
-    case CK_SNARE: {                                      /* an FM body (1:1.41) and noise, COLOR its low-pass */
-        int32_t ki = cyc_idx(col * 3 / 4), nm = shp * 258, kq = 4000 + col * 220;
-        uint32_t minc = (inc >> 8) * 361u;
+    case CK_SNARE: {                                      /* 2 > 1 (x1.41): the body; the PSG's noise, COLOR its rate */
+        int32_t ki = cyc_idx(col * 3 / 4), nm = shp * 258, ab = (int32_t)(((int64_t)a0 * (a0 >> 15)) >> 30);
+        uint32_t minc = (inc >> 8) * 361u, ninc = GK_HZ(1800 + col * 170);
         k0 = (int32_t)(((int64_t)ki * me0) >> 30);
         k1 = (int32_t)(((int64_t)ki * me1) >> 30);
+        dk = (k1 - k0) / (int32_t)n;
+        pv1 = (gk_psg_vol(a0 >> 15) * 3) >> 2;
         for (i = 0; i < n; i++) {
-            int32_t md = sine_i(ph1), body = cyc_pm(ph0, md, k0 + (k1 - k0) * (int32_t)i / (int32_t)n);
-            int32_t a = (a0 + da * (int32_t)i) >> 15, ab = (a * a) >> 15, w = (int32_t)noise32(&ns) >> 16, hp;
-            ph0 += inc;
-            ph1 += minc;
-            flt += ((w - flt) * kq) >> 15;
-            hp = flt + (flt >> 1);                        /* (the low-pass' level back up) */
-            y[i] = (((body * ab) >> 15) * (32767 - nm) + ((hp * a) >> 15) * nm) >> 15;
+            int32_t body = gk_pm(G->ph[0], gk_sin(G->ph[1]), k0 + dk * (int32_t)i);
+            int32_t a = (a0 + da * (int32_t)i) >> 15, w = gk_noise(G, &ns, ninc);
+            int32_t abi = ab + (((a * a) >> 15) - ab) * (int32_t)i / (int32_t)n;
+            G->ph[0] += inc;
+            G->ph[1] += minc;
+            flt += ((w - flt) * 12000) >> 15;             /* (a gentle low-pass: the PSG's own output stage) */
+            y[i] = (((body * abi) >> 15) * (32767 - nm) + ((flt * pv1) >> 15) * nm) >> 15;
         }
         break;
     }
-    case CK_HAT: {                                        /* two operators at an inharmonic ratio, feedback, noise, HP */
-        int32_t ki = cyc_idx(64 + col / 2), fb = me0, kq = 3000 + col * 150;   /* COLOR: the high-pass up */
-        uint32_t minc = (inc >> 8) * CK_HAT_RATIO[shp >> 4], m2inc = (inc >> 8) * 1543u;   /* (x 6.03) */
+    case CK_HAT: {                                        /* 1 (feedback) > 2, 3 (x6.03) > 4: an algorithm-4 metal at
+                                                           * SHAPE's ratio, with the PSG's noise at its top rate */
+        int32_t ki = cyc_idx(64 + col / 2), kq = 3000 + col * 150;   /* COLOR: the high-pass up */
+        uint32_t minc = (inc >> 8) * CK_HAT_RATIO[shp >> 4], m2inc = (inc >> 8) * 1543u, ninc;
+        uint64_t nr = (uint64_t)inc * (uint32_t)(1536 + col * 12) >> 7;   /* (the noise's rate follows PITCH: x12..x24) */
+        ninc = nr > 0xf0000000u ? 0xf0000000u : (uint32_t)nr;
         for (i = 0; i < n; i++) {
-            int32_t md = cyc_pm(ph1, fb, 9000), md2 = sine_i(ph2), w = (int32_t)noise32(&ns) >> 17, s, hp;
-            int32_t a = (a0 + da * (int32_t)i) >> 15;
-            fb = md;
-            s = cyc_pm(ph0, (md + md2) >> 1, ki) + w;
-            ph0 += inc;
-            ph1 += minc;
-            ph2 += m2inc;
+            int32_t o1 = gk_pm(G->ph[1], (G->fb1 + G->fb2) >> 1, 7000), o3 = gk_sin(G->ph[2]), s, hp;
+            int32_t a = (a0 + da * (int32_t)i) >> 15, w = gk_noise(G, &ns, ninc);
+            G->fb2 = G->fb1;
+            G->fb1 = o1;
+            s = (gk_pm(G->ph[0], (o1 + o3) >> 1, ki) * a >> 15) + ((w * pv0) >> 16);
+            G->ph[0] += inc;
+            G->ph[1] += minc;
+            G->ph[2] += m2inc;
             flt += (((s - flt) >> 1) * kq) >> 14;
             hp = s - flt;
-            y[i] = (clamp(hp, -32767, 32767) * a) >> 15;
+            y[i] = clamp(hp, -32767, 32767);
         }
-        me1 = fb;
         break;
     }
-    default: {                                            /* PERC: two operators at SHAPE's ratio, index envelope */
+    default: {                                            /* PERC: (2 > 1) + (4 > 3): two pairs at SHAPE's ratio, the
+                                                           * second an octave up and quieter, index envelopes */
         int32_t ki = cyc_idx(col);
         uint32_t minc = (inc >> 8) * CK_PERC_RATIO[shp >> 4];
         k0 = (int32_t)(((int64_t)ki * me0) >> 30);
         k1 = (int32_t)(((int64_t)ki * me1) >> 30);
+        dk = (k1 - k0) / (int32_t)n;
         for (i = 0; i < n; i++) {
-            int32_t md = sine_i(ph1), s = cyc_pm(ph0, md, k0 + (k1 - k0) * (int32_t)i / (int32_t)n);
+            int32_t k = k0 + dk * (int32_t)i, o2 = gk_pm(G->ph[1], (G->fb1 + G->fb2) >> 2, 1500), s;
             int32_t a = (a0 + da * (int32_t)i) >> 15;
-            ph0 += inc;
-            ph1 += minc;
-            y[i] = (s * a) >> 15;
+            G->fb2 = G->fb1;
+            G->fb1 = o2;
+            s = gk_pm(G->ph[0], o2, k);
+            s += gk_pm(G->ph[2], gk_sin(G->ph[3]), k >> 1) >> 2;
+            G->ph[0] += inc;
+            G->ph[1] += minc;
+            G->ph[2] += inc << 1;
+            G->ph[3] += minc << 1;
+            y[i] = ((s - (s >> 3)) * a) >> 15;
         }
         break;
     }
     }
-    if (click && ph2 < CK_CLICK_LEN && lane != CK_HAT) {  /* CLICK: a falling burst of noise at the hit */
+    if (click && ph2 < CK_CLICK_LEN) {                    /* CLICK: a falling burst of the PSG's noise at the hit */
         for (i = 0; i < n && ph2 + i < CK_CLICK_LEN; i++) {
-            int32_t r = (int32_t)(CK_CLICK_LEN - ph2 - i), w = (int32_t)noise32(&ns) >> 16;
-            y[i] += ((w * click) >> 7) * r / (int32_t)CK_CLICK_LEN * r / (int32_t)CK_CLICK_LEN;
+            int32_t r = (int32_t)(CK_CLICK_LEN - ph2 - i), w = gk_noise(G, &ns, GK_HZ(12000));
+            y[i] += ((w * click) >> 8) * r / (int32_t)CK_CLICK_LEN * r / (int32_t)CK_CLICK_LEN;
         }
     }
-    if (lane != CK_HAT)
-        ph2 = ph2 + n < 65536u ? ph2 + n : 65536u;   /* (the click counter, held at its end) */
+    ph2 = ph2 + n < 65536u ? ph2 + n : 65536u;            /* (the click counter, held at its end) */
     v->s[1] = a1;
     v->s[2] = pe1;
     v->s[3] = me1;
     v->s[4] = ns;
     v->s[5] = flt;
-    v->ph[0] = ph0;
-    v->ph[1] = ph1;
     v->ph[2] = ph2;
     if (mute)                                             /* a muted voice rings on unheard (the EDIT layer's keys) */
         return;
@@ -279,6 +356,7 @@ static void ck_render(track_t *t, voice_t *v, int32_t *out, uint32_t n, const vm
         int32_t s = y[i];
         if (g)
             s = (softclip((s * g) >> 12) * mk) >> 15;
+        s = s >= 0 ? s & ~127 : -((-s) & ~127);           /* (the 9-bit DAC) */
         out[i] += voice_amp(soft_knee(s, 30000), m, i);
     }
 }
@@ -299,6 +377,16 @@ static const ck_kit_t CK_KITS[] = {
     {{{60, 88, 70, 92, 96, 120}, {56, 64, 80, 52, 50, 112}, {56, 34, 110, 0, 90, 90}, {52, 70, 96, 40, 32, 104}}}, /* GRIT */
     {{{72, 66, 90, 48, 30, 118}, {76, 50, 98, 20, 40, 100}, {80, 44, 127, 0, 127, 88}, {84, 74, 110, 8, 72, 108}}}, /* METAL */
     {{{56, 96, 20, 60, 10, 127}, {60, 70, 24, 24, 100, 96}, {60, 26, 56, 0, 8, 80}, {56, 80, 40, 30, 48, 110}}},    /* DUB */
+    {{{60, 90, 30, 70, 30, 127}, {60, 62, 40, 30, 95, 114}, {62, 32, 60, 0, 30, 84}, {72, 40, 50, 10, 20, 96}}},  /* BOOM BAP */
+    {{{62, 84, 50, 78, 50, 127}, {66, 52, 76, 20, 110, 104}, {70, 28, 110, 0, 72, 92}, {64, 60, 80, 20, 64, 98}}},  /* TECHNO KIT */
+    {{{56, 104, 16, 90, 0, 127}, {70, 48, 46, 40, 60, 110}, {72, 30, 90, 0, 40, 90}, {66, 54, 40, 40, 80, 100}}},  /* ELECTRO KIT */
+    {{{58, 80, 24, 60, 40, 124}, {58, 58, 30, 24, 85, 108}, {58, 34, 40, 0, 20, 80}, {60, 52, 30, 20, 40, 96}}},  /* DUSTY KIT */
+    {{{54, 96, 24, 56, 10, 127}, {56, 70, 30, 46, 40, 106}, {60, 40, 70, 0, 30, 80}, {50, 80, 40, 50, 48, 118}}},  /* TRIBAL KIT */
+    {{{66, 60, 40, 70, 20, 127}, {74, 36, 70, 10, 110, 96}, {76, 20, 100, 0, 100, 88}, {80, 34, 90, 8, 112, 104}}},  /* MINIMAL KIT */
+    {{{60, 86, 90, 96, 110, 124}, {54, 66, 100, 60, 70, 116}, {54, 40, 127, 0, 120, 94}, {48, 74, 110, 46, 24, 108}}},  /* FORGE KIT */
+    {{{70, 64, 60, 100, 40, 124}, {80, 44, 90, 60, 100, 108}, {84, 24, 120, 0, 64, 86}, {88, 40, 100, 64, 90, 104}}},  /* CHIP KIT 2 */
+    {{{54, 100, 20, 64, 20, 127}, {52, 74, 28, 40, 80, 110}, {56, 40, 50, 0, 50, 82}, {46, 90, 30, 60, 56, 112}}},  /* CAVE KIT */
+    {{{64, 78, 36, 70, 30, 127}, {64, 56, 60, 34, 96, 110}, {66, 44, 96, 0, 48, 96}, {72, 50, 60, 30, 88, 100}}},  /* DISCO KIT */
 };
 /* {TUNE, DECAY, COLOR (the three -64..63, 0 = the voices as set), OPEN, CLICK, VELO, DRV, VARI}; every kit suggests
  * the BEAT pattern */
@@ -309,13 +397,25 @@ static const preset_t CK_PRESETS[] = {
     {"GRIT KIT", {-4, -4, 0, 64, 90, 70, 80, 20}, {0, 100, 127, 100}, 0, 0, FX(20, 0, 0, 10), PAT(12)},
     {"METAL KIT", {0, 0, 0, 90, 30, 90, 10, 30}, {0, 100, 127, 100}, 0, 0, FX(0, 20, 10, 30), PAT(12)},
     {"DUB KIT", {-2, 6, -4, 100, 10, 90, 16, 16}, {0, 100, 127, 100}, 0, 0, FX(0, 0, 40, 40), PAT(12)},
+    /* Dungeon Tracker 1.0: more sounds (appended: a song's preset numbers stay) */
+    {"BOOM BAP", {0, 0, -6, 50, 30, 90, 10, 10}, {0, 100, 127, 100}, 0, 0, FX(10, 0, 0, 22), PAT(12)},
+    {"TECHNO KIT", {0, -4, 4, 60, 60, 70, 20, 8}, {0, 100, 127, 100}, 0, 0, FX(10, 0, 10, 18), PAT(12)},
+    {"ELECTRO KIT", {0, 0, 0, 70, 20, 85, 0, 6}, {0, 100, 127, 100}, 0, 0, FX(0, 10, 20, 16), PAT(12)},
+    {"DUSTY KIT", {-6, -2, -10, 40, 20, 95, 30, 24}, {0, 100, 127, 100}, 0, 0, FX(20, 0, 0, 24), PAT(12)},
+    {"TRIBAL KIT", {0, 4, 0, 50, 30, 85, 0, 30}, {0, 100, 127, 100}, 0, 0, FX(0, 0, 20, 40), PAT(12)},
+    {"MINIMAL KIT", {0, -10, 0, 40, 80, 60, 0, 4}, {0, 100, 127, 100}, 0, 0, FX(0, 0, 30, 14), PAT(12)},
+    {"FORGE KIT", {-6, 0, 8, 70, 100, 70, 70, 18}, {0, 100, 127, 100}, 0, 0, FX(40, 0, 10, 20), PAT(12)},
+    {"CHIP KIT 2", {4, -6, 6, 50, 20, 60, 20, 6}, {0, 100, 127, 100}, 0, 0, FX(0, 0, 20, 10), PAT(12)},
+    {"CAVE KIT", {-4, 6, -6, 70, 20, 80, 10, 16}, {0, 100, 127, 100}, 0, 0, FX(0, 10, 30, 70), PAT(12)},
+    {"DISCO KIT", {0, 0, 0, 90, 40, 80, 0, 10}, {0, 100, 127, 100}, 0, 0, FX(0, 20, 10, 26), PAT(12)},
 };
 typedef char ck_kits_fit[NELEM(CK_KITS) == NELEM(CK_PRESETS) ? 1 : -1];
 
 /* kit k's voices into the track (a preset load, a clean sound, power-on) */
+static const ck_kit_t *mk_kit(uint32_t k);              /* (MOD KIT's: eng_mod.c) */
 static void ck_kit_load(track_t *t, uint32_t k)
 {
-    const ck_kit_t *K = &CK_KITS[k % NELEM(CK_KITS)];
+    const ck_kit_t *K = t->eng_req % NENGINES == ENGI_MKIT ? mk_kit(k) : &CK_KITS[k % NELEM(CK_KITS)];
     uint32_t l;
     for (l = 0; l < CK_N; l++) {
         t->p[CK_PITCH(l)] = K->v[l][0];
@@ -357,7 +457,7 @@ static const param_desc_t *ck_param_desc(uint32_t id)
 }
 
 static const engine_t ENG_CKIT = {
-    .name = "FMKIT",
+    .name = "GEN KIT",
     .page_title = {"KIT", "FEEL"},
     .edit = {
         {"TUNE", F_BIPCT, -64, 63, 0, 0, 0},
@@ -451,6 +551,37 @@ static const preset_t CT_PRESETS[] = {
     {"SYNC LEAD", {3, 96, 100, 90, 72, 0, 0, 0}, {0, 60, 110, 30}, 0, 0, FX(16, 0, 46, 24), PAT(3)},
     {"BRASS", {1, 72, 70, 60, 20, -8, 32, 0}, {14, 70, 100, 36}, 0, 0, FX(0, 20, 20, 40), PAT(4)},
     {"BELL", {13, 70, 84, 0, 0, 0, 20, 0}, {0, 96, 0, 80}, 0, 0, FX(0, 20, 40, 50), PAT(7)},
+    /* Dungeon Tracker 1.0: more sounds (appended: a song's preset numbers stay) */
+    {"REESE", {1, 60, 80, 60, 24, 0, 100, 40}, {0, 60, 110, 20}, 0, 1, FX(20, 10, 0, 0), PAT(8)},
+    {"DUB BASS", {1, 30, 40, 10, 0, 0, 0, 90}, {0, 50, 100, 16}, 0, 1, FX(0, 0, 20, 10), PAT(2)},
+    {"SLAP BASS", {5, 96, 26, 0, 10, 8, 0, 30}, {0, 52, 40, 12}, 0, 1, FX(0, 0, 0, 4), PAT(1)},
+    {"GROWL FM", {0, 90, 70, 70, 80, 0, 0, 40}, {0, 60, 100, 18}, 0, 1, FX(30, 0, 0, 0), PAT(8)},
+    {"ROLLING", {3, 70, 30, 0, 30, 4, 0, 60}, {0, 48, 30, 10}, 0, 1, FX(10, 0, 10, 0), PAT(2)},
+    {"WOOD BASS", {1, 50, 20, 0, 0, 2, 0, 50}, {0, 64, 20, 24}, 0, 1, FX(0, 0, 0, 10), PAT(2)},
+    {"ZAP BASS", {1, 84, 20, 0, 40, 30, 0, 40}, {0, 50, 50, 12}, 0, 1, FX(10, 0, 0, 0), PAT(1)},
+    {"OCTAVE BASS", {0, 64, 50, 30, 20, 0, 40, 70}, {0, 60, 90, 16}, 0, 1, FX(10, 0, 0, 0), PAT(2)},
+    {"WARM PAD", {1, 36, 110, 40, 8, 0, 90, 20}, {70, 90, 110, 90}, 0, 0, FX(0, 50, 20, 70), PAT(5)},
+    {"CHOIR FM", {3, 50, 110, 60, 0, 0, 80, 0}, {60, 90, 110, 90}, 0, 0, FX(0, 60, 20, 80), PAT(5)},
+    {"DARK PAD", {0, 40, 100, 30, 20, 0, 70, 30}, {80, 96, 110, 96}, 0, 0, FX(0, 40, 30, 80), PAT(5)},
+    {"AIR PAD", {7, 30, 110, 40, 0, 0, 100, 0}, {90, 96, 100, 100}, 0, 0, FX(0, 60, 40, 90), PAT(5)},
+    {"FM STRINGS", {1, 60, 90, 50, 30, -2, 110, 0}, {50, 90, 110, 80}, 0, 0, FX(0, 60, 20, 60), PAT(5)},
+    {"DX PIANO", {3, 80, 60, 10, 0, 0, 10, 0}, {0, 88, 30, 50}, 0, 0, FX(0, 10, 20, 40), PAT(6)},
+    {"VIBES", {7, 56, 80, 0, 0, 0, 30, 0}, {0, 92, 0, 70}, 0, 0, FX(0, 40, 30, 50), PAT(7)},
+    {"CLAV", {5, 100, 30, 0, 40, 0, 0, 0}, {0, 60, 30, 20}, 0, 0, FX(10, 0, 10, 20), PAT(6)},
+    {"ORGAN 2", {1, 50, 127, 100, 30, 0, 40, 80}, {0, 0, 127, 16}, 0, 0, FX(0, 60, 0, 40), PAT(6)},
+    {"MUSIC BOX", {11, 60, 70, 0, 0, 0, 0, 0}, {0, 90, 0, 60}, 0, 0, FX(0, 20, 40, 60), PAT(7)},
+    {"FM HARP", {3, 64, 50, 0, 0, 0, 20, 0}, {0, 80, 0, 60}, 0, 0, FX(0, 20, 30, 60), PAT(3)},
+    {"KOTO", {5, 86, 40, 0, 20, 4, 0, 0}, {0, 74, 0, 40}, 0, 0, FX(0, 0, 30, 40), PAT(3)},
+    {"DROP PLUCK", {13, 70, 36, 0, 0, 20, 0, 0}, {0, 64, 0, 40}, 0, 0, FX(0, 10, 40, 40), PAT(13)},
+    {"FM MARIMBA", {7, 60, 30, 0, 0, 0, 0, 0}, {0, 80, 0, 50}, 0, 0, FX(0, 0, 10, 40), PAT(3)},
+    {"FM SAW LEAD", {1, 100, 100, 90, 64, 0, 0, 0}, {0, 70, 110, 30}, 0, 1, FX(10, 40, 40, 30), PAT(4)},
+    {"HOLLOW FM", {3, 70, 100, 90, 20, 0, 0, 30}, {0, 70, 110, 34}, 0, 0, FX(0, 20, 40, 30), PAT(4)},
+    {"SOLO HORN", {1, 64, 70, 70, 10, -6, 20, 0}, {20, 70, 100, 40}, 0, 0, FX(0, 20, 30, 40), PAT(4)},
+    {"WHISTLE", {1, 10, 100, 10, 0, 0, 0, 0}, {30, 80, 110, 40}, 0, 1, FX(0, 20, 40, 50), PAT(4)},
+    {"SCREAMER", {3, 110, 110, 100, 72, 0, 60, 0}, {0, 70, 110, 30}, 0, 1, FX(40, 0, 40, 20), PAT(4)},
+    {"GLIDE LEAD", {3, 90, 100, 80, 60, -10, 30, 0}, {0, 70, 110, 30}, 0, 1, FX(10, 10, 50, 30), PAT(4)},
+    {"HERO LEAD", {1, 80, 90, 80, 20, 0, 30, 0}, {10, 70, 110, 40}, 0, 0, FX(10, 30, 50, 40), PAT(4)},
+    {"SIREN", {1, 80, 100, 80, 50, 63, 0, 0}, {40, 90, 100, 60}, 0, 0, FX(0, 20, 50, 60), PAT(7)},
 };
 
 static const engine_t ENG_CTONE = {

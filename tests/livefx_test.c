@@ -65,7 +65,8 @@ static uint64_t hf_energy(uint32_t blocks)                   /* the sample-to-sa
     }
     return e;
 }
-static void solo_t2(void)                                  /* a quiet song: T2's FMTONE alone, no sends */
+static void solo_t2(void)                                  /* a quiet song: T2 alone, no sends (1.5: FMTONE retired: GENESIS
+                                                             * BELL PAD, a steady tone from its first block) */
 {
     uint32_t k;
     ui_power_on();
@@ -75,6 +76,11 @@ static void solo_t2(void)                                  /* a quiet song: T2's
         trk[k].p[P_REV] = trk[k].p[P_DLY] = trk[k].p[P_CHOR] = 0;
         trk[k].p[P_ITYPE] = 0;
     }
+    set_engine_of(&trk[1], ENGI_GENESIS);
+    apply_preset_to(&trk[1], 22u);
+    trk[1].engine = trk[1].eng_req;
+    trk[1].p[P_REV] = trk[1].p[P_DLY] = trk[1].p[P_CHOR] = 0;
+    trk[1].p[P_ITYPE] = 0;
     trk[1].p[P_SLCR] = 0;
     render(64, 0);
 }
@@ -411,9 +417,9 @@ int main(void)
             trk_note_on(&trk[1], 60, 100);
             render(100, 0);
             h1 = hf_energy(100) * 1000u / (energy(100) | 1u);
-            snprintf(what, sizeof what, "RIDE 100: an FMTONE note brighter (the highs' share %llu -> %llu)", (unsigned long long)h0,
+            snprintf(what, sizeof what, "RIDE 100: a GENESIS note brighter (the highs' share %llu -> %llu)", (unsigned long long)h0,
                      (unsigned long long)h1);
-            ok5(what, trk[1].engine != ENGI_CTONE || h1 > h0);
+            ok5(what, h1 > h0);
             mk_x[3] = 0;
         }
     }

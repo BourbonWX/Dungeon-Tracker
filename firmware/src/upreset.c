@@ -371,7 +371,7 @@ static void up_auto_name(char *b, uint32_t e, uint32_t k)
 {
     char l[4];
     e %= NENGINES;
-    str_cpy(b, ENGINES[eng_ok(e) ? e : ENGI_FM6]->name, 9);   /* (a DIGITAL record plays as FM6) */
+    str_cpy(b, ENGINES[eng_ok(e) ? e : DT_RETIRE ? eng_subst(e) : ENGI_FM6]->name, 9);   /* (a DIGITAL record plays as FM6) */
     up_slot_label(l, k);
     str_cpy(b + str_len(b), " ", 2);
     str_cpy(b + str_len(b), l + 1, 3);
@@ -464,7 +464,19 @@ static int up_load(uint32_t k)
     up_values(r, v);
     load_begin(t, UNDO_SOUND);                          /* (ui.c: the copy for SAVE held = undo) */
     panic_req |= (uint8_t)(1u << song.sel);
-#if !FELUCCA_FM4
+#if DT_RETIRE
+    if (eng_retired(r->engine)) {                       /* 1.1: a retired engine's sound (kept as it was stored): its
+                                                         * substitute's preset of the sound's category, the rest its own */
+        uint32_t pi = eng_subst_cat(r->engine, up_cat(k));
+        fm1_irq_off();
+        for (i = 0; i < P_COUNT; i++)
+            if (!param_kept(i))
+                t->p[i] = v[i];
+        t->eng_req = (uint8_t)eng_retire_values(r->engine, up_cat(k), pi, t->p);
+        t->preset = (uint8_t)pi;
+        fm1_irq_on();
+    } else
+#elif !FELUCCA_FM4
     if (r->engine == ENGI_DIGITAL) {                    /* a DIGITAL sound (kept as it was stored): FM6 */
         int16_t p[P_COUNT];
         for (i = 0; i < P_COUNT; i++)
@@ -487,6 +499,16 @@ static int up_load(uint32_t k)
     sync_reload = 1;
     ui.force = 1;
     return 0;
+}
+
+/* 1.5: SOUND MORPH's saved targets (morph.c): slot k's engine (-1: empty), its values in today's P_* order */
+static int32_t up_engine_of(uint32_t k) { return up_used(k) ? (int32_t)up_rec(k)->engine : -1; }
+static int up_values_of(uint32_t k, int16_t *v)
+{
+    if (!up_used(k))
+        return 0;
+    up_values(up_rec(k), v);
+    return 1;
 }
 
 /* the patterns of the user presets (SAVE > PHRASES lists them after the factory ones, ui.c pat_count) */
@@ -538,7 +560,10 @@ static void up_pat_load(track_t *t, uint32_t k)
 }
 
 /* the engine a used slot's sound plays on (a DIGITAL record: FM6, without FELUCCA_FM4) */
-static uint32_t up_engine(uint32_t k) { return eng_ok(up_rec(k)->engine) ? up_rec(k)->engine : ENGI_FM6; }
+static uint32_t up_engine(uint32_t k)
+{
+    return eng_ok(up_rec(k)->engine) ? up_rec(k)->engine : DT_RETIRE ? eng_subst_c(up_rec(k)->engine, up_cat(k)) : ENGI_FM6;   /* (1.1) */
+}
 
 static uint32_t up_count(void)                 /* used slots */
 {

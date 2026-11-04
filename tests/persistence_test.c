@@ -60,6 +60,21 @@ static void fl_plain_window_init(void) {}
 #include "../firmware/src/storage.c"
 #include "../firmware/src/upreset.c"
 #include "../firmware/src/project.c"
+#if PROJ_SONGS                                  /* Dungeon Tracker: a slot's project in the song store (song_store.c) */
+static int pst_load(uint32_t s, void *d, uint32_t m)
+{
+    sg_hdr_t h;
+    sg_on();
+    if (sg.ext[s] != SG_NONE && !sg_head(sg.ext[s], &h) && !h.plen) return 0;   /* (erased: as st_load's empty record) */
+    return sg_get_project(s, d, m);
+}
+#define PST_SAVE(s, d, l) sg_put((s), (d), (l), SG_PATS_NONE)
+#define PST_ERASES SG_SECS
+#else
+#define pst_load(s, d, m) st_load(OBJ_PROJECT0 + (s), (d), (m))
+#define PST_SAVE(s, d, l) st_save(OBJ_PROJECT0 + (s), (d), (l))
+#define PST_ERASES 1u
+#endif
 
 enum { ED_UI_STATE = 34, ED_UI_SET, ED_UI_PALETTES, ED_FAV_GET, ED_FAV_SET };
 static uint8_t ed_rep[64];                        /* the reply's bytes (MENU_SET) */
@@ -172,15 +187,14 @@ static int mig_test(void)
                  st_load(OBJ_UPFM6, &got, sizeof got) == (int)sizeof got && !memcmp(&got, &upf, sizeof got) &&
                      ((st_hdr_t *)(nor + 0x9F000))->type == OBJ_UPFM6 && st_load(OBJ_FM6BANK, &mig_bank, sizeof mig_bank) > 0 &&
                      !memcmp(mig_bank.v[0] + 118, "NEW B1", 6));
-    up_load(0);
-    bad += check("  .. UP_LOAD 1 plays the bank's B3, SLOT OWN", !memcmp(fm6_patch[song.sel] + FP_NAME, "NEW B3    ", 10) &&
-                 TSEL->p[P_E7] == FM6_OWN);
-    up_load(1);
-    bad += check("  .. UP_LOAD 2 (F2) plays F2, SLOT F2", !memcmp(fm6_patch[song.sel] + FP_NAME, FM6_FACTORY[1] + 118, 10) &&
-                 TSEL->p[P_E7] == 1);
-    up_load(2);
-    bad += check("  .. UP_LOAD 3 (an empty B5) plays the init voice, as before",
-                 !memcmp(fm6_patch[song.sel] + FP_NAME, "INIT VOICE", 10) && TSEL->p[P_E7] == FM6_OWN);
+    {   /* 1.1: FM6 retired: the migrated user presets (their patches kept above) load as FMTONE, its substitute (1.5: GENESIS) */
+        uint32_t u, ok = 1;
+        for (u = 0; u < 3u; u++) {
+            up_load(u);
+            ok &= TSEL->eng_req == ENGI_GENESIS;   /* (1.5: FMTONE retired too: GENESIS) */
+        }
+        bad += check("  .. UP_LOAD 1..3 (1.1: FM6 retired) play as GENESIS (1.5), the patches still stored", ok);
+    }
     before = erases;
     mig_boot();
     bad += check("  .. the next boot: done (no write), the same patches", mig_ok() && erases == before);
@@ -226,8 +240,8 @@ static int mig_test(void)
     return bad;
 }
 
-/* ---- 1.2, Discussion #130: the autosave (project.c): written only when the music changed, stopped and idle 10 s, at
- * most one a minute; restored at power-on (RESTORE LAST ON, a clean boot); a damaged one ignored ---- */
+/* ---- 1.2, Discussion #130: the autosave (project.c): written only when the music changed, stopped and idle 3 s
+ * (1.0.1; 10 s before), at most one every 20 s (60 s before); restored at power-on (RESTORE LAST ON, a clean boot); a damaged one ignored ---- */
 static void as_run(uint32_t ms)                          /* the main loop for ms (autosave_poll checks every 250 ms) */
 {
     uint32_t end = fm1_ms + ms;
@@ -273,10 +287,10 @@ static int autosave_test(void)
     as_run(120000u);
     bad += check("autosave: power-on with none: nothing restored; 2 min unchanged: no write", ok && !as.writes && !as_erases);
     as_edit(0);
-    as_run(9000u);
+    as_run(2500u);
     ok = !as.writes;
     as_run(1500u);
-    bad += check("autosave: a change: no write within 10 s, one once idle 10 s (one erase)",
+    bad += check("autosave: a change: no write within 3 s, one once idle 3 s (one erase)",
                  ok && as.writes == 1u && as_erases == 1u && st_load(OBJ_AUTOSAVE, &raw, sizeof raw) == (int)sizeof raw);
     as_run(600000u);
     bad += check("autosave: 10 min unchanged after it: no more writes", as.writes == 1u && as_erases == 1u);
@@ -289,10 +303,10 @@ static int autosave_test(void)
     as_run(300000u);
     ok = as.writes == 1u;
     song.playing = 0;
-    as_run(9000u);
+    as_run(2500u);
     ok &= as.writes == 1u;
     as_run(1500u);
-    bad += check("autosave: changed while playing: no write until stopped and idle 10 s, then one", ok && as.writes == 2u);
+    bad += check("autosave: changed while playing: no write until stopped and idle 3 s, then one", ok && as.writes == 2u);
     as_edit(1);
     fm1_in.notes = 1u << 7;                              /* a key held (playing the sound, stopped) */
     as_run(60000u);
@@ -302,23 +316,23 @@ static int autosave_test(void)
     as_run(20000u);
     ok &= as.writes == 2u;
     trk[1].v[0].active = 0;
-    as_run(9000u);
+    as_run(2500u);
     ok &= as.writes == 2u;
     as_run(1500u);
-    bad += check("autosave: a key held, a voice sounding: no write (an erase stops the audio); after, idle 10 s: one",
+    bad += check("autosave: a key held, a voice sounding: no write (an erase stops the audio); after, idle 3 s: one",
                  ok && as.writes == 3u);
     as_run(60000u);
-    as_edit(2);                                          /* written 10 s on; then edits 15 s apart: a minute's gap */
+    as_edit(2);                                          /* written 3 s on; then edits 5 s apart: a 20 s gap */
     as_run(11000u);
     w = as.writes;
     as_edit(3);
-    as_run(15000u);
+    as_run(5000u);
     ok = as.writes == w;
     as_edit(4);
-    as_run(15000u);
+    as_run(5000u);
     ok &= as.writes == w;
-    as_run(40000u);
-    bad += check("autosave: two writes at least 60 s apart", ok && as.writes == w + 1u);
+    as_run(10000u);
+    bad += check("autosave: two writes at least 20 s apart", ok && as.writes == w + 1u);
     as_run(60000u);
     w = as.writes;
     as_edit(5);
@@ -414,14 +428,80 @@ static int autosave_test(void)
     {   /* worst case: a change, then just enough idle, over and over, for 8 hours */
         uint32_t i;
         as_erases = 0;
-        for (i = 0; i < 8u * 3600u / 11u; i++) {
+        for (i = 0; i < 8u * 3600u / 4u; i++) {
             as_edit(i);
-            as_run(11000u);
+            as_run(4000u);
         }
-        printf("persist:   worst case, 8 h of a change every 11 s: %u writes (%u per sector)\n", (unsigned)as_erases,
+        printf("persist:   worst case, 8 h of a change every 4 s: %u writes (%u per sector)\n", (unsigned)as_erases,
                (unsigned)(as_erases / 2u));
-        bad += check("autosave wear, worst case: at most one write a minute (480 in 8 h)", as_erases <= 8u * 60u + 1u);
+        bad += check("autosave wear, worst case: at most three writes a minute (1440 in 8 h)", as_erases <= 8u * 180u + 1u);
     }
+    /* 1.0.1: the session lost on the FM-1 (sounds picked and saved, then 64 steps built while it played, switched off
+     * soon after STOP): the header's mark says so; 3 s after STOP it is written; QUICK saves and loads it */
+    memset(nor + 0xE5000u, 0xFF, 0x2000u);
+    as_power_on();
+    autosave_boot(1);
+    trk[1].preset = 3;                                   /* the sounds picked, then a pause: written */
+    as_run(5000u);
+    ok = as.writes == 1u && !as.pend;
+    song.playing = 1;                                    /* 64 steps built while it plays */
+    trk[0].p[P_SLEN] = 64;
+    for (k = 0; k < 64u; k++) {
+        trk[0].step[k] = (step_t){{(uint8_t)(48u + k % 12u)}, 1, ST_NOTE, 0, 100};
+        as_run(2000u);
+    }
+    ok &= as.writes == 1u && as.pend;                    /* (playing: nothing written, the mark on) */
+    song.playing = 0;
+    as_run(1500u);                                       /* stopped 1.5 s: still the mark (switch off: lost) */
+    ok &= as.writes == 1u && as.pend;
+    memcpy(st, trk[0].step, sizeof st);
+    as_power_on();
+    ok &= autosave_boot(1) == 1 && trk[1].preset == 3 && trk[0].p[P_SLEN] != 64 && memcmp(st, trk[0].step, sizeof st);
+    bad += check("1.0.1: built while playing, off 1.5 s after STOP: the sounds come back, the 64 steps not (the mark said so)",
+                 ok);
+    song.playing = 1;                                    /* again, and this time 3 s of quiet after STOP */
+    trk[0].p[P_SLEN] = 64;
+    memcpy(trk[0].step, st, sizeof st);
+    as_run(30000u);
+    song.playing = 0;
+    as_run(3500u);
+    ok = as.writes == 1u && !as.pend;
+    as_power_on();
+    ok &= autosave_boot(1) == 1 && trk[0].p[P_SLEN] == 64 && !memcmp(st, trk[0].step, sizeof st);
+    bad += check("1.0.1: .. 3.5 s after STOP: written, the mark gone; power-on brings back all 64 steps", ok);
+    /* QUICK: SAVE writes now (refused playing), LOAD brings it back */
+    song.playing = 1;
+    trk[0].step[5].note[0] = 99;
+    as_run(500u);
+    ok = quick_save() == 1 && as.pend;
+    song.playing = 0;
+    w = as.writes;
+    ok &= quick_save() == 0 && as.writes == w + 1u && !as.pend && quick_used() && str_eq(ui.msg, "QUICK SAVED");
+    trk[0].step[5].note[0] = 12;
+    trk[0].p[P_SLEN] = 16;
+    quick_load();
+    ok &= trk[0].step[5].note[0] == 99 && trk[0].p[P_SLEN] == 64 && !as.pend;
+    as_run(30000u);
+    ok &= as.writes == w + 1u;
+    bad += check("1.0.1: QUICK SAVE refused playing, written at once stopped (QUICK SAVED); QUICK LOAD brings it back", ok);
+    memset(nor + 0xE5000u, 0xFF, 0x2000u);
+    as_power_on();
+    autosave_boot(1);
+    ok = !quick_used();
+    quick_load();
+    ok &= str_eq(ui.msg, "EMPTY SLOT");
+    ui_prefs |= PREF_RESTORE_OFF;
+    as_edit(9);
+    as_run(10000u);
+    ok &= !as.pend && !as.writes;
+    ok &= quick_save() == 0 && quick_used();
+    as_power_on();
+    ok &= autosave_boot(1) == 0;                         /* (OFF: not restored at power-on, but there to LOAD) */
+    quick_load();
+    ok &= trk[9 % NTRK].step[9 % 16u].n == 1u;
+    ui_prefs &= (uint8_t)~PREF_RESTORE_OFF;
+    bad += check("1.0.1: no autosave: QUICK empty; RESTORE LAST OFF: no mark, none written, QUICK SAVE / LOAD still work",
+                 ok);
     return bad;
 }
 
@@ -443,9 +523,10 @@ static int bank_flash_test(void)
     as_power_on();
     bank_reset();
     memset(&bk, 0, sizeof bk);
-    bad += check("bank: the six pairs in 0xD0000..0xDBFFF, above USR3's 32 KiB, under the user presets",
+    bad += check("bank: the six pairs in 0xD0000..0xDBFFF, above USR3's 32 KiB (1.3: the song slots'), under the user presets",
                  st_sector(OBJ_BANK0, 0) == 0xD0000u && st_sector(OBJ_BANK0 + 5u, 1) + ST_SECTOR == 0xDC000u &&
-                 0xA0000u + 2u * SMP_USER_SIZE + smp_user_size(2) == 0xD0000u && smp_user_size(0) == SMP_USER_SIZE &&
+                 0xA0000u + 2u * SMP_USER_SIZE + SMP_USER_TOP == 0xD0000u && smp_user_size(0) == SMP_USER_SIZE &&
+                 SG_SEC[SG_NEXT - 1u][SG_SECS - 1u] + ST_SECTOR == 0xD0000u &&
                  st_sector(OBJ_UPRESET0, 0) == 0xDC000u);
     trk[0].step[0] = (step_t){{60}, 1, ST_NOTE, 0, 100};
     trk[0].p[P_SLEN] = 16;
@@ -632,7 +713,7 @@ int main(void)
     project_save(0);
     fail_after = -1;
     bad += check("failed project save keeps RAM and old flash", !strcmp(ui.msg, "SAVE ERROR") &&
-                  !memcmp(&proj_slot[0], &old, sizeof old) && st_load(OBJ_PROJECT0, &got, sizeof got) == (int)sizeof got &&
+                  !memcmp(&proj_slot[0], &old, sizeof old) && pst_load(0, &got, sizeof got) == (int)sizeof got &&
                   !memcmp(&got, &old, sizeof got));
     project_save(0);
     bad += check("successful project save publishes new RAM", !strcmp(ui.msg, "SAVED") &&
@@ -652,6 +733,10 @@ int main(void)
         char n[16];
         project_store_t keep;
         step_t st0 = trk[0].step[0];
+        uint32_t r;
+        for (r = 0; r < NTRK; r++)                            /* (1.1: no retired engine's track, FM6 above: a fetch would */
+            if (eng_retired(trk[r].eng_req))                  /* convert it in RAM, the flash copy as it was stored) */
+                set_engine_of(&trk[r], trk[r].eng_req);
         project_save_as(0, "LOFI JAM");
         memset(proj_slot[0].raw, 0, 8);                       /* (the RAM copy lost: read it back from flash) */
         proj_fetch(0);
@@ -661,7 +746,7 @@ int main(void)
         fail_after = 1;
         bad += check("failed project rename: SAVE ERROR, the slot and flash as they were",
                       project_rename(0, "DUB") == 2 && !strcmp(ui.msg, "SAVE ERROR") && !memcmp(&proj_slot[0], &keep, sizeof keep) &&
-                      st_load(OBJ_PROJECT0, &got, sizeof got) == (int)sizeof got && !memcmp(&got, &keep, sizeof got));
+                      pst_load(0, &got, sizeof got) == (int)sizeof got && !memcmp(&got, &keep, sizeof got));
         fail_after = -1;
         before = erases;
         transport_req = 1;
@@ -677,7 +762,7 @@ int main(void)
         int ok2;
         fail_after = 0;                                        /* (the commit record's write fails: a power cut) */
         ok2 = project_erase(0) == 2 && !strcmp(ui.msg, "ERASE ERROR") && !memcmp(&proj_slot[0], &keep, sizeof keep) &&
-              st_load(OBJ_PROJECT0, &got, sizeof got) == (int)sizeof got && !memcmp(&got, &keep, sizeof got);
+              pst_load(0, &got, sizeof got) == (int)sizeof got && !memcmp(&got, &keep, sizeof got);
         fail_after = -1;
         bad += check("failed project erase (cut before its record): ERASE ERROR, the project in RAM and flash", ok2);
         before = erases;
@@ -690,8 +775,8 @@ int main(void)
         before = erases;
         proj_cur = 0;
         pat_from[0] = 1; pat_from[1] = 2;
-        ok2 = project_erase(0) == 0 && !strcmp(ui.msg, "PROJECT A ERASED") && !project_used(0) && erases == before + 1u &&
-              st_load(OBJ_PROJECT0, &got, sizeof got) == 0 && proj_cur == PROJ_NO_SLOT && !pat_from[0] && pat_from[1] == 2u;
+        ok2 = project_erase(0) == 0 && !strcmp(ui.msg, "PROJECT A ERASED") && !project_used(0) && erases == before + PST_ERASES &&
+              pst_load(0, &got, sizeof got) == 0 && proj_cur == PROJ_NO_SLOT && !pat_from[0] && pat_from[1] == 2u;
         proj_fetch(0);
         ok2 &= !project_used(0) && project_used(1);           /* (read back from flash: empty; the next slot kept) */
         bad += check("project erase: the slot empty in RAM and flash (no older copy comes back), the others kept", ok2);
@@ -704,13 +789,13 @@ int main(void)
         proj_slot[0].raw[68 + P_COUNT + 2 + 4] = 7;               /* track 1 step 1: n = 7 */
         bad += check("damaged FUN7 slot (hash ok, n > 4) is refused", (memcpy(proj_slot[0].raw + PROJ_STORE_SIZE - 4,
                       &(uint32_t){proj_hash(proj_slot[0].raw, PROJ_STORE_SIZE - 4)}, 4), !project_used(0)));
-        st_save(OBJ_PROJECT0, &proj_slot[0], sizeof proj_slot[0]);
+        PST_SAVE(0, &proj_slot[0], sizeof proj_slot[0]);
         ui.msg[0] = 0;
         project_load(0);
         bad += check("loading it says EMPTY SLOT and keeps the steps", !strcmp(ui.msg, "EMPTY SLOT") &&
                       !memcmp(&trk[0].step[0], &keep, sizeof keep));
         proj_slot[0] = old;
-        st_save(OBJ_PROJECT0, &proj_slot[0], sizeof proj_slot[0]);
+        PST_SAVE(0, &proj_slot[0], sizeof proj_slot[0]);
     }
     {   /* an older format (FUN5) with values FUN7 cannot pack still loads, bounded */
         uint32_t i;
@@ -726,7 +811,7 @@ int main(void)
         v5.t[0].p[P_LEVEL] = 900;                                  /* out of range */
         v5.t[0].step[0] = (step10_t){{255, 128, 160, 200}, 255, 255, 0, 96, 255, 5};
         v5.sum = proj_hash(&v5, sizeof v5 - 4u);
-        st_save(OBJ_PROJECT0 + 3u, &v5, sizeof v5);
+        PST_SAVE(3u, &v5, sizeof v5);
         memset(proj_slot[3].raw, 0, 4);
         project_load(3);
         bad += check("FUN5 load bounds steps and masks lane accents", trk[0].step[0].n == 4u &&

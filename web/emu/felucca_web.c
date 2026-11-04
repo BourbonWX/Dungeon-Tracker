@@ -287,10 +287,7 @@ static void web_power_on(void)
 #if RONDO_LAYOUT
         bank_boot();                      /* main.c: RONDO's PATTERN BANK */
 #endif
-        if (boot_song_wanted(restored)) { /* main.c: a song of its own (boot_song.c), the page's seed */
-            boot_song(web_seed_v ? web_seed_v : 0x0DDBA11u);
-            boot_song_settle();
-        }
+        (void)restored;                   /* main.c: none of the user's: the default song (1.0: no roll) */
     }
     web_boot_ms = fm1_ms + 430u;         /* main.c: 30 + 400 ms before the first frame */
     web_booted = 1;

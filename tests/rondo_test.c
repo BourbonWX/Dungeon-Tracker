@@ -23,9 +23,10 @@
 #undef main
 
 static int fails;
+static uint32_t kit_eng = ENGI_CKIT;                   /* (1.5: the kit checks run on GEN KIT, then on PHYS KIT) */
 static void check(const char *what, int ok)
 {
-    printf("rondo: %-92s %s\n", what, ok ? "ok" : "FAIL");
+    printf("%s: %-92s %s\n", kit_eng == ENGI_MKIT ? "modkit" : "rondo", what, ok ? "ok" : "FAIL");
     fails += !ok;
 }
 
@@ -44,7 +45,7 @@ static void parts_clear(void)
 }
 static void kit_on(uint32_t part, uint32_t kit)
 {
-    host_preset(&trk[part], ENGI_CKIT, kit);
+    host_preset(&trk[part], kit_eng, kit);
     ck_kit_load(&trk[part], kit);
 }
 
@@ -265,7 +266,7 @@ static void kit_controls(void)
     {
         static const int16_t C[2] = {0, 127};
         uint32_t over = 0, hung = 0, k, kit;
-        for (kit = 0; kit < NELEM(CK_PRESETS); kit++)
+        for (kit = 0; kit < ENGINES[kit_eng]->npresets; kit++)
             for (l = 0; l < CK_N; l++)
                 for (k = 0; k < 32u; k++) {
                     parts_clear();
@@ -342,65 +343,24 @@ static void kit_map(void)
 /* ------------------------------------------------------------------ 4 TONE --- */
 static void tone(void)
 {
-    uint32_t pi, bad = 0, over = 0, hung = 0;
-    char what[120];
+    /* 1.5: FMTONE retired: each of its sounds plays as GENESIS' first of the same category (retire.c), and sounds */
+    uint32_t pi, bad = 0, wrong = 0;
+    char what[140];
     for (pi = 0; pi < NELEM(CT_PRESETS); pi++) {
-        int32_t pk;
         static const uint8_t CH[3] = {48, 55, 64};
-        uint32_t k;
+        uint32_t c = preset_cat(ENGI_CTONE, pi), k = eng_subst_cat(ENGI_CTONE, c), n;
+        int32_t pk;
+        wrong += eng_subst_c(ENGI_CTONE, c) != ENGI_GENESIS || preset_cat(ENGI_GENESIS, k) != c;
         parts_clear();
         host_preset(&trk[1], ENGI_CTONE, pi);
-        trk_note_on(&trk[1], CH[0], 127);
-        over += render_part(1, FS / 2) >= 32767;      /* one voice: never full scale */
-        trk_note_off(&trk[1], CH[0]);
-        render_part(1, FS * 5);
-        parts_clear();
-        host_preset(&trk[1], ENGI_CTONE, pi);
-        for (k = 0; k < 3u; k++)
-            trk_note_on(&trk[1], CH[k], 100);
+        for (n = 0; n < 3u; n++)
+            trk_note_on(&trk[1], CH[n], 100);
         pk = render_part(1, FS / 2);
-        bad += pk < 1500 || dc_from(FS / 4) > 0.01;      /* (the held part: no attack in the mean) */
-        if (pk < 1500 || dc_from(FS / 4) > 0.01)
-            printf("rondo:   %s: peak %d DC %.4f\n", CT_PRESETS[pi].name, pk, dc_from(FS / 4));
-        for (k = 0; k < 3u; k++)
-            trk_note_off(&trk[1], CH[k]);
-        render_part(1, FS * 5);
-        hung += voices_of(&trk[1]) != 0;
+        bad += trk[1].engine != ENGI_GENESIS || pk < 1500;
     }
-    snprintf(what, sizeof what, "FMTONE: every preset (3 notes) sounds, no DC, no full scale (%u), all free after the release (%u)", over, hung);
-    check(what, !bad && !over && !hung);
-    {
-        double a, b;
-        parts_clear();
-        host_preset(&trk[1], ENGI_CTONE, 0);
-        trk[1].p[P_E1] = 10;
-        trk[1].p[P_E3] = 127;
-        trk_note_on(&trk[1], 60, 100);
-        render_part(1, FS / 4);
-        a = bright(FS / 10, FS / 4);
-        parts_clear();
-        host_preset(&trk[1], ENGI_CTONE, 0);
-        trk[1].p[P_E1] = 120;
-        trk[1].p[P_E3] = 127;
-        trk_note_on(&trk[1], 60, 100);
-        render_part(1, FS / 4);
-        b = bright(FS / 10, FS / 4);
-        snprintf(what, sizeof what, "FMTONE COLOR 10 -> 120: brightness %.4f -> %.4f", a, b);
-        check(what, b > a * 1.5);
-        /* CNTR: the index falls toward MSUS: brighter at the start than later with MSUS 0 */
-        parts_clear();
-        host_preset(&trk[1], ENGI_CTONE, 0);
-        trk[1].p[P_E1] = 110;
-        trk[1].p[P_E2] = 70;
-        trk[1].p[P_E3] = 0;
-        trk[1].p[P_ATK] = 0;
-        trk_note_on(&trk[1], 60, 100);
-        render_part(1, FS);
-        a = bright(0, FS / 20);
-        b = bright(FS * 6 / 10, FS * 7 / 10);
-        snprintf(what, sizeof what, "FMTONE CNTR 70, MSUS 0: brightness falls %.4f -> %.4f", a, b);
-        check(what, a > b * 1.5);
-    }
+    snprintf(what, sizeof what, "1.5: FMTONE retired: its %u sounds play as GENESIS of their category (%u not), and sound (%u not)",
+             (unsigned)NELEM(CT_PRESETS), wrong, bad);
+    check(what, !wrong && !bad);
 }
 
 /* ------------------------------------------------------------------ 5 layout --- */
@@ -413,9 +373,9 @@ static void layout(void)
     check("TRK_CAP 4 4 1 3, budget 12", TRK_CAP[0] == 4 && TRK_CAP[1] == 4 && TRK_CAP[2] == 1 && TRK_CAP[3] == 3 && NBUDGET == 12);
     parts_clear();
     kit_on(0, 0);
-    host_preset(&trk[1], ENGI_CTONE, 0);
-    host_preset(&trk[2], ENGI_CTONE, 5);
-    host_preset(&trk[3], ENGI_CTONE, 8);
+    host_preset(&trk[1], ENGI_GENESIS, TRK_DEF[1][1]);   /* (1.5: the power-on sounds, GENESIS) */
+    host_preset(&trk[2], ENGI_GENESIS, TRK_DEF[2][1]);
+    host_preset(&trk[3], ENGI_GENESIS, TRK_DEF[3][1]);
     for (p = 1; p < NPART; p++)
         trk[p].p[P_SUS] = 127;
     kills = voice_kills;
@@ -452,10 +412,10 @@ static void layout(void)
 #endif
     /* the power-on sounds */
 #if RONDO_LAYOUT
-    check("power-on: T1 FMKIT, T2 FMTONE FM PAD, T3 FMTONE FM BASS, T4 FMTONE FM LEAD",
-          TRK_DEF[0][0] == ENGI_CKIT && TRK_DEF[1][0] == ENGI_CTONE && TRK_DEF[2][0] == ENGI_CTONE && TRK_DEF[3][0] == ENGI_CTONE &&
-          !strcmp(CT_PRESETS[TRK_DEF[1][1]].name, "FM PAD") && !strcmp(CT_PRESETS[TRK_DEF[2][1]].name, "FM BASS") &&
-          CT_PRESETS[TRK_DEF[2][1]].mono && !strcmp(CT_PRESETS[TRK_DEF[3][1]].name, "FM LEAD"));
+    check("power-on (1.5): T1 GEN KIT, T2 GENESIS WARM PAD, T3 GENESIS GEN BASS, T4 GENESIS HERO LEAD",
+          TRK_DEF[0][0] == ENGI_CKIT && TRK_DEF[1][0] == ENGI_GENESIS && TRK_DEF[2][0] == ENGI_GENESIS && TRK_DEF[3][0] == ENGI_GENESIS &&
+          !strcmp(GEN_PRESETS[TRK_DEF[1][1]].name, "WARM PAD") && !strcmp(GEN_PRESETS[TRK_DEF[2][1]].name, "GEN BASS") &&
+          GEN_PRESETS[TRK_DEF[2][1]].mono && !strcmp(GEN_PRESETS[TRK_DEF[3][1]].name, "HERO LEAD") && !GEN_PRESETS[TRK_DEF[3][1]].mono);
 #endif
 }
 
@@ -466,7 +426,7 @@ static void labels(void)
     uint32_t l, bad = 0;
     parts_clear();
     kit_on(0, 0);
-    host_preset(&trk[1], ENGI_CTONE, 0);
+    host_preset(&trk[1], ENGI_WAVES, 0);
     for (l = 0; l < CK_N; l++) {
         bad += strcmp(track_desc(&trk[0], CK_PITCH(l))->label, "PITCH") != 0;
         bad += strcmp(track_desc(&trk[0], CK_DECAY(l))->label, "DECAY") != 0;
@@ -504,12 +464,12 @@ static double ns_per_voice_sample(uint32_t e, uint32_t pi, uint32_t nv)
     uint32_t i, k, rep = 0;
     uint64_t t0, t = 0;
     parts_clear();
-    if (e == ENGI_CKIT) kit_on(0, pi); else host_preset(&trk[0], e, pi);
+    if (ENG_KIT(e)) kit_on(0, pi); else host_preset(&trk[0], e, pi);
     trk[0].p[P_SUS] = 127;
     trk[0].p[P_VOICE] = V_POLY;
     for (rep = 0; rep < 40; rep++) {
         for (k = 0; k < nv; k++) {
-            if (e == ENGI_CKIT) {
+            if (ENG_KIT(e)) {
                 trk[0].p[CK_DECAY(k)] = 127;
                 trk_note_on(&trk[0], KIT[k], 110);
             } else {
@@ -525,12 +485,14 @@ static double ns_per_voice_sample(uint32_t e, uint32_t pi, uint32_t nv)
 }
 static void cost(void)
 {
-    double kit = ns_per_voice_sample(ENGI_CKIT, 0, 4), tone = ns_per_voice_sample(ENGI_CTONE, 0, 4);
-    double tone2 = ns_per_voice_sample(ENGI_CTONE, 5, 4), fm6 = ns_per_voice_sample(ENGI_FM6, 0, 4), an = ns_per_voice_sample(0, 0, 4);
+    double kit, pkit, wv = ns_per_voice_sample(ENGI_WAVES, 0, 4);
     char what[160];
-    snprintf(what, sizeof what, "cost per voice-sample: FMKIT %.1f ns, FMTONE %.1f (STACK) / %.1f (SUB), FM6 %.1f, ANALOG %.1f",
-             kit, tone, tone2, fm6, an);
-    check(what, kit < fm6 && tone < fm6 && tone2 < fm6);
+    kit = ns_per_voice_sample(ENGI_CKIT, 0, 4);
+    kit_eng = ENGI_MKIT;
+    pkit = ns_per_voice_sample(ENGI_MKIT, 0, 4);
+    kit_eng = ENGI_CKIT;
+    snprintf(what, sizeof what, "cost per voice-sample: GEN KIT %.1f ns within 1.6 x WAVES %.1f, MOD KIT %.1f within 2.2 x (four voices at most)", kit, wv, pkit);
+    check(what, kit < 1.6 * wv && pkit < 2.2 * wv);   /* (1.1: FM6, the yardstick until then, retired; 1.5: FMTONE) */
 }
 
 /* ------------------------------------------------------------------ 8 demos --- */
@@ -557,11 +519,11 @@ static void mix_to(FILE *w, uint32_t frames)
 static void demo_kit(const char *dir)
 {
     uint32_t kit, s;
-    for (kit = 0; kit < NELEM(CK_PRESETS); kit++) {
+    for (kit = 0; kit < ENGINES[kit_eng]->npresets; kit++) {
         char name[64];
         FILE *w;
         uint32_t step = FS * 60 / 120 / 4, bars = 2;
-        snprintf(name, sizeof name, "kit_%u_%s.wav", kit + 1, CK_PRESETS[kit].name);
+        snprintf(name, sizeof name, "%s_%u_%s.wav", kit_eng == ENGI_MKIT ? "modkit" : "kit", kit + 1, ENGINES[kit_eng]->presets[kit].name);
         for (char *c = name; *c; c++) if (*c == ' ') *c = '_';
         w = wav_open(dir, name, step * 16 * bars + FS);
         if (!w) return;
@@ -679,10 +641,14 @@ int main(int argc, char **argv)
         cost();
     if (argc > 1) {
         demo_kit(argv[1]);
-        demo_tone(argv[1]);
         demo_song(argv[1]);
         printf("rondo: demos in %s\n", argv[1]);
     }
+    kit_eng = ENGI_MKIT;                                /* 1.5: MOD KIT, the same voices as 8-bit hits */
+    kit_voices();
+    kit_controls();
+    if (argc > 1)
+        demo_kit(argv[1]);
     printf("rondo: %s\n", fails ? "FAILED" : "all checks ok");
     return fails != 0;
 }

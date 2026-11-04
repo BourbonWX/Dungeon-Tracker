@@ -1061,28 +1061,29 @@ static void graph_fm(const track_t *t, uint16_t c)
 #endif
 /* Save-bank validity is expensive (CRC/import). Refresh it once per redraw or
  * twice per second, rather than parsing four projects on every UI frame. */
-static char graph_pname[4][13];                       /* .. and the slots' names ("" none) */
-static uint16_t graph_plen[4][NTRK];                  /* .. each track's pattern length (project_info: 1/48 quarters) */
-static uint32_t graph_pden[4][NTRK];                  /* .. and its picture for SONG (project.c proj_density: 2 bits a cell) */
-static uint8_t graph_pcell[4][NTRK];                  /* .. in this many cells (min(LEN, 16)) */
+static char graph_pname[NPROJ][13];                       /* .. and the slots' names ("" none) */
+static uint16_t graph_plen[NPROJ][NTRK];                  /* .. each track's pattern length (project_info: 1/48 quarters) */
+static uint32_t graph_pden[NPROJ][NTRK];                  /* .. and its picture for SONG (project.c proj_density: 2 bits a cell) */
+static uint8_t graph_pcell[NPROJ][NTRK];                  /* .. in this many cells (min(LEN, 16)) */
 static uint32_t graph_pname_sig;
 static int graph_project_used(uint32_t slot)
 {
     static uint32_t ms, frame;
-    static uint8_t mask, ready;
+    static uint16_t mask;                            /* (Dungeon Tracker: A..K) */
+    static uint8_t ready;
     if (!ready || fm1_ms - ms >= 500u || (ui.force && frame != ui.frame)) {
         uint32_t i; mask = 0;
-        for (i = 0; i < 4u; i++)
-            mask |= (uint8_t)((project_info(i, graph_pname[i], graph_plen[i], graph_pden[i], graph_pcell[i]) != 0) << i);
+        for (i = 0; i < NPROJ; i++)
+            mask |= (uint16_t)((project_info(i, graph_pname[i], graph_plen[i], graph_pden[i], graph_pcell[i]) != 0) << i);
         graph_pname_sig = fnv(fnv(2166136261u, graph_pname, sizeof graph_pname), graph_plen, sizeof graph_plen);
         graph_pname_sig = fnv(fnv(graph_pname_sig, graph_pden, sizeof graph_pden), graph_pcell, sizeof graph_pcell);
         ready = 1; ms = fm1_ms; frame = ui.frame;
     }
-    return (mask >> (slot & 3u)) & 1u;
+    return (mask >> (slot % NPROJ)) & 1u;
 }
 static const char *graph_project_name(uint32_t slot)  /* (after graph_project_used) */
 {
-    return graph_pname[slot & 3u];
+    return graph_pname[slot % NPROJ];
 }
 
 /* SONG's timeline (graph_song): the sections left to right, each as wide as it plays: REPS x its clock track's pattern
@@ -1353,9 +1354,9 @@ static uint32_t graph_signature(void)
     if (pg->graph == GR_SLCR && t->p[P_SLCR])        /* the SLICER's step playing */
         h ^= (sl[song.sel].idx + 1u) * 2654435761u;
     if (pg->graph == GR_SLOTS) {                     /* (a checksum over each slot) */
-        for (i = 0; i < 4u; i++)
+        for (i = 0; i < NPROJ; i++)
             h ^= (uint32_t)graph_project_used(i) << (20u + i);
-        h += graph_pname_sig;
+        h += graph_pname_sig + (uint32_t)quick_used() * 2654435761u;
     }
     if (pg->graph == GR_EVENTS)                      /* AUTOMATION: the rows, the one selected, + ADD's place, PLAY,
                                                       * QUANTIZE */
@@ -1363,7 +1364,7 @@ static uint32_t graph_signature(void)
 #if FELUCCA_SLICE
     if (pg->graph == GR_SLICES && slice_page_ok()) h ^= slice_sig();
 #endif
-    if (pg->scope == SC_ENGINE && (ENGINES[t->eng_req % NENGINES] == &ENG_WHEEL || t->eng_req % NENGINES == ENGI_FM6 ||
+    if (pg->scope == SC_ENGINE && ((!DT_RETIRE && t->eng_req % NENGINES == 7u) || t->eng_req % NENGINES == ENGI_FM6 ||
                                    (FELUCCA_FM4 && t->eng_req % NENGINES == ENGI_DIGITAL)))
         h ^= (ui.hot_t ? ui.hot_col + 1u : 0u) * 65537u;
     if ((pg->scope == SC_ENGINE || fop_page(pg->graph)) && t->eng_req % NENGINES == ENGI_FM6)   /* the patch (PAT's algorithm,
@@ -1402,7 +1403,10 @@ static const char *eng_abbr(const char *name)
                                        {"SAMPLE", "SMPL"}, {"VOICE", "VOCL"}, {"TRIO", "TRIO"}, {"WHEEL", "WHEL"},
                                        {"GRAIN", "GRAN"}, {"PHYS", "PHYS"}, {"DRUM", "DRUM"},
                                        {"NOISE", "NOIS"}, {"FM6", "FM6"}, {"SLICE", "SLCE"},
-                                       {"FMKIT", "FKIT"}, {"FMTONE", "FTON"}};   /* RONDO */
+                                       {"GEN KIT", "GKIT"}, {"FMTONE", "FTON"},   /* RONDO */
+                                       {"WAVES", "WAVS"},    /* 1.1 */
+                                       {"SID", "SID"},       /* 1.3 */
+                                       {"GENESIS", "GEN"}, {"MOD KIT", "MKIT"}, {"WAVE 32", "WT32"}, {"MOD", "MOD"}};   /* 1.2, 1.5 */
     uint32_t i;
     for (i = 0; i < sizeof A / sizeof A[0]; i++)
         if (str_eq(name, A[i][0]))
@@ -1690,12 +1694,31 @@ static void graph_events(void)
         }
     }
 }
-/* project slots: the name (none: USED) / EMPTY, the selected one filled */
+/* project slots: the name (none: USED) / EMPTY, the selected one filled. 1.0.1: QUICK first (Q: the autosave, the
+ * music as it was last written: SAVE writes it now, LOAD brings it back) */
 static void graph_slots(void)
 {
+#if RONDO_LAYOUT                                     /* (Dungeon Tracker: Q and A..H, seven rows around the one picked) */
+    int32_t row, n = 1 + (int32_t)NPROJ, first = clamp((int32_t)song.g[G_SLOT] - 3, 0, n - 7);
+    for (row = 0; row < 7; row++) {
+        int32_t r = first + row;
+        if (!r) {
+            list_row(LIST_Y(row), song.g[G_SLOT] == 0, "Q", T_ACCENT, quick_used() ? "QUICK SAVE" : "--",
+                     quick_used() ? T_TEXT : T_DIM, 232);
+        } else {
+            uint32_t i = (uint32_t)(r - 1);
+            char b[2] = {(char)('A' + i), 0};
+            int used = graph_project_used(i);
+            const char *nm = graph_project_name(i);
+            list_row(LIST_Y(row), r == song.g[G_SLOT], b, T_MID, !used ? "--" : nm[0] ? nm : "USED", used ? T_TEXT : T_DIM, 232);
+        }
+    }
+#else
     uint32_t i;
+    list_row(8, song.g[G_SLOT] == 0, "Q", T_ACCENT, quick_used() ? "QUICK SAVE" : "--", quick_used() ? T_TEXT : T_DIM,
+             232);
     for (i = 0; i < 4u; i++) {
-        int32_t y = 12 + (int32_t)i * 26;
+        int32_t y = 30 + (int32_t)i * 22;
         char b[4];
         int sel = (int32_t)i + 1 == song.g[G_SLOT], used = graph_project_used(i);
         const char *n = graph_project_name(i);
@@ -1703,6 +1726,7 @@ static void graph_slots(void)
         b[1] = 0;
         list_row(y, sel, b, T_MID, !used ? "--" : n[0] ? n : "USED", used ? T_TEXT : T_DIM, 232);
     }
+#endif
 }
 /* MIXER page: four SURF columns, one under each card: the track number on its cushion (in the accent:
  * the selected track) with a REC / ARM / MUTE badge (P_MUTE, KNOB 1), the sound's short name (a MUTE badge
@@ -2414,6 +2438,12 @@ static void graph_dice(const track_t *t, uint16_t c)
         dice_pips(x + 4, y + 6, face, held ? T_THEME : T_TEXT);
         cv_text_on(x + 32, y + 2, &AF_S, dice_name(t, d), held ? T_INK : T_MID, bg);
         dice_text(t, d, b);
+        if (cur && held) {                                /* 1.5: the held one: the value KNOB 3 turns (KNOB 4's pick) */
+            uint32_t part, m, id = dice_held_id(t, &part, &m);
+            const char *unit;
+            if (id < P_COUNT)
+                param_format(track_desc(t, id), t->p[id], b, &unit);
+        }
         b[7] = 0;
         cv_text_on(x + 32, y + 17, &AF_S, b, fg, bg);
     }
@@ -2440,7 +2470,7 @@ static void graph_morph(const track_t *t, uint16_t c)
     if (w > 0)
         cv_rrect(6, 14, w, 10, 3, T_THEME, T_SURF);
     if (!mo.tgt[k]) {
-        cv_text_in(6, 50, 228, &AF_S, "[K1] PICK A PRESET TO MORPH TO", T_MID, T_SURF);
+        cv_text_in(6, 50, 228, &AF_S, "[K1] PICK A SOUND TO MORPH TO", T_MID, T_SURF);
         return;
     }
     for (id = 0; id < P_COUNT && n < 8u; id++) {
@@ -2697,9 +2727,9 @@ static void draw_graph(void)
             if (fop_ok()) graph_fm6env(t, c);
             break;
         default:
-            if (pg->scope == SC_ENGINE && ENGINES[t->eng_req % NENGINES] == &ENG_WHEEL) graph_wheel(t, c);
+            if (pg->scope == SC_ENGINE && (!DT_RETIRE && t->eng_req % NENGINES == 7u)) graph_wheel(t, c);
             else if (pg->scope == SC_ENGINE && ENGINES[t->eng_req % NENGINES] == &ENG_SAMPLE && sample_wave.ready) graph_sample(c);
-            else if (pg->scope == SC_ENGINE && t->eng_req % NENGINES == ENGI_FM6) graph_fm6(t, c, 6u);   /* EDIT 1 and 2 */
+            else if (!DT_RETIRE && pg->scope == SC_ENGINE && t->eng_req % NENGINES == ENGI_FM6) graph_fm6(t, c, 6u);   /* EDIT 1 and 2 */
 #if FELUCCA_FM4
             else if ((pg->scope == SC_ENGINE || pg->id[0] == P_FM1_LEVEL) && t->eng_req % NENGINES == ENGI_DIGITAL)
                 graph_fm(t, c);                      /* (OP LEVEL too: the levels on the chart) */

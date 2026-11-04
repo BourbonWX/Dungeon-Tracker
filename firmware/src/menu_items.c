@@ -23,6 +23,9 @@ enum { MI_COLOR, MI_STYLE, MI_LARGE, MI_ANIM, MI_LEDS, MI_SCROFF, MI_SCOPE, MI_H
 #if RONDO_LAYOUT
        MI_GAME,                                        /* RONDO: GAME > DUNGEON OFF / ON (ui_dungeon.c), in a tab of its own
                                                         * after SYSTEM (the action rows before it keep their places) */
+       MI_CLS1, MI_CLS2, MI_CLS3, MI_CLS4,             /* Dungeon Tracker: THE PARTY, T1..T4's classes (core.h) */
+       MI_PARTY,                                       /* .. and its points (shown only) */
+       MI_RANDOM,                                      /* 1.0: RANDOM SONG, an action (OCT+: boot_song.c random_song) */
 #endif
        MI_COUNT };
                                                        /* (1.1: the metronome's rows in AUDIO; 1.2: RESTORE LAST in
@@ -38,7 +41,9 @@ enum { MI_COLOR, MI_STYLE, MI_LARGE, MI_ANIM, MI_LEDS, MI_SCROFF, MI_SCOPE, MI_H
 #define MI_TEXT(row) 0
 #endif
 #if RONDO_LAYOUT
-#define MI_IS_GAME(row) ((row) == MI_GAME)
+#define MI_IS_GAME(row) ((row) >= MI_GAME && (row) != MI_RANDOM)   /* (the GAME tab's valued rows; RANDOM SONG an
+                                                                     * action) */
+#define MI_CLS(row) ((row) >= MI_CLS1 && (row) <= MI_CLS4)
 #else
 #define MI_IS_GAME(row) 0
 #endif
@@ -58,7 +63,7 @@ static const char *const MI_NAME[MI_COUNT] = {"COLOR", "STYLE", "LARGE", "ANIM",
                                               "CALIBRATION", "INFO",
                                               "ABOUT",
 #if RONDO_LAYOUT
-                                              "DUNGEON",
+                                              "DUNGEON", "T1", "T2", "T3", "T4", "PARTY", "RANDOM SONG",
 #endif
                                               };
 /* 1.0.5: the MENU's tabs (ui_menu.c: ALGORITHM steps between them, PRESETS among one tab's rows; the editor gets a
@@ -102,6 +107,8 @@ static const uint8_t MI_TAB[MI_COUNT] = {
     MTAB_SYSTEM, MTAB_SYSTEM, MTAB_SYSTEM,                                  /* CALIBRATION, INFO (1.2), ABOUT */
 #if RONDO_LAYOUT
     MTAB_GAME,                                                              /* RONDO: DUNGEON */
+    MTAB_GAME, MTAB_GAME, MTAB_GAME, MTAB_GAME, MTAB_GAME,                  /* Dungeon Tracker: T1..T4, PARTY */
+    MTAB_GAME,                                                              /* 1.0: RANDOM SONG */
 #endif
 };
 /* TUNE: the project's tuning in cents (G_TUNE, -50..+50); as a row its values 0..TUNE_N - 1 (value - TUNE_MIN). The
@@ -206,6 +213,88 @@ static const char *const LEDS_ROW_N[LEDS_ROWS] = {"OFF", "DIM LO", "DIM HI", "IN
 static const char *const SELECT_N[SEL_N] = {"BPM", "PAGE", "MODW", "VEL"};
 #if RONDO_LAYOUT
 static void dg_game_set(uint32_t on);                  /* (ui_dungeon.c: a new run, or the run ended and its cuts lifted) */
+static void random_song(void);                         /* (boot_song.c: MENU > GAME > RANDOM SONG) */
+/* THE PARTY on MENU > GAME (core.h): T1..T4 a class each, PARTY its points. KNOB 1 (or OCT+/-) turns a row's class
+ * round ROGUE CLERIC FIGHTER MAGE (wrapping) as a preview only (party_pend: shown, nothing changes yet, so the classes
+ * passed on the way never sound); it takes when the knob rests PARTY_REST_MS, when the cursor leaves the row, or when
+ * the MENU closes, if the party then fits CLS_POINTS. Over, it keeps waiting (the PARTY row and a message say how far)
+ * until a change on another row brings it within the points, and every class waiting takes together; the MENU closed
+ * with the party still over: nothing changes. A track whose class changed: its notes let go (its voices), and a sound
+ * its new class does not play (cls_allows) gives way to the class's own (the default track's: TRK_DEF); its steps stay.
+ * (1.0 on the hardware: each step took at once, the classes passed through swapped sounds, and an over class at the
+ * end of the list, no wrap, could not be turned past and was dropped on close.) */
+#define PARTY_REST_MS 700u
+static uint8_t party_pend[NTRK], party_waiting, party_row;
+static uint32_t party_t;
+static uint32_t party_cls(uint32_t k) { return party_waiting ? party_pend[k % NTRK] : trk_cls(k); }
+static void party_apply(void)
+{
+    uint32_t k;
+    for (k = 0; k < NTRK; k++) {
+        track_t *t = &trk[k];
+        uint32_t c = party_pend[k] & CLS_MASK;   /* (1.5: all eight; & 3 kept 1.0's four) */
+        if (c == trk_cls(k))
+            continue;
+        fm1_irq_off();
+        song.clsx[k] = (uint8_t)(c ^ k);
+        panic_req |= (uint8_t)(1u << k);              /* (its voices, a new cap: what sounds lets go) */
+        fm1_irq_on();
+        if (!cls_allows(c, track_cat(t))) {
+            undo_depth++;                              /* (a part of the party change: no sound undo of its own) */
+            set_engine_of(t, TRK_DEF[CLS_ROLE[c]][0]);  /* (its role's default: TRK_DEF has the four parts, so 1.1's */
+            apply_preset_to(t, TRK_DEF[CLS_ROLE[c]][1]);   /* classes go by their role, not past its end) */
+            undo_depth--;
+        }
+    }
+    party_waiting = 0;
+    ui.force = 1;
+}
+static void party_stage(uint32_t k, uint32_t c)
+{
+    uint32_t i, pts;
+    if (!party_waiting)
+        for (i = 0; i < NTRK; i++)
+            party_pend[i] = (uint8_t)trk_cls(i);
+    party_pend[k % NTRK] = (uint8_t)(c & CLS_MASK);
+    party_waiting = 1;
+    party_row = (uint8_t)(k % NTRK);
+    party_t = fm1_ms;
+    pts = party_points(party_pend);
+    if (pts > CLS_POINTS) {
+        char b[24] = "PARTY 00/12: TOO BIG";
+        b[6] = (char)('0' + pts / 10u);
+        b[7] = (char)('0' + pts % 10u);
+        ui_message(b);
+    }
+}
+/* the classes waiting take, if the party fits: 1 when they did (or none was waiting) */
+static int party_commit(void)
+{
+    uint32_t i, same = 1;
+    if (!party_waiting)
+        return 1;
+    if (party_points(party_pend) > CLS_POINTS)
+        return 0;
+    for (i = 0; i < NTRK; i++)
+        same &= party_pend[i] == trk_cls(i);
+    party_apply();
+    if (!same)
+        ui_message("PARTY SET");
+    return 1;
+}
+/* each MENU frame (ui_menu.c menu_input): the class shown takes once the knob rests, or the cursor left its row */
+static void party_tick(void)
+{
+    if (party_waiting && (fm1_ms - party_t >= PARTY_REST_MS || ui.menu_sel != MI_CLS1 + party_row))
+        party_commit();
+}
+static void party_menu_closed(void)                    /* (ui_menu.c menu_close) */
+{
+    if (!party_commit()) {
+        party_waiting = 0;
+        ui_message("PARTY NOT CHANGED");          /* (over its points: as it was) */
+    }
+}
 #endif
 
 /* a row's value as 0..menu_n(row) - 1 in the order the menu steps it (LEDS: OFF DIM LO DIM HI INV INV LO INV HI) */
@@ -214,7 +303,11 @@ static uint32_t menu_n(uint32_t row)
     return row == MI_COLOR ? palette_n() : row == MI_LOWCUT || (row >= MI_CLICK && row <= MI_COUNTIN) ? 3u :
            row == MI_HOLD ? 4u : row == MI_LEDS ? LEDS_ROWS : row == MI_SCROFF ? NELEM(SCROFF_N) :
            row == MI_TUNE ? TUNE_N : row == MI_MIDIIN ? NELEM(N_ROUTE) : MI_TCH(row) ? MCH_N : row == MI_ANIM ? 3u : row == MI_HOME ? HV_COUNT :
-           row == MI_SELECT ? SEL_N : 2u;
+           row == MI_SELECT ? SEL_N :
+#if RONDO_LAYOUT
+           MI_CLS(row) ? NCLS : row == MI_PARTY ? 1u :
+#endif
+           2u;
 }
 static uint32_t menu_get(uint32_t row)
 {
@@ -233,6 +326,8 @@ static uint32_t menu_get(uint32_t row)
     case MI_SELECT: return sel_mode();
 #if RONDO_LAYOUT
     case MI_GAME: return dg_game != 0;
+    case MI_CLS1: case MI_CLS2: case MI_CLS3: case MI_CLS4: return party_cls(row - MI_CLS1);
+    case MI_PARTY: return 0;
 #endif
     case MI_CLICK: case MI_CLKLVL: case MI_COUNTIN: return rp_get(row - MI_CLICK);
     case MI_TUNE: return (uint32_t)(clamp(song.g[G_TUNE], TUNE_MIN, TUNE_MIN + (int32_t)TUNE_N - 1) - TUNE_MIN);
@@ -264,6 +359,18 @@ static const char *menu_vname(uint32_t row, uint32_t v)
     case MI_SELECT: return SELECT_N[v % SEL_N];
 #if RONDO_LAYOUT
     case MI_GAME: return v & 1u ? "ON" : "OFF";
+    case MI_CLS1: case MI_CLS2: case MI_CLS3: case MI_CLS4: return CLS_NAME[v & CLS_MASK];
+    case MI_PARTY: {                                   /* its points: "12/12" (over: "15/12 !") */
+        static char b[12];
+        uint8_t c[NTRK];
+        uint32_t i, p;
+        for (i = 0; i < NTRK; i++) c[i] = (uint8_t)party_cls(i);
+        p = party_points(c);
+        b[0] = (char)('0' + p / 10u); b[1] = (char)('0' + p % 10u); b[2] = '/';
+        b[3] = (char)('0' + CLS_POINTS / 10u); b[4] = (char)('0' + CLS_POINTS % 10u);
+        b[5] = p > CLS_POINTS ? ' ' : 0; b[6] = '!'; b[7] = 0;
+        return b;
+    }
 #endif
     case MI_LEDS: return LEDS_ROW_N[v % LEDS_ROWS];
     case MI_MIDIIN: return N_ROUTE[v % NELEM(N_ROUTE)];
@@ -336,6 +443,10 @@ static void menu_put(uint32_t row, uint32_t v)
     case MI_CLICK: case MI_CLKLVL: case MI_COUNTIN: rp_put(row - MI_CLICK, v); break;   /* (at once: click.c, seq.c) */
 #if RONDO_LAYOUT
     case MI_GAME: dg_game_set(v & 1u); break;          /* (RAM only: not in the settings, off at power-on) */
+    case MI_CLS1: case MI_CLS2: case MI_CLS3: case MI_CLS4:   /* (the project's: saved with the song) */
+        if ((v & CLS_MASK) != party_cls(row - MI_CLS1))
+            party_stage(row - MI_CLS1, v);
+        break;
 #endif
     case MI_TUNE: song.g[G_TUNE] = (int16_t)((int32_t)v + TUNE_MIN); break;
     case MI_MIDIIN: song.g[G_ROUTE] = (int16_t)v; break;
@@ -354,6 +465,10 @@ static uint32_t menu_step(uint32_t row, int32_t s)
     uint32_t v = menu_get(row), n = menu_n(row);
     if (row == MI_TUNE)
         return (uint32_t)clamp((int32_t)v + s, 0, (int32_t)n - 1);
+#if RONDO_LAYOUT
+    if (MI_CLS(row))                                   /* a class: round all eight, wrapping */
+        return (v + (uint32_t)(s > 0 ? 1 : s < 0 ? NCLS - 1 : 0)) % NCLS;
+#endif
     if (row == MI_ANIM)                                /* OFF ON IDLE, stopping at the ends */
         return ANIM_ORD[clamp((int32_t)ANIM_ORD[v % 3u] + (s > 0) - (s < 0), 0, 2)];
     if (f && (str_eq(f->name[0], "ON") || row == MI_SCRWAKE))   /* (ANIM, USB SERIAL, RESTORE LAST: ON is their value 0;

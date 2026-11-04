@@ -11,6 +11,7 @@
  *           never rolls NOISE or a chord ARP
  *   FMKIT   BD SD HH PC (each voice's PITCH DECAY COLOR SWEEP SHAPE together), MIX (the four levels) and FEEL (OPEN
  *           CLICK DRV VARI)
+ *   WAVES SID SAMPLE PHYS GRAIN (Dungeon Tracker 1.1): bred from the engine's presets (DICE_GEN below)
  * KNOB 1 DIE (the cursor), KNOB 2 HOLD, KNOB 3 WILD (100 %: a fresh roll; lower: each die moves only part of the way
  * from where it is towards its new roll, a mutation), KNOB 4 HIST (the last eight sounds before a roll, newest first:
  * turning loads one). OCT+ ROLL, OCT- back one in HIST. The keys play as on any page, to hear each roll. */
@@ -20,31 +21,88 @@
 #define DICE_HIST 8u
 static struct {
     uint16_t hold[NTRK];                                  /* bit d: die d held */
+    uint8_t part[NTRK];                                   /* 1.5: a held die's value KNOB 3 turns (KNOB 4 picks it) */
     uint8_t cur[NTRK], wild[NTRK], hpos[NTRK], hn[NTRK];  /* the cursor, WILD (0 = 100 %), HIST shown, HIST kept */
     uint8_t eng[NTRK];                                    /* the engine the history is of (+ 1) */
     int16_t hist[NTRK][DICE_HIST][DICE_VALS];
     uint32_t rng;
     uint8_t anim;                                         /* frames of the roll still shown tumbling */
+    uint8_t par[2];                                       /* the bred dice's parents this roll (factory presets) */
 } dice;
 
+/* Dungeon Tracker 1.1: every other engine's dice (WAVES SID SAMPLE PHYS GRAIN), bred from its factory presets: a roll
+ * picks two of the engine's presets of the track's role (a bass track's basses, a lead's leads and plucks, a rogue's
+ * kits, chords' pads and keys; all of them if the role has fewer than two) as the parents, and each die takes its
+ * values from one of the two, both of one species (the first value, SHAPE WAVE SET MODEL SRC, the same; sp: values
+ * on or off alike, PHYS's BOW: a struck body with a bowed one's values can be silent), a choice (a list, semitones) as
+ * it is, a distance nudged by up to a twelfth of its range (an off, 0, as it is).
+ * So each value is one a sound designer chose, and the presets the engine gains add to its dice. A die is a mask of
+ * the engine's eight values (P_E0 + bit), 0 the ENV (the parent's, as dice_env varies it) */
+typedef struct {
+    uint8_t eng, n, sp;
+    const char *name[8];
+    uint32_t mask[8];                    /* bits 0..7 E1..E8, 8..27 the FM operators' values (P_FM1_ATK + bit - 8: GENESIS) */
+} dice_gen_t;
+#define DOP(k) (0x1Fu << (8u + 5u * (k)))    /* (operator k + 1's ATK DEC SUS REL LVL) */
+static const dice_gen_t DICE_GEN[] = {
+    {ENGI_WAVES, 8, 0, {"SHAPE", "PRM", "PENV", "SUB", "CUT", "RES", "GRIT", "ENV"}, {1, 2, 4, 0x48, 0x10, 0x20, 0x80, 0}},
+    {ENGI_SID, 8, 0, {"WAVE", "PW", "PWM", "MOD", "TUNE", "SWEEP", "FILTR", "ENV"}, {1, 2, 4, 8, 0x10, 0x20, 0xC0, 0}},
+    {ENGI_SAMPLE, 7, 0, {"SET", "TUNE", "BITS", "LOOP", "CUT", "DRV", "ENV"}, {1, 2, 4, 8, 0x10, 0x40, 0}},
+    {ENGI_PHYS, 8, 0x40, {"MODEL", "STRC", "BRIT", "DAMP", "POS", "ACC", "EXCT", "ENV"}, {1, 2, 4, 8, 0x10, 0x20, 0xC0, 0}},
+    {8u /* GRAIN */, 8, 0, {"SRC", "POS", "SIZE", "DENS", "PTCH", "SPRY", "TONE", "ENV"}, {1, 2, 4, 8, 0x10, 0x60, 0x80, 0}},
+    {ENGI_GENESIS, 8, 0, {"ALG", "FB", "MUL", "OP1", "OP2", "OP3", "OP4", "GRIT"},   /* 1.2: an operator a die (its own */
+     {1, 2, 0x3C, DOP(0), DOP(1), DOP(2), DOP(3), 0xC0}},                           /* envelope, level), GRIT with DTUNE */
+    {0u /* ANALOG */, 8, 0, {"WAVE", "DTN", "MIX", "NOIS", "CUT", "RES", "DRIVE", "ENV"}, {1, 2, 4, 8, 0x10, 0x20, 0xC0, 0}},   /* 1.5 */
+    {ENGI_MOD, 8, 0, {"SMPL", "OFS", "ARP", "VIB", "LED", "CRUSH", "DTUN", "ENV"}, {1, 2, 4, 8, 0x10, 0x60, 0x80, 0}},   /* 1.5 */
+    {ENGI_WT32, 8, 0, {"BANK", "POS", "PENV", "DTUN", "FILTR", "SUB", "WARP", "ENV"}, {1, 2, 4, 8, 0x30, 0x40, 0x80, 0}},   /* 1.5 */
+};
+static uint32_t dice_bit_id(uint32_t b) { return b < 8u ? P_E0 + b : P_FM1_ATK + b - 8u; }
+static const param_desc_t *dice_bit_desc(const track_t *t, uint32_t b)
+{
+    return b < 8u ? &ENGINES[t->eng_req % NENGINES]->edit[b] : track_desc(t, dice_bit_id(b));
+}
+static int32_t dice_parent_val(uint32_t e, uint32_t pi, uint32_t b)   /* factory preset pi's value of bit b */
+{
+    if (b < 8u)
+        return ENGINES[e]->presets[pi].e[b];
+    return e == ENGI_GENESIS ? GEN_OPS[pi % NELEM(GEN_OPS)][(b - 8u) / 5u][(b - 8u) % 5u] : 0;
+}
+static const dice_gen_t *dice_gen(const track_t *t)
+{
+    uint32_t e = t->eng_req % NENGINES, i;
+    for (i = 0; i < NELEM(DICE_GEN); i++)
+        if (DICE_GEN[i].eng == e)
+            return &DICE_GEN[i];
+    return 0;
+}
 static int dice_engine_ok(const track_t *t)
 {
     uint32_t e = t->eng_req % NENGINES;
-    return e == ENGI_CTONE || e == ENGI_CKIT || e == ENGI_LOFI;
+    return e == ENGI_CTONE || ENG_KIT(e) || e == ENGI_LOFI || dice_gen(t);
 }
-static int dice_kit(const track_t *t) { return t->eng_req % NENGINES == ENGI_CKIT; }
+static int dice_kit(const track_t *t) { return ENG_KIT(t->eng_req % NENGINES); }
 static int dice_lofi(const track_t *t) { return t->eng_req % NENGINES == ENGI_LOFI; }
-static uint32_t dice_count(const track_t *t) { return dice_kit(t) ? 6u : 9u; }
+static uint32_t dice_count(const track_t *t) { return dice_gen(t) ? dice_gen(t)->n : dice_kit(t) ? 6u : 9u; }
 static const char *const DICE_TONE_N[9] = {"RATIO", "COLOR", "CNTR", "MSUS", "FDBK", "SWEEP", "STACK", "SUB", "ENV"};
 static const char *const DICE_LOFI_N[9] = {"MODE", "WAVE", "DUTY", "CRSH", "SWEEP", "VIB", "ARP", "TONE", "ENV"};
 static const char *const DICE_KIT_N[6] = {"BD", "SD", "HH", "PC", "MIX", "FEEL"};
 static const char *dice_name(const track_t *t, uint32_t d)
 {
+    if (dice_gen(t))
+        return dice_gen(t)->name[d % dice_gen(t)->n];
     return dice_kit(t) ? DICE_KIT_N[d % 6u] : dice_lofi(t) ? DICE_LOFI_N[d % 9u] : DICE_TONE_N[d % 9u];
 }
 /* a die that is a choice, not a distance (WILD: the chance it changes, not how far) */
+static int dice_choice(const param_desc_t *d) { return d->fmt == F_ENUM || d->fmt == F_SEMI || d->max - d->min < 12; }
 static int dice_discrete(const track_t *t, uint32_t d)
 {
+    const dice_gen_t *g = dice_gen(t);
+    if (g) {
+        uint32_t m = g->mask[d % g->n], i;
+        for (i = 0; m && !((m >> i) & 1u); i++)
+            ;
+        return !m || dice_choice(dice_bit_desc(t, i));
+    }
     if (dice_kit(t))
         return 0;
     if (dice_lofi(t))
@@ -56,7 +114,22 @@ static uint32_t dice_wild(uint32_t k) { return dice.wild[k] ? dice.wild[k] - 1u 
 /* the parameters of die d (ids, at most 5) */
 static uint32_t dice_die_ids(const track_t *t, uint32_t d, uint8_t *ids)
 {
-    uint32_t k;
+    uint32_t k, n = 0;
+    const dice_gen_t *g = dice_gen(t);
+    if (g) {
+        uint32_t m = g->mask[d % g->n];
+        if (!m) {
+            ids[0] = P_ATK, ids[1] = P_DEC, ids[2] = P_SUS, ids[3] = P_REL;
+            return 4;
+        }
+        for (k = 0; k < 28u && n < 5u; k++)
+            if ((m >> k) & 1u) {
+                ids[n++] = (uint8_t)dice_bit_id(k);
+                if (k < 8u && ENGINES[t->eng_req % NENGINES]->edit[k].fmt == F_CUTOFF)
+                    ids[n++] = P_ED_FLT;                  /* (a cutoff comes with its filter envelope: FILTER SWEEP's opens) */
+            }
+        return n;
+    }
     if (!dice_kit(t)) {
         if (d < 8u) {
             ids[0] = (uint8_t)(P_E0 + d);
@@ -117,7 +190,85 @@ static uint32_t dice_pick(const uint8_t *w, uint32_t n)
 static uint32_t dice_role(const track_t *t)
 {
     uint32_t k = trk_index(t) % NTRK;
+#if RONDO_LAYOUT
+    k = CLS_ROLE[trk_cls(k)];                           /* (Dungeon Tracker: its class's role: FIGHTER PALADIN bass, MAGE
+                                                         * BARD lead, the others as chords) */
+    return k == ROLE_BASS ? 2u : k == ROLE_LEAD ? 3u : 1u;
+#else
     return k == 2u || k == 3u ? k : 1u;
+#endif
+}
+
+/* a factory preset the bred dice may take as a parent: pass 0 the class's (PRESETS > LIST CLASS: cls_allows), 1 a kit
+ * for a kit role and no kit for another, 2 any (an alias, SAMPLE's retired set: never; an FX sound only on pass 2: the
+ * dice breed instruments, a zap's sweep on a lead's pitch can fly out of hearing) */
+static int dice_fits(const track_t *t, uint32_t i, uint32_t pass)
+{
+    uint32_t e = t->eng_req % NENGINES, c = preset_cat(e, i), kit;
+    if (preset_orig(ENGINES[e], i) != i || (pass < 2u && c == CAT_FX))   /* (an effect, a zap's sweep: no parent) */
+        return 0;
+#if RONDO_LAYOUT
+    kit = CLS_ROLE[trk_cls(trk_index(t) % NTRK)] == ROLE_DRUMS;   /* (ROGUE, MONK: kits) */
+    if (pass == 0u)
+        return cls_allows(trk_cls(trk_index(t) % NTRK), c);
+#else
+    kit = 0;
+    if (pass == 0u)
+        return c == (dice_role(t) == 2u ? CAT_BASS : dice_role(t) == 3u ? CAT_LEAD : CAT_PAD);
+#endif
+    return pass == 2u || (uint32_t)kit == (c == CAT_DRUM);
+}
+/* a sound's species: its first value, and which of the engine's sp values are on */
+static int32_t dice_species(const dice_gen_t *g, const int16_t *e8)
+{
+    int32_t k = e8[0] & 0xFF, i;
+    for (i = 1; i < 8; i++)
+        if ((g->sp >> i) & 1u)
+            k |= (e8[i] != 0) << (8 + i);
+    return k;
+}
+static int32_t dice_species_of(const dice_gen_t *g, const preset_t *p)
+{
+    int16_t e8[8];
+    uint32_t i;
+    for (i = 0; i < 8u; i++)
+        e8[i] = (int16_t)p->e[i];
+    return dice_species(g, e8);
+}
+/* one of the engine's factory presets that fits (the first pass with two at least); sp >= 0: only those of that
+ * species, if there is one */
+static uint32_t dice_parent(const track_t *t, int32_t sp)
+{
+    const engine_t *e = ENGINES[t->eng_req % NENGINES];
+    const dice_gen_t *g = dice_gen(t);
+    uint32_t i, n = 0, pass, r;
+    if (sp >= 0 && g) {
+        for (pass = 0; pass < 3u; pass++) {
+            for (i = n = 0; i < e->npresets; i++)
+                n += dice_fits(t, i, pass) && dice_species_of(g, &e->presets[i]) == sp;
+            if (n)
+                break;
+        }
+        if (n) {
+            r = dice_rand() % n;
+            for (i = 0; i < e->npresets; i++)
+                if (dice_fits(t, i, pass) && dice_species_of(g, &e->presets[i]) == sp && !r--)
+                    return i;
+        }
+    }
+    for (pass = 0; pass < 3u; pass++) {
+        for (i = n = 0; i < e->npresets; i++)
+            n += (uint32_t)dice_fits(t, i, pass);
+        if (n >= 2u || (pass == 2u && n))
+            break;
+    }
+    if (!n)
+        return 0;
+    r = dice_rand() % n;
+    for (i = 0; i < e->npresets; i++)
+        if (dice_fits(t, i, pass) && !r--)
+            return i;
+    return 0;
 }
 
 /* the common ENV (ATK DEC SUS REL): one of the role's shapes, a little varied */
@@ -211,6 +362,37 @@ static void dice_fresh_lofi(const track_t *t, uint32_t d, int16_t *v, uint32_t r
 static void dice_fresh(const track_t *t, uint32_t d, int16_t *v)
 {
     uint32_t role = dice_role(t);
+    const dice_gen_t *g = dice_gen(t);
+    if (g) {                                              /* bred: the values of one of the roll's two parents */
+        const engine_t *e = ENGINES[t->eng_req % NENGINES];
+        uint32_t pi = dice.par[dice_rand() & 1u] % e->npresets;
+        const preset_t *pp = &e->presets[pi];
+        uint32_t m = g->mask[d % g->n], k, n = 0;
+        if (!m) {
+            uint8_t E[1][4];
+            for (k = 0; k < 4u; k++)
+                E[0][k] = (uint8_t)pp->env[k];
+            v[0] = E[0][0], v[1] = E[0][1], v[2] = E[0][2], v[3] = E[0][3];
+            for (k = 0; k < 4u; k++)
+                v[k] = (int16_t)clamp((int32_t)v[k] + (v[k] ? dice_in(-6, 6) : 0), 0, 127);
+            return;
+        }
+        for (k = 0; k < 28u && n < 5u; k++) {
+            const param_desc_t *pd;
+            int32_t x, j;
+            if (!((m >> k) & 1u))
+                continue;
+            pd = dice_bit_desc(t, k);
+            x = dice_parent_val(t->eng_req % NENGINES, pi, k);
+            j = (pd->max - pd->min) / 12;
+            if (!dice_choice(pd) && j > 0 && x != 0 && x != pd->min)   /* (an off stays off: BOW 3 can mute a struck body) */
+                x += dice_in(-j, j);
+            v[n++] = (int16_t)clamp(x, pd->min, pd->max);
+            if (k < 8u && pd->fmt == F_CUTOFF)
+                v[n++] = (int16_t)pp->fenv;
+        }
+        return;
+    }
     if (dice_kit(t)) {
         static const int8_t R[4][5][2] = {                /* PITCH DECAY COLOR SWEEP SHAPE: lowest, highest */
             {{48, 76}, {60, 110}, {0, 60}, {40, 110}, {0, 90}},
@@ -358,6 +540,15 @@ static void dice_roll(void)
     if (!dice.rng)
         dice.rng = 0x9E3779B9u ^ (fm1_ms * 2654435761u);
     dice_push(t);
+    if (dice_gen(t)) {                                    /* (bred: this roll's two parents) */
+        const dice_gen_t *g = dice_gen(t);
+        uint32_t h = 0;
+        for (d = 0; d < g->n; d++)                        /* (a die held that makes the species: that species) */
+            if ((dice.hold[k] >> d) & 1u && (g->mask[d] & (1u | g->sp)))
+                h = 1;
+        dice.par[0] = (uint8_t)dice_parent(t, h ? dice_species(g, &t->p[P_E0]) : -1);
+        dice.par[1] = (uint8_t)dice_parent(t, dice_species_of(g, &ENGINES[t->eng_req % NENGINES]->presets[dice.par[0]]));
+    }
     load_begin(t, UNDO_SOUND);
     fm1_irq_off();
     for (d = 0; d < n; d++) {
@@ -381,6 +572,8 @@ static void dice_roll(void)
         if (t->p[P_E1] > 95 && t->p[P_E4] > 40 && ((rolled >> 4) & 1u))   /* (a bright index, much feedback) */
             t->p[P_E4] = 40;
     }
+    if (t->eng_req % NENGINES == 0u && w && t->p[P_E3] > 48 && t->p[P_E4] > 80 && !((dice.hold[k] >> 3) & 1u))
+        t->p[P_E3] = 48;                                  /* (1.5: ANALOG: much noise through an open filter gives way) */
     fm1_irq_on();
     t->user = 0;
     load_end(t);
@@ -414,14 +607,32 @@ static void dice_hist(int32_t s)
     load_end(t);
 }
 
+/* 1.5: the selected die held: KNOB 3 turns one of its values by hand (the dice pick them, a hand sets one), KNOB 4 picks
+ * which (an operator: ATK DEC SUS REL LVL; a kit's voice: PITCH DECAY COLOR SWEEP SHAPE; ENV: A D S R). Not held: WILD
+ * and HIST, as before. -> the value's id (P_COUNT: the die is not held), *part its place of *m */
+static uint32_t dice_held_id(const track_t *t, uint32_t *part, uint32_t *m)
+{
+    uint32_t k = song.sel % NTRK, n = dice_count(t), d = dice.cur[k] % n;
+    uint8_t ids[5];
+    if (!dice_engine_ok(t) || !((dice.hold[k] >> d) & 1u))
+        return P_COUNT;
+    *m = dice_die_ids(t, d, ids);
+    *part = dice.part[k] % (*m ? *m : 1u);
+    return ids[*part];
+}
 static void dice_edit(uint32_t slot, int32_t s)
 {
-    uint32_t k = song.sel % NTRK, n = dice_count(TSEL);
+    uint32_t k = song.sel % NTRK, n = dice_count(TSEL), part, m;
     if (!dice_engine_ok(TSEL))
         return;
-    if (slot == 0u)
+    if (slot == 3u && dice_held_id(TSEL, &part, &m) < P_COUNT) {   /* (held: KNOB 4 the value KNOB 3 turns) */
+        dice.part[k] = (uint8_t)clamp((int32_t)part + s, 0, (int32_t)m - 1);
+        return;
+    }
+    if (slot == 0u) {
         dice.cur[k] = (uint8_t)clamp((int32_t)(dice.cur[k] % n) + (s > 0 ? 1 : -1), 0, (int32_t)n - 1);
-    else if (slot == 1u)
+        dice.part[k] = 0;
+    } else if (slot == 1u)
         dice.hold[k] = (uint16_t)(s > 0 ? dice.hold[k] | 1u << (dice.cur[k] % n) : dice.hold[k] & ~(1u << (dice.cur[k] % n)));
     else if (slot == 2u)
         dice.wild[k] = (uint8_t)(clamp((int32_t)dice_wild(k) + accel(EN_K3, s, 100), 0, 100) + 1);
@@ -436,8 +647,10 @@ static void dice_text(const track_t *t, uint32_t d, char *b)
     uint32_t m = dice_die_ids(t, d, ids);
     const char *unit;
     b[0] = 0;
-    if (m == 1u) {
-        param_format(track_desc(t, ids[0]), t->p[ids[0]], b, &unit);
+    if (m == 1u || (dice_gen(t) && dice_gen(t)->mask[d % dice_gen(t)->n])) {   /* (bred SUB FILTR ..: the first; an
+                                                                              * operator: its LVL) */
+        uint32_t id = ids[0] >= P_FM1_ATK && ids[0] <= P_FM4_LEVEL && m == 5u ? ids[4] : ids[0];
+        param_format(track_desc(t, id), t->p[id], b, &unit);
         return;
     }
     if (!dice_kit(t)) {                                   /* ENV */

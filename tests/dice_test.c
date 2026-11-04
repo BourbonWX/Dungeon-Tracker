@@ -139,8 +139,16 @@ int main(int argc, char **argv)
     ok3("DICE shows on an FMTONE track", k < NPAGES && page_visible(k));
     track_select(0);
     ok3("  and on an FMKIT track", page_visible(k));
-    set_engine_of(&trk[0], 0);
-    ok3("  not on another engine (ANALOG)", !page_visible(k));
+    {   /* 1.1: on every engine one can pick; a retired one (ANALOG, a stored number) loads as its substitute, dice and all */
+        uint32_t n, all = 1;
+        for (n = 0; n < NENG_SHOWN; n++) {
+            set_engine_of(&trk[0], eng_vis(n));
+            all &= page_visible(k);
+        }
+        ok3("  1.1: and on each of the eight engines", all);
+        set_engine_of(&trk[0], ENGI_CTONE);
+        ok3("  a retired engine asked for (1.5: FMTONE): its substitute (GENESIS), DICE there", trk[0].eng_req == ENGI_GENESIS && page_visible(k));
+    }
     set_engine_of(&trk[0], ENGI_CKIT);
     apply_preset_to(&trk[0], 0);
     dice_page(1);
@@ -184,22 +192,10 @@ int main(int argc, char **argv)
     vals(&trk[1], b);
     ok3("WILD 0: a roll changes nothing", !memcmp(a, b, sizeof a));
     dice.wild[1] = 0;
-    {
-        static const int8_t LO[3][9] = {{0, 20, 60, 20, 0, -12, 0, 0}, {0, 40, 20, 0, 0, -12, 0, 0}, {0, 50, 50, 30, 0, -12, 0, 0}};
-        static const int8_t HI[3][9] = {{15, 80, 127, 90, 90, 12, 90, 60}, {15, 100, 80, 60, 90, 12, 30, 110}, {15, 110, 120, 100, 90, 12, 50, 50}};
-        uint32_t bad = 0, role;
-        for (role = 0; role < 3u; role++)
-            for (r = 0; r < 300u; r++) {
-                track_t *t = &trk[1 + role];
-                track_select(1 + role);
-                set_engine_of(t, ENGI_CTONE);
-                dice_roll();
-                for (i = 0; i < 8u; i++)
-                    bad += t->p[P_E0 + i] < LO[role][i] || t->p[P_E0 + i] > HI[role][i];
-                bad += t->p[P_ATK] < 0 || t->p[P_REL] > 127;
-            }
-        ok3("WILD 100: every die inside its role's range (T2 chords, T3 bass, T4 lead; 900 rolls)", !bad);
-    }
+    /* (1.5: FMTONE retired, and its hand-made dice with it: GENESIS' bred dice, section 8, on every class) */
+    track_select(1);
+    set_engine_of(&trk[1], ENGI_GENESIS);
+    apply_preset_to(&trk[1], 0);
 
     /* 4. HIST */
     dice_page(1);
@@ -216,51 +212,52 @@ int main(int argc, char **argv)
         ok3("  KNOB 4 left: the newest again", !memcmp(b, c, sizeof b) && dice.hpos[1] == 0u);
     }
 
-    /* 5. the sound of the rolls */
+    /* 5b. 1.5: a held die set by hand: KNOB 3 its value, KNOB 4 which of its values; a roll leaves it; let go, KNOB 3 and
+     * 4 are WILD and HIST again */
     {
-        uint32_t role, over = 0, dcs = 0, hung = 0, harsh = 0;
-        double brmax = 0, worst = 0;
-        for (role = 0; role < 3u; role++) {           /* the brightest factory preset of the engine, on its note */
-            uint32_t p;
-            for (p = 0; p < NELEM(CT_PRESETS); p++) {
-                int32_t pk;
-                double dc, br;
-                int h;
-                host_preset(&trk[1 + role], ENGI_CTONE, p);
-                listen(1 + role, role == 1u ? 36u : 60u, &pk, &dc, &br, &h);
-                brmax = br > brmax ? br : brmax;
-            }
-        }
-        for (role = 0; role < 3u; role++) {
-            track_t *t = &trk[1 + role];
-            host_preset(t, ENGI_CTONE, role == 1u ? 5u : role == 2u ? 8u : 0u);
-            track_select(1 + role);
-            for (r = 0; r < 300u; r++) {
-                int32_t pk;
-                double dc, br;
-                int h;
-                dice_roll();
-                t->engine = t->eng_req;
-                listen(1 + role, role == 1u ? 36u : 60u, &pk, &dc, &br, &h);
-                over += pk >= 32767;
-                dcs += dc > 0.01;
-                hung += h;
-                harsh += br > brmax * 2.5;
-                worst = br > worst ? br : worst;
-            }
-        }
-        snprintf(what, sizeof what, "900 rolls heard: full scale %u, DC %u, hung %u, harsher than 2.5 x the brightest preset %u (%.3f vs %.3f)",
-                 over, dcs, hung, harsh, worst, brmax);
-        ok3(what, !over && !dcs && !hung && !harsh);
+        track_t *t = &trk[1];
+        uint32_t k = 1, part, m, id, id2;
+        int16_t before, a2[DICE_VALS], b2[DICE_VALS];
+        dice_page(1);
+        set_engine_of(t, ENGI_GENESIS);
+        apply_preset_to(t, 0);
+        dice.cur[k] = 3;                                  /* (OP1: ATK DEC SUS REL LVL) */
+        dice.wild[k] = 0;
+        turn(EN_K2, 1);
+        id = dice_held_id(t, &part, &m);
+        ok3("1.5: a die held (GENESIS OP1): KNOB 3 its first value (ATK1), five to pick", id == P_FM1_ATK && m == 5u && part == 0u);
+        turn(EN_K4, 2);
+        id = dice_held_id(t, &part, &m);
+        before = t->p[id];
+        turn(EN_K3, 5);
+        if (getenv("DICE_DBG")) printf("  held: id %u part %u before %d now %d\n", id, part, before, t->p[id]);
+        ok3("  KNOB 4 picks SUS1, KNOB 3 turns it by hand (up)", id == P_FM1_SUS && (t->p[id] > before || before == 127));
+        id2 = id;
+        before = t->p[id2];
+        vals(t, a2);
+        press(B_OCTUP);
+        vals(t, b2);
+        ok3("  a roll: the held die keeps its hand-set value, the rest rolls", t->p[id2] == before && memcmp(a2, b2, sizeof a2) != 0);
+        turn(EN_K2, -1);
+        ok3("  let go: KNOB 3 WILD again", dice_held_id(t, &part, &m) == P_COUNT);
+        dice.cur[k] = 0;
+        turn(EN_K2, 1);
+        id = dice_held_id(t, &part, &m);
+        before = t->p[id];
+        turn(EN_K3, 1);
+        ok3("  ALG held: one value (KNOB 4 has nothing to pick), KNOB 3 steps the algorithm", id == P_E0 && m == 1u &&
+            t->p[id] == (int16_t)clamp(before + 1, 0, 7));
+        turn(EN_K2, -1);
+        dice.wild[k] = 0;
     }
 
-    /* 6. the kit */
-    {
+    /* 6. the kits (1.5: GEN KIT's, MOD KIT's) */
+    for (uint32_t ke = 0; ke < 2u; ke++) {
         static const uint8_t NOTE[4] = {36, 38, 42, 45};
         uint32_t quiet = 0, over = 0, hung = 0, l;
         track_t *t = &trk[0];
         track_select(0);
-        set_engine_of(t, ENGI_CKIT);
+        set_engine_of(t, ke ? ENGI_MKIT : ENGI_CKIT);
         apply_preset_to(t, 0);
         t->engine = t->eng_req;
         for (r = 0; r < 200u; r++) {
@@ -279,127 +276,113 @@ int main(int argc, char **argv)
                         break;
                 }
                 quiet += pk < 1500;
+                if (getenv("DICE_DBG") && pk < 1500)
+                    printf("  quiet %s lane %u: p %d %d %d %d %d lv %d kit %d %d %d pk %d\n", ENGINES[t->eng_req]->name, l,
+                           t->p[P_FM1_ATK + 5 * l], t->p[P_FM1_DEC + 5 * l], t->p[P_FM1_SUS + 5 * l], t->p[P_FM1_REL + 5 * l],
+                           t->p[P_FM1_LEVEL + 5 * l], t->p[P_LN0 + l], t->p[P_E0], t->p[P_E1], t->p[P_E2], pk);
                 over += pk >= 32767;
                 hung += s >= FS * 10u;
             }
         }
-        snprintf(what, sizeof what, "the kit: 200 rolls x 4 voices struck: quiet %u, full scale %u, not ended in 10 s %u", quiet, over, hung);
+        snprintf(what, sizeof what, "%s: 200 rolls x 4 voices struck: quiet %u, full scale %u, not ended in 10 s %u",
+                 ENGINES[t->eng_req]->name, quiet, over, hung);
         ok3(what, !quiet && !over && !hung);
     }
 
-    /* 7. CHIP */
+    /* 7. 1.5: CHIP, SAMPLE, GRAIN, PHYS retired: a sound of each loads as its substitute (WAVES, MOD KIT for a kit, WAVE 32,
+     * MOD),
+     * dice and all */
     {
-        uint32_t bad = 0, role, pg;
+        uint32_t pg;
         for (pg = 0; pg < NPAGES && PAGES[pg].graph != GR_DICE; pg++)
             ;
-        set_engine_of(&trk[1], ENGI_LOFI);
         track_select(1);
-        ok3("CHIP: DICE shows, nine dice, MODE first", page_visible(pg) && dice_engine_ok(&trk[1]) &&
-            dice_count(&trk[1]) == 9u && str_eq(dice_name(&trk[1], 0), "MODE"));
-        for (role = 0; role < 3u; role++)
-            for (r = 0; r < 300u; r++) {
-                track_t *t = &trk[1 + role];
-                int32_t chip, wave, duty, cr;
-                track_select(1 + role);
-                set_engine_of(t, ENGI_LOFI);
-                dice.wild[1 + role] = 0;
-                dice.hold[1 + role] = 0;
-                dice_roll();
-                chip = t->p[P_E0], wave = t->p[P_E1], duty = t->p[P_E2], cr = t->p[P_E3];
-                bad += chip < 0 || chip > 4 || wave < 0 || wave > 4 || wave == 3;
-                bad += role < 2u && t->p[P_E6] > 1;
-                bad += wave == 4 && duty % 8 != 4;
-                bad += wave == 0 && duty % 32 != 16;
-                bad += chip == 4 ? (cr && (cr % 4 != 1 || cr / 4 > 26)) : cr > 64;
-                bad += t->p[P_E4] && (role != 2u || t->p[P_E4] < 8 || t->p[P_E4] > 24);
-                bad += t->p[P_E0] == 3 || (wave == 0 && duty < 32);
-                bad += t->p[P_E7] < 70 || t->p[P_ATK] > 60;
-            }
-        snprintf(what, sizeof what, "CHIP WILD 100: every die in its role's choices (900 rolls, %u off)", bad);
-        ok3(what, !bad);
+        set_engine_of(&trk[1], ENGI_LOFI);
+        ok3("1.5: CHIP retired: asked for, WAVES with its DICE", trk[1].eng_req == ENGI_WAVES && page_visible(pg));
+        set_engine_of(&trk[1], 8u);
+        ok3("  GRAIN: WAVE 32", trk[1].eng_req == ENGI_WT32 && page_visible(pg));
+        set_engine_of(&trk[1], ENGI_PHYS);
+        ok3("  PHYS: MOD", trk[1].eng_req == ENGI_MOD && page_visible(pg));
+        set_engine_of(&trk[1], ENGI_SAMPLE);
+        apply_preset_to(&trk[1], 0);
+        ok3("  SAMPLE (its PIANO): GENESIS; its LOFI KIT (3): MOD KIT", trk[1].eng_req == ENGI_GENESIS &&
+            (trk[1].eng_req = ENGI_SAMPLE, apply_preset_to(&trk[1], 3u), trk[1].eng_req == ENGI_MKIT) &&
+            str_eq(ENGINES[ENGI_MKIT]->presets[trk[1].preset].name, "LOFI KIT"));
+        set_engine_of(&trk[1], ENGI_GENESIS);
+        apply_preset_to(&trk[1], 0);
     }
-    {
-        uint32_t role, over = 0, dcs = 0, hung = 0, harsh = 0, p, quiet = 0, nnew = 0;
-        double brmax = 0, worst = 0;
-        const engine_t *e = ENGINES[ENGI_LOFI];
-        for (role = 0; role < 3u; role++)
-            for (p = 0; p < e->npresets; p++) {
-                int32_t pk;
-                double dc, br;
-                int h;
-                if (p >= 5u)                                     /* (Felucca's five: the chip set is brighter) */
-                    continue;
-                host_preset(&trk[1 + role], ENGI_LOFI, p);
-                listen(1 + role, role == 1u ? 36u : 60u, &pk, &dc, &br, &h);
-                brmax = br > brmax ? br : brmax;
-            }
-        for (role = 0; role < 3u; role++) {
-            track_t *t = &trk[1 + role];
-            host_preset(t, ENGI_LOFI, role == 1u ? 6u : role == 2u ? 5u : 14u);
-            track_select(1 + role);
-            for (r = 0; r < 300u; r++) {
-                int32_t pk;
-                double dc, br;
-                int h;
-                dice_roll();
-                t->engine = t->eng_req;
-                listen(1 + role, role == 1u ? 36u : 60u, &pk, &dc, &br, &h);
-                over += pk >= 32767;
-                dcs += dc > 0.015;                           /* (a low square: 0.4 s ends inside a cycle) */
-                hung += h;
-                harsh += br > brmax * 2.5;
-                worst = br > worst ? br : worst;
-                if (getenv("DICE_DBG") && (pk >= 32767 || dc > 0.01 || br > brmax * 2.5))
-                    printf("  role %u: %d %d %d %d %d %d %d %d env %d %d %d %d: pk %d dc %.3f br %.3f\n", role, t->p[P_E0],
-                           t->p[P_E1], t->p[P_E2], t->p[P_E3], t->p[P_E4], t->p[P_E5], t->p[P_E6], t->p[P_E7], t->p[P_ATK],
-                           t->p[P_DEC], t->p[P_SUS], t->p[P_REL], pk, dc, br);
-            }
-        }
-        snprintf(what, sizeof what, "CHIP: 900 rolls heard: full scale %u, DC %u, hung %u, harsher than 2.5 x %u (%.3f vs %.3f)",
-                 over, dcs, hung, harsh, worst, brmax);
-        ok3(what, !over && !dcs && !hung && !harsh);
-        over = hung = 0;
-        for (p = 5; p < e->npresets; p++, nnew++) {          /* the chip set (RE-1) */
-            int32_t pk;
-            double dc, br;
-            int h;
-            host_preset(&trk[3], ENGI_LOFI, p);
-            listen(3, e->presets[p].e[1] == 3 ? 84u : str_eq(e->presets[p].name, "CHIP KICK") ? 48u : 60u, &pk, &dc, &br, &h);
-            quiet += pk < 1500;
-            over += pk >= 32767;
-            hung += h;
-            if (getenv("DICE_DBG"))
-                printf("  %-10s pk %d dc %.3f br %.3f\n", e->presets[p].name, pk, dc, br);
-        }
-        snprintf(what, sizeof what, "CHIP's %u chip presets: quiet %u, full scale %u, hung %u", nnew, quiet, over, hung);
-        ok3(what, nnew >= 12u && !quiet && !over && !hung);
-        {   /* the hits, a 1.5 ms gate (two control blocks: the shortest MIDI drum note): each still sounds 20 ms or more */
-            uint32_t cut = 0;
-            char names[160] = "";
-            for (p = 5; p < e->npresets; p++) {
-                static int32_t o[CTL];
-                if (!str_eq(e->presets[p].name, "CHIP KICK") && !str_eq(e->presets[p].name, "NOISE HAT") &&
-                    !str_eq(e->presets[p].name, "NOISE SNR") && !str_eq(e->presets[p].name, "LASER ZAP"))
-                    continue;                                /* (the hits; a short note of a tone is short) */
-                uint32_t j, n = 0, loud = 0;
-                track_t *t = &trk[3];
-                host_preset(t, ENGI_LOFI, p);
-                memset(t->v, 0, sizeof t->v);
-                trk_note_on(t, 60, 110);
-                for (n = 0; n < FS / 2u; n += CTL) {
-                    if (n == 2u * CTL)
-                        trk_note_off(t, 60);
-                    track_render(t, o, CTL);
-                    for (j = 0; j < CTL; j++)
-                        loud += abs(o[j]) > 1000;
-                }
-                if (loud < FS / 50u / 4u) {                  /* (a quarter of 20 ms' samples over -30 dB) */
-                    cut++;
-                    if (strlen(names) < 120u) { strcat(names, " "); strcat(names, e->presets[p].name); }
+    {   /* 1.1: the bred dice: the page, the engine pages gone, each class's rolls heard (1.5: the six bred: GENESIS,
+         * WAVES WAVE 32, MOD, ANALOG SID) */
+        static const uint32_t EN[6] = {ENGI_GENESIS, ENGI_WAVES, ENGI_WT32, ENGI_MOD, 0u, ENGI_SID};
+        uint32_t ei, k, r, p, nr = getenv("DICE_N") ? (uint32_t)atoi(getenv("DICE_N")) : 40u;
+        for (ei = 0; ei < NELEM(EN); ei++) {
+            const engine_t *e = ENGINES[EN[ei]];
+            uint32_t over = 0, hung = 0, phung = 0, pover = 0, np = 0, quiet = 0, harsh = 0, range = 0, kitbad = 0, pages = 0, rolls = 0;
+            int32_t pkmin = 1 << 30, pkmax = 0;
+            double brmax = 0, worst = 0;
+            for (k = 0; k < 4u; k++) {                     /* (the presets a track's class lists: their brightest, quietest;
+                                                            * none: all of them, on the track's note: 1.5, PHYS on T1) */
+                uint32_t nf = 0;
+                for (p = 0; p < e->npresets; p++)
+                    nf += dice_fits(&trk[k], p, 1u) != 0;
+                for (p = 0; p < e->npresets; p++) {
+                    int32_t pk;
+                    double dc, br;
+                    int h;
+                    if (nf && !dice_fits(&trk[k], p, 1u))
+                        continue;
+                    host_preset(&trk[k], EN[ei], p);
+                    listen(k, k ? 60u : 36u, &pk, &dc, &br, &h);
+                    if (getenv("DICE_DBG")) printf("  preset %s T%u %-12s pk %d br %.3f\n", e->name, k + 1, e->presets[p].name, pk, br);
+                    np++;
+                    pkmax = pk > pkmax ? pk : pkmax;
+                    brmax = br > brmax ? br : brmax;
+                    pkmin = pk < pkmin ? pk : pkmin;
+                    phung += h;
                 }
             }
-            snprintf(what, sizeof what, "  the hits at a 1.5 ms gate: each sounds out (cut short:%s)", cut ? names : " none");
-            ok3(what, !cut);
+            for (k = 0; k < 4u; k++) {
+                track_t *t = &trk[k];
+                host_preset(t, EN[ei], dice_parent(t, -1));
+                track_select(k);
+                go_page(GR_DICE);
+                frame();
+                pages += cur_page()->graph != GR_DICE;
+                for (p = 0; p < NPAGES; p++)
+                    pages += PAGES[p].fam == FAM_EDIT && page_visible(p) && PAGES[p].scope == SC_ENGINE;
+                for (r = 0; r < nr; r++, rolls++) {
+                    int32_t pk;
+                    double dc, br;
+                    int h;
+                    uint32_t j;
+                    dice_roll();
+                    t->engine = t->eng_req;
+                    for (j = 0; j < 8u; j++)
+                        range += t->p[P_E0 + j] < e->edit[j].min || t->p[P_E0 + j] > e->edit[j].max;
+                    if (EN[ei] == ENGI_SAMPLE)                /* (a rogue rolls the kits, the others never) */
+                        kitbad += (k == 0u) != (t->p[P_E0] == 1 || t->p[P_E0] == 3);
+                    listen(k, k ? 60u : 36u, &pk, &dc, &br, &h);
+                    over += pk > pkmax + pkmax / 2;
+                    quiet += pk < pkmin / 8;
+                    hung += h;
+                    harsh += br > brmax * 2.5;
+                    worst = br > worst ? br : worst;
+                    if (getenv("DICE_DBG") && (pk > pkmax + pkmax / 2 || pk < pkmin / 8 || h || br > brmax * 2.5))
+                        printf("  %s T%u: %d %d %d %d %d %d %d %d env %d %d %d %d: pk %d br %.3f hung %d\n", e->name, k + 1,
+                               t->p[P_E0], t->p[P_E1], t->p[P_E2], t->p[P_E3], t->p[P_E4], t->p[P_E5], t->p[P_E6], t->p[P_E7],
+                               t->p[P_ATK], t->p[P_DEC], t->p[P_SUS], t->p[P_REL], pk, br, h);
+                }
+            }
+            snprintf(what, sizeof what, "%s: DICE on every class (engine pages %u), %u rolls: out of range %u%s", e->name,
+                     pages, rolls, range, EN[ei] == ENGI_SAMPLE ? ", a kit off its class 0" : "");
+            if (EN[ei] == ENGI_SAMPLE)
+                snprintf(what, sizeof what, "%s: DICE on every class (engine pages %u), %u rolls: out of range %u, kit off class %u",
+                         e->name, pages, rolls, range, kitbad);
+            ok3(what, !pages && !range && !kitbad);
+            snprintf(what, sizeof what, "  heard: louder than 1.5 x its loudest preset %u (%u presets), quiet %u, hung %u (its presets %u), harsher than 2.5 x %u (%.3f vs %.3f)",
+                     over, np, quiet, hung, phung, harsh, worst, brmax);
+            ok3(what, !over && !quiet && (!hung || phung) && hung * 10u <= rolls && harsh * 100u <= rolls);   /* (a wild one
+                                                         * in a hundred at the bright edge: HIST takes it back) */
         }
     }
     if (argc > 1) {

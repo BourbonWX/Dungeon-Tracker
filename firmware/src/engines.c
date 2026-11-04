@@ -34,38 +34,77 @@ static uint8_t eng_mem_owner[NPART];       /* engine index + 1 whose state is in
 #include "../engines/src/eng_noise.c"
 #include "eng_fm6.c"            /* FM6: 6-operator FM, msfa ported (fm6_core.c, Apache-2.0) */
 #include "fm4_convert.c"        /* DIGITAL's tables, and its sounds -> FM6 */
+#if DT_RETIRE
+/* Dungeon Tracker 1.1: a retired engine's slot (retire.c): silent, no presets, never offered; a sound of it loads as its
+ * substitute (ENG_SUBST below). The engines' code is no longer referenced: the build leaves it out */
+static const engine_t ENG_GONE = {
+    .name = "-",
+    .page_title = {"-", "-"},
+    .edit = FM4_EDIT("-", "-", "-", "-", "-", "-", "-", F_INT, F_INT, 0, 0),
+    .note_on = fm4_gone_note_on,
+    .render = fm4_gone_render,
+    .knob = {P_E4, P_E5, P_E6, P_REL},
+};
+#define ENG_KEPT(x) &ENG_GONE
+#else
+#define ENG_KEPT(x) &x
+#endif
 #if FELUCCA_FM4
 #include "eng_digital.c"        /* DIGITAL: four-operator FM (retired; FELUCCA_FM4=1 builds it) */
 #endif
 #if FELUCCA_SLICE
 #include "eng_slice.c"
 #endif
+#if RONDO_LAYOUT && !FELUCCA_SLICE  /* Dungeon Tracker: SLICE retired; 13 reserved as DIGITAL's 1 is (never offered:
+                                     * eng_ok; a SLICE sound in a project loads as SAMPLE, project.c proj_slice) */
+static const engine_t ENG_SLICE_GONE = {
+    .name = "-",
+    .page_title = {"-", "-"},
+    .edit = FM4_EDIT("-", "-", "-", "-", "-", "-", "-", F_INT, F_INT, 0, 0),
+    .note_on = fm4_gone_note_on,
+    .render = fm4_gone_render,
+    .knob = {P_E4, P_E5, P_E6, P_REL},
+};
+#endif
+#include "eng_genesis.c"        /* 1.2: GENESIS (18): after the YM2612 (before GEN KIT, 14) */
 #include "eng_cycle.c"          /* RONDO: CYCLE KIT (14) and CYCLE TONE (15) */
+#include "mutable/eng_waves.c"  /* 1.1: WAVES (16): Ambika's oscillators (Mutable Instruments, GPL-3.0) */
+#include "eng_wt32.c"           /* 1.5: WAVE 32 (20): after WAVES (its filter) */
+#include "eng_mod.c"            /* 1.5: the AMIGA'D family, MOD KIT (19) and MOD (21) */
+#include "eng_sid.c"            /* 1.3: SID (17): after the MOS 6581 */
 
 /* the editor protocol, user presets and projects store these indices: append, never reorder */
 static const engine_t *const ENGINES[NENGINES] = {
-    &ENG_ANALOG,                 /* 0 */
+    &ENG_ANALOG,                 /* 0 (1.5: back, the subtractive family's) */
 #if FELUCCA_FM4
     &ENG_DIGITAL,                /* 1 (ENGI_DIGITAL) */
 #else
     &ENG_FM4_GONE,               /* 1: reserved (DIGITAL, retired: its sounds convert to FM6, fm4_convert.c) */
 #endif
-    &ENG_PHASE,                  /* 2 */
-    &ENG_LOFI,                   /* 3 */
-    &ENG_SAMPLE,                 /* 4 */
-    &ENG_FORMANT,                /* 5 VOICE (eng_formant.c: "voice" is a sounding note in voice.c) */
-    &ENG_TRIO,                   /* 6 */
-    &ENG_WHEEL,                  /* 7 */
-    &ENG_GRAIN,                  /* 8 */
-    &ENG_PHYS,                   /* 9 (ENGI_PHYS) */
-    &ENG_DRUM,                   /* 10 (ENGI_DRUM) */
-    &ENG_NOISE,                  /* 11 */
-    &ENG_FM6,                    /* 12 (ENGI_FM6) */
+    ENG_KEPT(ENG_PHASE),                  /* 2 */
+    ENG_KEPT(ENG_LOFI),                   /* 3 CHIP (1.5: retired, -> WAVES) */
+    ENG_KEPT(ENG_SAMPLE),                 /* 4 (1.5: retired: its kits MOD KIT's, the rest GENESIS) */
+    ENG_KEPT(ENG_FORMANT),                /* 5 VOICE (eng_formant.c: "voice" is a sounding note in voice.c) */
+    ENG_KEPT(ENG_TRIO),                   /* 6 */
+    ENG_KEPT(ENG_WHEEL),                  /* 7 */
+    ENG_KEPT(ENG_GRAIN),                  /* 8 (1.5: retired, -> WAVE 32) */
+    ENG_KEPT(ENG_PHYS),                   /* 9 (ENGI_PHYS; 1.5: retired, -> MOD, its drums MOD KIT) */
+    ENG_KEPT(ENG_DRUM),                   /* 10 (ENGI_DRUM) */
+    ENG_KEPT(ENG_NOISE),                  /* 11 */
+    ENG_KEPT(ENG_FM6),                    /* 12 (ENGI_FM6) */
 #if FELUCCA_SLICE
     &ENG_SLICE,                  /* 13 (FELUCCA_SLICE=0 builds without it) */
+#elif RONDO_LAYOUT
+    &ENG_SLICE_GONE,             /* 13: reserved (SLICE, retired in Dungeon Tracker) */
 #endif
     &ENG_CKIT,                   /* 14 (ENGI_CKIT): RONDO */
-    &ENG_CTONE,                  /* 15 (ENGI_CTONE): RONDO */
+    ENG_KEPT(ENG_CTONE),                  /* 15 (ENGI_CTONE): RONDO (1.5: retired, -> GENESIS) */
+    &ENG_WAVES,                  /* 16 (ENGI_WAVES): Dungeon Tracker */
+    &ENG_SID,                    /* 17 (ENGI_SID): Dungeon Tracker */
+    &ENG_GENESIS,                /* 18 (ENGI_GENESIS): Dungeon Tracker 1.2 */
+    &ENG_MKIT,                   /* 19 (ENGI_MKIT): Dungeon Tracker 1.5, MOD KIT */
+    &ENG_WT32,                   /* 20 (ENGI_WT32): Dungeon Tracker 1.5 */
+    &ENG_MOD,                    /* 21 (ENGI_MOD): Dungeon Tracker 1.5 */
 };
 
 /* a track's engine number as an index (the audio paths: a compare, cheaper than % NENGINES; a bad number: 0) */
@@ -114,29 +153,75 @@ static const char *snd_missing(const track_t *t, uint32_t *code)
 /* the order the engines are shown in (PRESETS browsing and its ENG knob, the EDIT layer's keys, the editor's list):
  * engine indices, never DIGITAL's reserved 1 (with FELUCCA_FM4 it follows FM6). The indices stay as they are (the
  * stores and the protocol hold them); only this table orders them */
+#if DT_RETIRE
+static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {18, 14, 16, 20, 21, 19, 0, 17};   /* 1.5: the four families, two each:
+                                                                               * FM, WAVE, AMIGA'D, SUB */   /* 1.1: FMKIT FMTONE WAVES SID CHIP SAMPLE
+                                                                               * PHYS GRAIN */
+#else
 static const uint8_t ENGINE_ORDER[NENG_SHOWN] = {
     14, 15,                      /* RONDO: FMKIT, FMTONE first */
     0,                           /* ANALOG */
     12,                          /* FM6 */
+    16,                          /* 1.1: WAVES */
+    17,                          /* 1.3: SID */
 #if FELUCCA_FM4
     1,                           /* DIGITAL */
 #endif
-    2, 3, 4, 5, 6, 7, 8, 9,      /* PHASE LOFI SAMPLE VOICE TRIO WHEEL GRAIN PHYS */
-#if !FELUCCA_FM4
-    11,                          /* NOISE */
-#endif
+    2, 3, 4, 5, 6, 7, 9,         /* PHASE LOFI SAMPLE VOICE TRIO WHEEL PHYS */
+    19, 20, 21,                  /* 1.5: MOD KIT, WAVE 32, MOD */
     10,                          /* DRUM (RONDO: SLICE, 13, not offered: core.h NENG_SHOWN) */
+    8,                           /* GRAIN (1.3: after the 14 on the EDIT layer's keys, with NOISE: PRESETS only) */
+#if !FELUCCA_FM4
+    11,                          /* NOISE (1.1: last, after the 14 on the EDIT layer's keys: PRESETS only) */
+#endif
 };
+#endif
 
 /* the engines one can pick (engine 1 only with FELUCCA_FM4), in ENGINE_ORDER: eng_ok(e), the n-th of them
  * eng_vis(n), e's place among them eng_rank(e), the next / previous one eng_step(e, dir) (wraps) */
-static int eng_ok(uint32_t e) { return e < NENGINES && (FELUCCA_FM4 || e != ENGI_DIGITAL); }
+#if DT_RETIRE
+#define ENGI_GRAIN 8u
+static const uint8_t ENG_SUBST[NENGINES] = {   /* 1.1: a retired engine's substitute (retire.c), 0 = kept (1.5: the four
+                                                * families') */
+    [ENGI_DIGITAL] = ENGI_GENESIS,       /* DIGITAL (Felucca's retired; its sounds as FM6 until 1.1) -> GENESIS */
+    [2] = ENGI_WAVES,                    /* PHASE */
+    [3] = ENGI_WAVES,                    /* CHIP (1.5: the chip waves are WAVES') */
+    [4] = ENGI_MKIT,                     /* SAMPLE (1.5: its DUNGEON and LOFI kits MOD KIT's; PIANO, FLUTE GENESIS': retire.c) */
+    [5] = ENGI_WAVES,                    /* VOICE (the formants: WAVES' vowel tables) */
+    [6] = ENGI_SID,                      /* TRIO (three oscillators, sync, ring: SID's) */
+    [7] = ENGI_GENESIS,                  /* WHEEL (the organs) */
+    [8] = ENGI_WT32,                     /* GRAIN (1.5: the textures, WAVE 32's pads) */
+    [ENGI_PHYS] = ENGI_MOD,              /* PHYS (1.5: MOD; its drums MOD KIT's: retire.c) */
+    [ENGI_DRUM] = ENGI_CKIT,             /* DRUM -> GEN KIT (the GM map, the grid: the same) */
+    [11] = ENGI_SID,                     /* NOISE (winds: SID's noise) */
+    [ENGI_FM6] = ENGI_GENESIS,           /* FM6 -> GENESIS */
+    [ENGI_SLICE] = ENGI_MKIT,            /* SLICE (retired in 1.0: its breaks) */
+    [ENGI_CTONE] = ENGI_GENESIS,         /* FMTONE (1.5) -> GENESIS */
+};
+static int eng_retired(uint32_t e) { return e < NENGINES && ENG_SUBST[e] != 0u; }
+static uint32_t eng_subst(uint32_t e) { e = e < NENGINES ? e : 0u; return ENG_SUBST[e] ? ENG_SUBST[e] : e; }
+#else
+static int eng_retired(uint32_t e) { (void)e; return 0; }
+static uint32_t eng_subst(uint32_t e) { return e; }
+#endif
+/* 1.5: the four families the eight engines come in, two each (ENGINE_ORDER's pairs): FM, WAVE, AMIGA'D, SUB */
+static const char *eng_family(uint32_t e)
+{
+    switch (e) {
+    case ENGI_GENESIS: case ENGI_CKIT: case ENGI_CTONE: case ENGI_FM6: case ENGI_DIGITAL: return "FM";
+    case ENGI_WAVES: case ENGI_WT32: case 3u: case 8u: return "WAVE";
+    case ENGI_MOD: case ENGI_MKIT: case ENGI_SAMPLE: case ENGI_PHYS: return MOD_FAMILY;
+    default: return "SUB";
+    }
+}
+static int eng_ok(uint32_t e) { return e < NENGINES && !eng_retired(e) && (FELUCCA_FM4 || e != ENGI_DIGITAL) && (FELUCCA_SLICE || !RONDO_LAYOUT || e != ENGI_SLICE); }
 static uint32_t eng_vis(uint32_t n) { return ENGINE_ORDER[n % NENG_SHOWN]; }
 static uint32_t eng_rank(uint32_t e)
 {
     uint32_t n;
     if (!eng_ok(e))
-        e = ENGI_FM6;                            /* (DIGITAL without FELUCCA_FM4: its sounds play as FM6) */
+        e = DT_RETIRE ? eng_subst(e) : ENGI_FM6;   /* (DIGITAL without FELUCCA_FM4: its sounds play as FM6; 1.1: a retired
+                                                * engine's as its substitute) */
     for (n = 0; n < NENG_SHOWN && ENGINE_ORDER[n] != e; n++)
         ;
     return n < NENG_SHOWN ? n : 0u;
@@ -193,7 +278,8 @@ static const struct {
 /* RONDO: T1 drums (FMKIT, the BEAT pattern), T2 chords / pads (FMTONE FM PAD), T3 bass (FMTONE FM BASS, mono),
  * T4 lead (FMTONE FM LEAD); the sequencers empty but the drums' */
 #if RONDO_LAYOUT
-static const uint8_t TRK_DEF[NPART][3] = {{ENGI_CKIT, 0, 12}, {ENGI_CTONE, 0, 0}, {ENGI_CTONE, 5, 0}, {ENGI_CTONE, 8, 0}};
+static const uint8_t TRK_DEF[NPART][3] = {{ENGI_CKIT, 0, 12}, {ENGI_GENESIS, 21, 0}, {ENGI_GENESIS, 0, 0}, {ENGI_GENESIS, 14, 0}};   /* (1.5:
+                                                           * GENESIS WARM PAD, GEN BASS, HERO LEAD) */
 #else
 static const uint8_t TRK_DEF[NPART][3] = {{0, 4, 0}, {ENGI_FM6, 4, 0}, {3, 0, 0}, {ENGI_DRUM, 0, 0}};   /* Felucca's */
 #endif

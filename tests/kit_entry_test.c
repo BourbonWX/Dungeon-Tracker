@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * Dungeon Tracker 1.0: drums written one at a time land on the same step (ui_input.c seq_entry_kit), through ui_test.c.
+ * Dungeon Tracker: drums written one at a time land on the same step (ui_input.c seq_entry_kit), through ui_test.c.
  *   build/host/kit_entry_test        (tests/run_rondo.sh)
  * 1. FMKIT, step entry (armed, stopped): a kick then a hat, one after the other: one each on steps 1 and 2 (letting go
  *    moves on, as before); back to step 1 and the hat: the kick stays, the hat joins it; the same key again: still one

@@ -959,6 +959,17 @@ static void edit_param(uint32_t slot, int32_t steps)
         return;
     }
     if (pg->graph == GR_DICE) {                           /* RONDO: DICE (ui_dice.c) */
+        uint32_t part, m, id = dice_held_id(TSEL, &part, &m);
+        if (slot == 2u && id < P_COUNT) {                 /* 1.5: a held die: KNOB 3 sets its value by hand */
+            d = track_desc(TSEL, id);
+            if (d->max == d->min)
+                return;
+            v = param_turn(d, TSEL->p[id], accel(EN_K3, steps, d->fmt == F_ENUM ? 0 : d->max - d->min));
+            TSEL->p[id] = (int16_t)v;
+            motion_capture(TSEL, id, TSEL->p[id]);
+            ml_knob(TSEL, id);
+            return;
+        }
         dice_edit(slot, steps);
         return;
     }
@@ -970,9 +981,10 @@ static void edit_param(uint32_t slot, int32_t steps)
 #endif
 #if RONDO_LAYOUT
     if (pg->graph == GR_MORPH) {                          /* RONDO: MORPH: KNOB 1 TARGET (OFF, the presets), 2 AMOUNT */
-        uint32_t k = song.sel % NTRK, n = morph_npresets(TSEL);
+        uint32_t k = song.sel % NTRK, n = morph_list_n(TSEL);   /* (1.5: OFF, the presets, the saved sounds) */
         if (slot == 0u)
-            morph_set(k, (uint32_t)clamp((int32_t)mo.tgt[k] + steps, 0, (int32_t)n), mo.amt[k]);
+            morph_set(k, morph_list_at(TSEL, (uint32_t)clamp((int32_t)morph_list_pos(TSEL, mo.tgt[k]) + steps, 0,
+                                                             (int32_t)n - 1)), mo.amt[k]);
         else if (slot == 1u)
             morph_set(k, mo.tgt[k], (uint32_t)clamp((int32_t)mo.amt[k] + accel(EN_K2, steps, 100), 0, 100));
         ui.force = 1;
@@ -1034,11 +1046,11 @@ static void edit_param(uint32_t slot, int32_t steps)
         if (slot == 0u) {
             preset_step(steps);
         } else if (slot == 1u) {
-            select_engine(eng_step(TSEL->eng_req, steps));
+            select_engine(eng_step_listed(TSEL->eng_req, steps));
         } else if (slot == 2u) {
             preset_mark(steps > 0);
-        } else if (slot == 3u) {                          /* LIST: ALL FAV BASS .. OTHER (ui.c list_mode), no wrap */
-            uint32_t m = (uint32_t)clamp((int32_t)list_mode() + steps, 0, (int32_t)LIST_N - 1);
+        } else if (slot == 3u) {                          /* LIST: (CLASS) ALL FAV BASS .. OTHER (ui.c list_mode), no wrap */
+            uint32_t m = list_of((uint32_t)clamp((int32_t)list_pos(list_mode()) + steps, 0, (int32_t)LIST_POSN - 1));
             if (m != list_mode()) {
                 list_set(m);
                 ui.force = 1;
@@ -1188,7 +1200,9 @@ static void act_do(void)
     }
     if (cur_page()->graph == GR_SLOTS && c == 1u) {     /* PROJECT ERASE (1.5.5, #199): the dialog first */
         ui.act = 0;
-        if (transport_busy())
+        if (slot_quick())
+            ui_message("QUICK IS THE AUTOSAVE");
+        else if (transport_busy())
             ui_message("STOP TO ERASE");
         else if (!project_used(k))
             ui_message("EMPTY SLOT");
@@ -1199,8 +1213,21 @@ static void act_do(void)
     id = cur_page()->id[c & 3u];
     if (id != G_LOAD)
         ui.act = 0;
+    if (cur_page()->graph == GR_SLOTS && slot_quick() && (id == G_LOAD || id == G_SAVE)) {   /* 1.0.1: QUICK */
+        if (id == G_LOAD)
+            quick_load();
+        else
+            quick_save();                                 /* (no name, no dialog: it is the autosave, written now) */
+        return;
+    }
     switch (id) {
     case G_LOAD:
+#if RONDO_LAYOUT
+        if (project_used(k) && project_pats(k) && (bank.used & ~(1u << bank.cur)) && !transport_busy()) {
+            confirm_open(CF_LOAD_SONG, k);              /* (1.2: a song over the bank's other patterns: the dialog) */
+            break;
+        }
+#endif
         project_load(k);
         break;
     case G_SAVE:                                          /* the NAME screen writes it */
@@ -1288,7 +1315,7 @@ static void step_toggle(const track_t *t, step_t *st, const uint8_t *ch, uint32_
  * POLY its chord, MONO the chord's root. MENU > CONTROL > CHORD ENTRY ADD (1.2, #155): each key adds its notes to
  * the cursor step or takes them out (step_toggle), one after another with one hand, and letting go moves nothing: the
  * cursor moves by KNOB 1 (STEP) or PRESETS only, as it always could (EDIT still clears the step and moves on).
- * Dungeon Tracker 1.0: on a drum kit (DRUM, FMKIT) a key ADDS its drum to the cursor step (live recording merges them
+ * Dungeon Tracker: on a drum kit (DRUM, FMKIT) a key ADDS its drum to the cursor step (live recording merges them
  * too: seq.c rec_note), so a beat is built a drum at a time: the kicks, then back to the top for the hats. Letting go
  * still moves on; EDIT clears a step */
 static void seq_entry_kit(track_t *t, step_t *st, uint32_t note)
@@ -1477,7 +1504,10 @@ static int page_tap(uint32_t b)
         return 1;
     }
     if (b == B_EDIT && !ui.home && (cur_page()->graph == GR_USER || cur_page()->graph == GR_SLOTS)) {
-        name_rename();                                  /* SAVE > USER / PROJECT: EDIT renames the slot */
+        if (cur_page()->graph == GR_SLOTS && slot_quick())
+            ui_message("QUICK HAS NO NAME");            /* (1.0.1: the autosave keeps the music's own) */
+        else
+            name_rename();                              /* SAVE > USER / PROJECT: EDIT renames the slot */
         return 1;
     }
     for (f = FAM_HOME + 1u; f < FAM_COUNT; f++)        /* (GLO SEQ SAVE ..: HOME is ui_input's, home_tap) */
@@ -1595,7 +1625,11 @@ static void ui_input(void)
     midi_pc_poll();                                     /* MIDI Program Change (before fm6_poll: a bank voice) */
     fm6_poll();                                         /* FM6: PTCH turned -> its patch */
     dg_tick();                                          /* RONDO: the dungeon plays on whatever page is shown */
-#if !FELUCCA_FM4
+#if DT_RETIRE
+    for (k = 0; k < NTRK; k++)                          /* 1.1: a retired engine's sound any other way (the paths convert */
+        if (eng_retired(trk[k].eng_req))                /* it already): its substitute's (retire.c) */
+            apply_preset_to(&trk[k], trk[k].preset);
+#elif !FELUCCA_FM4
     for (k = 0; k < NTRK; k++)                          /* a DIGITAL sound any other way (the paths convert it */
         if (trk[k].eng_req == ENGI_DIGITAL)             /* already): FM6 (fm4_convert.c) */
             fm4_track(&trk[k]);
@@ -1736,13 +1770,15 @@ static void ui_input(void)
             ui.confirm = 0;
             ui.force = 1;
             if (kind == CF_OVR_PROJ) {                  /* overwrite: the NAME screen writes it */
-                name_open(NK_PROJ_SAVE, ui.confirm_trk & 3u);
+                name_open(NK_PROJ_SAVE, ui.confirm_trk % NPROJ);
             } else if (kind == CF_OVR_USER) {
                 name_open(NK_USER_SAVE, ui.confirm_trk);
             } else if (kind == CF_ERASE_USER) {
                 up_ui(1u, ui.confirm_trk);
+            } else if (kind == CF_LOAD_SONG) {
+                project_load(ui.confirm_trk % NPROJ);
             } else if (kind == CF_ERASE_PROJ) {
-                (void)project_erase(ui.confirm_trk & 3u);
+                (void)project_erase(ui.confirm_trk % NPROJ);
             } else if (kind == CF_LOAD_PAT) {
                 pat_load_ui(&trk[ui.confirm_trk % NTRK], pat_pick());
                 str_cpy(ui.msg2, "[SAVE] HOLD TO UNDO", sizeof ui.msg2);

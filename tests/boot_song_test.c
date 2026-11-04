@@ -1,15 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * Dungeon Tracker: the power-on song (firmware/src/boot_song.c) through ui_test.c's harness: the real UI, engines, mix.
- *   build/host/boot_song_test [OUT_DIR]    (tests/run_rondo.sh; OUT_DIR: WAVs of four power-ons, 8 bars each)
- * 1. 300 seeds: every track has steps, T1 an FMKIT kit (lane hits), T2..T4 FMTONE or CHIP; the tempo 96..128; LEN 16 /
- *    64; the notes in their registers; T2's chords three notes; the lead inside its range.
- * 2. they differ: at least 280 of the 300 songs are distinct (no two power-ons alike, in practice).
- * 3. the notes of T2..T4 belong to one seven-note scale (one key) per song.
- * 4. the dungeon: the four adventurers join (dg_party_n) at a level above 1; HOME says PRESS PLAY until PLAY.
- * 5. settled: the autosave sees the power-on state (nothing to write), pattern A's copy is the song and nothing is
- *    dirty in the bank.
+ * Dungeon Tracker 1.0: MENU > GAME > RANDOM SONG (firmware/src/boot_song.c) through ui_test.c's harness: the real UI,
+ * engines, mix. (1.0's first builds rolled such a song at every power-on; now the power-on keeps the default song.)
+ *   build/host/boot_song_test [OUT_DIR]    (tests/run_rondo.sh; OUT_DIR: WAVs of four rolls, 8 bars each)
+ * 1. 300 rolls: THE PARTY within its points, a ROGUE in it, the tracks in class order; every track a sound of its
+ *    class's own list (a ROGUE a kit: FMKIT's or a SAMPLE kit) and a 16-step part with notes in their registers; the
+ *    tempo 96..128.
+ * 2. they differ: at least 280 of the 300 songs are distinct.
+ * 3. the melodic notes belong to one seven-note scale (one key) per song.
+ * 4. the dungeon: the four adventurers join, at L1; HOME says PRESS PLAY until PLAY.
+ * 5. settled (as the screens use it): the autosave sees it, pattern A's copy is the song, nothing dirty.
  * 6. heard: 50 songs, 8 bars each: never full scale, never silent for a bar, no voice left after the stop.
- * 7. wanted only with no music of the user's: an autosave restored or a stored pattern keeps it from running. */
+ * 7. the MENU: GAME's last row RANDOM SONG, OCT+ rolls one (the arrangement and the name cleared, as NEW), SAVE held
+ *    undoes it: the song before back whole, its party too. */
 #define UI_TEST_NO_MAIN 1
 #include "ui_test.c"
 #include "../firmware/src/boot_song.c"
@@ -32,7 +34,7 @@ static void power_on_song(uint32_t seed)
 {
     ui_power_on();
     song.master_q12 = 4096;
-    boot_song(seed);
+    random_song_make(seed);
     boot_song_settle();
     frames(2);                                            /* (the engine switches: on the audio side) */
 }
@@ -48,37 +50,57 @@ static uint32_t sounding(void)
 int main(int argc, char **argv)
 {
     static uint32_t seen[300];
-    uint32_t s, k, i, bad = 0, distinct = 0, offkey = 0;
+    uint32_t s, k, i, bad = 0, distinct = 0, offkey = 0, kits[2] = {0, 0}, engs = 0;
+    (void)offkey;
     char *badwhy = what;
 
     /* 1., 2., 3. */
     for (s = 0; s < 300u; s++) {
         uint16_t pcs = 0;
-        uint32_t steps[NTRK] = {0};
+        uint8_t c[NTRK];
+        uint32_t nr = 0, p, any[NTRK] = {0, 0, 0, 0};
         power_on_song(0x9E3779B9u * (s + 1u));
         seen[s] = song_hash();
         for (k = 0; k < NTRK; k++) {
-            track_t *t = &trk[k];
-            for (i = 0; i < (uint32_t)t->p[P_SLEN]; i++) {
-                const step_t *st = &t->step[i];
-                uint32_t j;
-                if (st->time != ST_NOTE)
-                    continue;
-                steps[k]++;
-                if (k == 0u) {
-                    bad += st->n != 0u || !st->hit;
-                    continue;
-                }
-                bad += st->n != (k == 1u ? 3u : 1u);
-                for (j = 0; j < st->n; j++) {
-                    uint32_t n = st->note[j];
-                    bad += k == 1u ? n < 48u || n > 92u : k == 2u ? n < 28u || n > 64u : n < 60u || n > 100u;
-                    pcs |= (uint16_t)(1u << (n % 12u));
+            c[k] = (uint8_t)trk_cls(k);
+            nr += CLS_ROLE[c[k]] == ROLE_DRUMS;          /* (1.1: a drummer, a rogue or a monk; the parts' order) */
+            bad += k && CLS_ROLE[c[k]] * 8u + c[k] < CLS_ROLE[c[k - 1u]] * 8u + c[k - 1u];
+        }
+        bad += party_points(c) > CLS_POINTS || !nr;
+        bad += bank.used != 0x0Fu || bank.cur != 1u || chain_config.count != 7u || chain_config.row[0].slot[0] != 0u ||
+               chain_config.row[2].slot[3] != 2u || chain_config.row[5].slot[1] != 3u;
+        for (k = 0; k < NTRK; k++) {
+            uint32_t e = trk[k].eng_req % NENGINES, cat = preset_cat(e, trk[k].preset);
+            engs |= 1u << e;
+            bad += !cls_allows(c[k], cat);
+            if (CLS_ROLE[c[k]] == ROLE_DRUMS) {
+                bad += cat != CAT_DRUM || !ENG_KIT(e);   /* (1.5: GEN KIT or MOD KIT) */
+                kits[e == ENGI_MKIT]++;
+            }
+            for (p = 0; p < 4u; p++) {
+                const step_t *st0 = bank_pat[p].step[k];
+                bad += bank_pat[p].timing[k][0] != 32;    /* (P_SLEN) */
+                for (i = 0; i < 32u; i++) {
+                    const step_t *st = &st0[i];
+                    uint32_t j;
+                    if (st->time != ST_NOTE)
+                        continue;
+                    any[k]++;
+                    if (CLS_ROLE[c[k]] == ROLE_DRUMS) {
+                        bad += ENG_KIT(e) ? st->n != 0u || !st->hit : !st->n || st->hit;
+                        continue;
+                    }
+                    for (j = 0; j < st->n; j++) {
+                        uint32_t n = st->note[j];
+                        bad += c[k] == CLS_CLERIC ? n < 48u || n > 104u : c[k] == CLS_DRUID ? n < 36u || n > 96u :
+                               CLS_ROLE[c[k]] == ROLE_BASS ? n < 16u || n > 64u : c[k] == CLS_BARD ? n < 48u || n > 100u :
+                               n < 60u || n > 100u;
+                        pcs |= (uint16_t)(1u << (n % 12u));
+                    }
                 }
             }
-            bad += !steps[k];
-            bad += k == 0u ? t->eng_req != ENGI_CKIT || t->p[P_SLEN] != 16 :
-                   (t->eng_req != ENGI_CTONE && t->eng_req != ENGI_LOFI) || t->p[P_SLEN] != 64;
+            bad += !any[k];
+            bad += memcmp(trk[k].step, bank_pat[1].step[k], sizeof trk[k].step) != 0;   /* (the tracks: the verse) */
         }
         bad += song.g[G_BPM] < 96 || song.g[G_BPM] > 128;
         {   /* one key: the pitch classes fit some rotation of a seven-note mode (minor's, its rotations: dorian, major) */
@@ -89,6 +111,18 @@ int main(int argc, char **argv)
                 fit |= (pcs & ~rot) == 0;
             }
             offkey += !fit;
+            if (!fit && getenv("BS_DBG")) {
+                printf("  off: song %u pcs %03X classes %u %u %u %u\n", s, pcs, c[0], c[1], c[2], c[3]);
+                for (k = 0; k < NTRK; k++) for (p = 0; p < 4u; p++) for (i = 0; i < 32u; i++) {
+                    const step_t *st = &bank_pat[p].step[k][i];
+                    if (st->time == ST_NOTE && CLS_ROLE[c[k]] != ROLE_DRUMS) {
+                        uint32_t j;
+                        printf("    T%u %c%02u:", k + 1u, 'A' + p, i);
+                        for (j = 0; j < st->n; j++) printf(" %u", st->note[j]);
+                        printf("\n");
+                    }
+                }
+            }
         }
     }
     for (s = 0; s < 300u; s++) {
@@ -97,12 +131,14 @@ int main(int argc, char **argv)
             dup |= seen[j] == seen[s];
         distinct += !dup;
     }
-    snprintf(badwhy, sizeof what, "300 power-ons: every track has steps in its register, T1 a kit, the rest FMTONE / CHIP, "
-             "96..128 BPM (%u off)", bad);
-    okb(what, !bad);
+    for (k = 0, i = 0; k < NENGINES; k++)
+        i += (engs >> k) & 1u;
+    snprintf(badwhy, sizeof what, "300 rolls: the party within 12, a drummer (1.1: rogue or monk), the parts' order; its sounds; PATTERN BANK A..D (intro verse "
+             "chorus break, 32 steps) in key and register; SONG A B C B C D C; on B (%u off; %u GEN KIT / %u MOD KIT kits; %u engines)", bad, kits[0], kits[1], i);
+    okb(what, !bad && kits[0] && kits[1] && i >= 8u);
     snprintf(what, sizeof what, "  they differ: %u of 300 distinct", distinct);
     okb(what, distinct >= 280u);
-    snprintf(what, sizeof what, "  one key each: T2..T4's notes in a seven-note scale (%u songs off)", offkey);
+    snprintf(what, sizeof what, "  one key each: the melodic notes in a seven-note scale (%u songs off)", offkey);
     okb(what, !offkey);
 
     /* 4. the dungeon */
@@ -114,11 +150,13 @@ int main(int argc, char **argv)
             frame();
     }
     {
-        uint32_t lv = 9;
-        for (k = 0; k < 4u; k++)
+        uint32_t lv = 9, hi = 0;
+        for (k = 0; k < 4u; k++) {
             if (dg.lvl[k] < lv) lv = dg.lvl[k];
-        snprintf(what, sizeof what, "the dungeon: %u adventurers join, the lowest at level %u", dg_party_n(), lv);
-        okb(what, dg_party_n() == 4u && lv >= 2u);
+            if (dg.lvl[k] > hi) hi = dg.lvl[k];
+        }
+        snprintf(what, sizeof what, "the dungeon: %u adventurers join, all at L%u (1.0: the party starts at L1)", dg_party_n(), lv);
+        okb(what, dg_party_n() == 4u && lv == 1u && hi == 1u);
     }
     okb("  HOME says PRESS PLAY (stopped, never played)", !dg_played && !song.playing);
     seq_start();
@@ -167,14 +205,52 @@ int main(int argc, char **argv)
         okb(what, !over && !quiet && !hung);
     }
 
-    /* 7. wanted only without the user's music */
-    okb("wanted: nothing restored, no stored pattern", (bank_flash_used = 0, boot_song_wanted(0)));
-    okb("  not after an autosave was restored", !boot_song_wanted(1));
-    bank_flash_used = 4;
-    okb("  not with a pattern stored in the bank", !boot_song_wanted(0));
-    bank_flash_used = 0;
+    /* 7. the MENU */
+    {
+        uint32_t before, rolled, again;
+        uint8_t cls_before[NTRK];
+        ui_power_on();
+        song.playing = 0;
+        bank_reset();
+        project_save_as(4, "MY SONG");                     /* (a song of the user's, named; the bank: its pattern only) */
+        before = song_hash();
+        for (k = 0; k < NTRK; k++) cls_before[k] = (uint8_t)trk_cls(k);
+        okb("MENU > GAME: RANDOM SONG, the tab's last row, an action (OCT+)", MI_TAB[MI_RANDOM] == MTAB_GAME &&
+            mtab_rows(MTAB_GAME) == 7u && str_eq(MI_NAME[MI_RANDOM], "RANDOM SONG") && MI_ACTION(MI_RANDOM) &&
+            !menu_valued(MI_RANDOM));
+        go_home(); frames(50);
+        hold(B_HOME); frames(100);
+        ui.menu_sel = MI_RANDOM;
+        press(B_OCTUP); frames(50);
+        rolled = song_hash();
+        okb("  OCT+: a song rolled: patterns A..D, SONG's sections, on B (\"RANDOM SONG\", the name cleared), the MENU up",
+            rolled != before && ui.menu && msg_is("RANDOM SONG") && !proj_name[0] && trk[0].p[P_SLEN] == 32 &&
+            bank.used == 0x0Fu && bank.cur == 1u && chain_config.count == 7u);
+        press(B_OCTUP); frames(50);
+        again = song_hash();
+        okb("  OCT+ again: another roll at once (nothing changed since the last)", again != rolled && msg_is("RANDOM SONG"));
+        hold(B_HOME); frames(100);
+        hold(B_SAVE); frames(50);
+        for (k = 0, i = 0; k < NTRK; k++) i += trk_cls(k) != cls_before[k];
+        okb("  SAVE held: undone, the song before back whole (its party, its pattern in A), the rolled patterns gone",
+            song_hash() == before && !i && bank.cur == 0u && bank.used == 1u);
+        /* the user's patterns in the bank: the first OCT+ warns, the second rolls */
+        {
+            uint32_t f = motion_guard();
+            bank_take(2);                                  /* (C: a pattern of the user's) */
+            motion_unguard(f);
+        }
+        hold(B_HOME); frames(100);
+        ui.menu_sel = MI_RANDOM;
+        press(B_OCTUP); frames(50);
+        okb("  with patterns of the user's in the bank: the first OCT+ says REPLACES PATTERNS A-F, nothing rolled",
+            song_hash() == before && msg_is("REPLACES PATTERNS A-F"));
+        press(B_OCTUP); frames(50);
+        okb("  .. the second (within 4 s) rolls", song_hash() != before && msg_is("RANDOM SONG") && bank.used == 0x0Fu);
+        hold(B_HOME); frames(100);
+    }
 
-    if (argc > 1) {                                       /* four power-ons as WAVs */
+    if (argc > 1) {                                       /* four rolls as WAVs */
         uint32_t d;
         for (d = 0; d < 4u; d++) {
             char path[512];
@@ -183,7 +259,7 @@ int main(int argc, char **argv)
             uint32_t n, total;
             power_on_song(0xD06u + d * 104729u);
             total = FS * 60u / (uint32_t)song.g[G_BPM] * 4u * 8u;
-            snprintf(path, sizeof path, "%s/power_on_%u.wav", argv[1], d + 1u);
+            snprintf(path, sizeof path, "%s/random_song_%u.wav", argv[1], d + 1u);
             if (!(w = fopen(path, "wb")))
                 break;
             wav_hdr(w, total);
