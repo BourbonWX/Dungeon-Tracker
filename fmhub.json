@@ -1,9 +1,9 @@
 {
-  "what": "Four Track Groovebox with a dungeon crawler cooked into the home screen for the visualizer."
-  "author": "Bourbon Weather"
-  "kinds": ["groove"],["tracker"]
-  "play": "https://github.com/BourbonWX/Dungeon-Tracker/blob/main/web/emu/"
-  "cheat": "https://github.com/BourbonWX/Dungeon-Tracker/blob/main/Dungeon%20Tracker%201.5%20%E2%80%94%20Quick%20Start.pdf"
-  "image": "https://github.com/BourbonWX/Dungeon-Tracker/blob/main/1-title-splash.png"
+  "what": "Four Track Groovebox with a dungeon crawler cooked into the home screen for the visualizer.",
+  "author": "Bourbon Weather",
+  "kinds": ["groove", "tracker"],
+  "play": "https://github.com/BourbonWX/Dungeon-Tracker/blob/main/web/emu/",
+  "cheat": "https://github.com/BourbonWX/Dungeon-Tracker/blob/main/Dungeon%20Tracker%201.5%20%E2%80%94%20Quick%20Start.pdf",
+  "image": "https://raw.githubusercontent.com/BourbonWX/Dungeon-Tracker/main/1-title-splash.png",
   "color": "#045D5D"
 }
