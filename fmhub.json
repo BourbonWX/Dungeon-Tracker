@@ -1,7 +1,7 @@
 {
   "what": "Four Track Groovebox with a dungeon crawler cooked into the home screen for the visualizer. Create your party from 8 heroes, store up to 6 sequences then string them together in Song mode!",
   "author": "Bourbon Weather",
-  "kinds": ["groove"], ["tracker"],
+  "kinds": ["tracker"],
   "play": "https://bourbonwx.github.io/Dungeon-Tracker/webapp/emulator/",
   "editor": "https://bourbonwx.github.io/Dungeon-Tracker/webapp/editor/",
   "cheat": "https://github.com/BourbonWX/Dungeon-Tracker/blob/main/Dungeon%20Tracker%201.5%20%E2%80%94%20Quick%20Start.pdf",
